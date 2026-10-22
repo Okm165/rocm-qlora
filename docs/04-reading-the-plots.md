@@ -94,7 +94,7 @@ Loss, LR, throughput, VRAM in one image — the "is it healthy at a glance"
 panel. It updates during training, viewable in an image viewer to
 watch it evolve.
 
-## token_lengths.png (data profile, `llm-finetune data`)
+## token_lengths.png (data profile, `rocm-qlora data`)
 
 Histogram of chat-templated token lengths with p50/p90/p99 markers and the
 chosen `max_length`; the right panel shows coverage vs candidate caps. Set

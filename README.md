@@ -5,8 +5,6 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000)](https://github.com/astral-sh/ruff)
 
-*Package / CLI: `llm-finetune`.*
-
 A **thin, teaching-first wrapper** around the standard 2026 stack
 (`transformers` + `TRL` + `PEFT` + `bitsandbytes`) for fine-tuning LLMs on
 **AMD ROCm (gfx1100 / RDNA3, ROCm 7.1)**.
@@ -39,28 +37,28 @@ handled by the libraries. This project adds exactly four things:
 ## Quickstart
 
 ```bash
-uv sync                                    # .venv in-repo, torch from the ROCm 7.1 index
-uv run llm-finetune doctor                 # probes GPUs, SDPA backends, bnb 4-bit
+uv sync                                                     # .venv in-repo, torch from the ROCm 7.1 index
+uv run rocm-qlora doctor                                    # probes GPUs, SDPA backends, bnb 4-bit
 # dataset expected at .data/raw/dataset.json (configurable via data.path)
-uv run llm-finetune data --config configs/qwen3.8-27b.toml    # token-length profile
-uv run llm-finetune prepare --config configs/qwen3.8-27b.toml # NF4 checkpoint (once)
-uv run llm-finetune train --config configs/qwen3.8-27b.toml
+uv run rocm-qlora data --config configs/qwen3.8-27b.toml    # token-length profile
+uv run rocm-qlora prepare --config configs/qwen3.8-27b.toml # NF4 checkpoint (once)
+uv run rocm-qlora train --config configs/qwen3.8-27b.toml
 ```
 
 Then:
 
 ```bash
-uv run llm-finetune chat --run .outputs/runs/<id>    # talk to the adapter
-uv run llm-finetune merge --run .outputs/runs/<id>   # bf16 merge → GGUF for llama.cpp
-uv run llm-finetune report --run .outputs/runs/<id>  # regenerate charts + report
+uv run rocm-qlora chat --run .outputs/runs/<id>   # talk to the adapter
+uv run rocm-qlora merge --run .outputs/runs/<id>  # bf16 merge → GGUF for llama.cpp
+uv run rocm-qlora report --run .outputs/runs/<id> # regenerate charts + report
 ```
 
 Validate the whole pipeline in ~2 minutes with the toy model (same hybrid
 architecture, tiny weights):
 
 ```bash
-uv run llm-finetune prepare --config configs/toy.toml
-uv run llm-finetune train  --config configs/toy.toml --dry-run
+uv run rocm-qlora prepare --config configs/toy.toml
+uv run rocm-qlora train  --config configs/toy.toml --dry-run
 ```
 
 ## The models
@@ -165,7 +163,7 @@ Rejected, with evidence:
 
 ```
 configs/                qwen3.8-27b.toml · qwen3-8b.toml · toy.toml
-src/llm_finetune/
+src/rocm_qlora/
   cli.py                all commands (doctor, data, prepare, train, report, chat, merge)
   config.py             TOML → validated dataclasses (strict: typos fail loudly)
   data.py               ShareGPT loading, validation, token profiling, previews

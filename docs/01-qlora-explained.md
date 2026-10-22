@@ -54,13 +54,13 @@ health checks, report.
 ## The dataset (what to point `data.path` at)
 
 * Any ShareGPT-style JSON: `messages: [{role, content}, ...]` turns, single or
-  multi-turn. `llm-finetune data` validates it loudly before any GPU work.
+  multi-turn. `rocm-qlora data` validates it loudly before any GPU work.
 * Assistant turns may contain ` thinking…</think>` reasoning traces — the loss
   is computed on **both** (reasoning + answer), so the model learns the
   *thinking style*, not just input→output mappings. Qwen3.8's chat template
   parses ` thinking` natively, and TRL's bundled Qwen3.8 training template adds
   the loss masks.
-* Token lengths drive `max_length` — measure them with `llm-finetune data`.
+* Token lengths drive `max_length` — measure them with `rocm-qlora data`.
   Typical Q&A data lands around p50 ≈ 500 and p99 ≈ 1.5k tokens; pick the cap
   where the coverage curve flattens.
 * For scale: ~300k tokens total → ~46 optimizer steps per epoch at effective

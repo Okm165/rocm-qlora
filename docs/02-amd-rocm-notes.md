@@ -2,7 +2,7 @@
 
 Everything here was verified empirically on **gfx1100 (RDNA3) hardware,
 ROCm 7.1 user-space, torch 2.13.0+rocm7.1, a mainline kernel** — not copied
-from generic guides. `llm-finetune doctor` reproduces the probes.
+from generic guides. `rocm-qlora doctor` reproduces the probes.
 
 ## Attention: SDPA + AOTriton (works!)
 
@@ -70,7 +70,7 @@ NCCL_P2P_DISABLE = "0"
 
 `HSA_FORCE_FINE_GRAIN_PCIE=1` adds nothing here (25.8 vs 26.0 GB/s). Do **not**
 add `iommu=pt` (translated IOMMU works; one upstream report shows `iommu=pt`
-corrupting peer IPC). `llm-finetune doctor` probes `hipIpcGetMemHandle` on
+corrupting peer IPC). `rocm-qlora doctor` probes `hipIpcGetMemHandle` on
 every run so transport regressions are caught immediately.
 
 ## bitsandbytes 4-bit: 0.50.2 is good on ROCm

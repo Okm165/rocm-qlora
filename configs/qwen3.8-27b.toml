@@ -2,7 +2,7 @@
 # Qwen3.8-27B · QLoRA on gfx1100 (RDNA3, 24 GB cards)
 # =============================================================================
 # Every line here is explained in docs/03-hyperparameters.md. Numbers marked
-# "(measured)" come from `llm-finetune data` / `doctor`.
+# "(measured)" come from `rocm-qlora data` / `doctor`.
 #
 # Memory story (per GPU, DDP across the GPUs):
 #   NF4 weights (after `prepare` surgery)  ~17.3 GB  (measured: 19.1 GB used at bs=1)
@@ -42,7 +42,7 @@ requantize_modules = ["in_proj_qkv"]
 [data]
 path = ".data/raw/dataset.json"
 eval_fraction = 0.05   # ~29 holdout examples; enough to see the trend
-max_length = 1536      # ≈p97 of this dataset (measured); see `llm-finetune data`
+max_length = 1536      # ≈p97 of this dataset (measured); see `rocm-qlora data`
 packing = false        # correctness first: see the packing explainer
 assistant_only_loss = true
 dataset_num_proc = 8

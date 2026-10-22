@@ -9,22 +9,22 @@ commands rehearse the full code path on `configs/toy.toml` in ~4 minutes.
 
 ```bash
 # 0. one-time environment sanity (SDPA verdict, bnb smoke, RCCL IPC probe)
-uv run llm-finetune doctor
+uv run rocm-qlora doctor
 
 # 1. build the slimmed NF4 checkpoint (~50 s; needed once, or after config changes)
-uv run llm-finetune prepare --config configs/qwen3.8-27b.toml
+uv run rocm-qlora prepare --config configs/qwen3.8-27b.toml
 
 # 2. dry run — 3 steps on 8 examples (~3 min): proves load → step → save → charts
-uv run llm-finetune train --config configs/qwen3.8-27b.toml --dry-run
+uv run rocm-qlora train --config configs/qwen3.8-27b.toml --dry-run
 
 # 3. the real run (expect ~30–60 min wall time)
-uv run llm-finetune train --config configs/qwen3.8-27b.toml
+uv run rocm-qlora train --config configs/qwen3.8-27b.toml
 
 # 4. regenerate charts + report from metrics.jsonl at any time
-uv run llm-finetune report --run .outputs/runs/<timestamp>-qwen3.8-27b
+uv run rocm-qlora report --run .outputs/runs/<timestamp>-qwen3.8-27b
 
 # 5. talk to the adapter (base + LoRA) as a sanity check
-uv run llm-finetune chat --run .outputs/runs/<timestamp>-qwen3.8-27b
+uv run rocm-qlora chat --run .outputs/runs/<timestamp>-qwen3.8-27b
 ```
 
 ## What to expect
@@ -69,7 +69,7 @@ the run exits — nothing silent, nothing saved that looks healthy.
 optimizer/scheduler state):
 
 ```bash
-uv run llm-finetune train --config configs/qwen3.8-27b.toml \
+uv run rocm-qlora train --config configs/qwen3.8-27b.toml \
     --resume .outputs/runs/<timestamp>-qwen3.8-27b
 ```
 
@@ -80,7 +80,7 @@ records the resumed segment.
 
 ```bash
 LLM_FINETUNE_DETECT_ANOMALY=1 LLM_FINETUNE_GRAD_CHECK=1 \
-  uv run llm-finetune train --config configs/qwen3.8-27b.toml
+  uv run rocm-qlora train --config configs/qwen3.8-27b.toml
 ```
 
 `DETECT_ANOMALY` makes autograd name the exact op whose backward produced the
@@ -122,7 +122,7 @@ small job on the root cause:
 ```bash
 # 3 steps, ~4 min — names the exact op whose backward goes NaN
 LLM_FINETUNE_DETECT_ANOMALY=1 LLM_FINETUNE_GRAD_CHECK=1 \
-  uv run llm-finetune train --config configs/qwen3.8-27b.toml --dry-run
+  uv run rocm-qlora train --config configs/qwen3.8-27b.toml --dry-run
 ```
 
 `scripts/poc_deltanet_backward.py` isolates one Gated DeltaNet layer at the

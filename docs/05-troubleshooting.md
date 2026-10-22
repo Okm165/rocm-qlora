@@ -37,21 +37,21 @@ RDNA3 SDPA backends can fail in confusing ways — the error may surface at an
 *unrelated* op later (deferred launch failure). Run:
 
 ```bash
-uv run llm-finetune doctor          # probes FLASH / EFFICIENT / MATH in fresh processes
+uv run rocm-qlora doctor          # probes FLASH / EFFICIENT / MATH in fresh processes
 ```
 
 The launcher then picks `sdpa` or `eager` from the verdict automatically. If
 fused attention dies after a driver/stack change, force math attention:
 
 ```bash
-uv run llm-finetune train --set model.attn=eager --config …
+uv run rocm-qlora train --set model.attn=eager --config …
 ```
 
 ## NaN loss at step 0
 
 1. `lm_head` quantized → shape errors, not NaN — see the next section.
 2. LR too high for a tiny dataset → halve it (`--set optim.lr=5e-5`).
-3. Bad samples (empty/format-broken) → `uv run llm-finetune data` validates
+3. Bad samples (empty/format-broken) → `uv run rocm-qlora data` validates
    the dataset loudly before any GPU work.
 
 ## Mid-run: "grad_norm is NaN" abort (finite loss, poisoned backward)
@@ -64,7 +64,7 @@ exactly zero once the model is poisoned, because ignored positions contribute
 zeros to the sum).
 
 **What the code does now**: the monitor hard-stops on the first of the three
-numeric failure modes (`health_violation` in `src/llm_finetune/monitor.py`:
+numeric failure modes (`health_violation` in `src/rocm_qlora/monitor.py`:
 non-finite loss, NaN grad_norm with finite loss, exact-zero loss), writes an
 `error` event into `metrics.jsonl`, and exits loudly. Nothing silent, nothing
 saved that looks healthy.
@@ -75,13 +75,13 @@ saved that looks healthy.
    included (`save_only_model=False`):
 
    ```bash
-   uv run llm-finetune train --config <cfg> --resume .outputs/runs/<run-dir>
+   uv run rocm-qlora train --config <cfg> --resume .outputs/runs/<run-dir>
    ```
 
 2. To hunt the cause, re-run with the env-gated diagnostics:
 
    ```bash
-   LLM_FINETUNE_DETECT_ANOMALY=1 LLM_FINETUNE_GRAD_CHECK=1 uv run llm-finetune train …
+   LLM_FINETUNE_DETECT_ANOMALY=1 LLM_FINETUNE_GRAD_CHECK=1 uv run rocm-qlora train …
    ```
 
    `DETECT_ANOMALY` raises at the exact op whose backward produced the NaN
@@ -163,7 +163,7 @@ Checklist, in order:
 ## Diagnostics to collect before reporting an issue
 
 ```bash
-uv run llm-finetune doctor            # full probe → .context/doctor-latest.json
+uv run rocm-qlora doctor              # full probe → .context/doctor-latest.json
 <run>/env_fingerprint.json            # exact stack + GPU state at run start
 <run>/config.resolved.toml            # exact config (overrides applied)
 <run>/logs/rank-0.log                 # first ERROR line

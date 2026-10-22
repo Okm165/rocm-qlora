@@ -33,7 +33,7 @@ Unsloth guides, TRL docs, field reports), not laws of nature.
 
 | knob | value | reasoning |
 |---|---|---|
-| `max_length` | 1536 | p99 of the measured token distribution (see `llm-finetune data`). Setting it from the model's 262k context window would waste memory on every batch; setting it from the observed max buys nothing. |
+| `max_length` | 1536 | p99 of the measured token distribution (see `rocm-qlora data`). Setting it from the model's 262k context window would waste memory on every batch; setting it from the observed max buys nothing. |
 | `assistant_only_loss` | true | gradient flows only from assistant tokens (reasoning + answer). User tokens are masked with -100. TRL auto-patches Qwen3.8's template with `{% generation %}` markers. |
 | `packing` | **false** | packing is a throughput win on short data, but a **correctness hazard**: without document-aware attention masks, tokens can attend across example boundaries. With a few hundred examples, padding waste costs seconds. Enable it only with a clear understanding of the attention backend's boundary handling. |
 | `eval_fraction` | 0.05 | ~29 holdout examples. Enough to see the *shape* of generalization; not enough to read decimals. |
