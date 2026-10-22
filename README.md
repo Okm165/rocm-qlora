@@ -140,7 +140,10 @@ Rejected, with evidence:
 * **Attention**: PyTorch SDPA dispatches to AOTriton flash kernels on gfx1100
   when `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1`; `doctor` probes each
   backend in a fresh process (deferred launch errors otherwise poison the
-  process) and the launcher applies the verdict automatically.
+  process) and the launcher applies the verdict automatically — including
+  disabling any backend the probe flagged as broken (on gfx1100 the
+  mem-efficient backward is the observed intermittent-NaN source; padded
+  batches then run math attention).
 * **RCCL**: consumer RDNA3 P2P works once the runtime uses **dma-buf IPC**
   (`HSA_ENABLE_IPC_MODE_LEGACY=0`; the default legacy mode needs a DKMS-only
   ioctl and fails on mainline kernels with `hipIpcGetMemHandle: invalid

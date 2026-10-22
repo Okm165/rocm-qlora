@@ -98,11 +98,14 @@ attention backward, not the DeltaNet layers. Plain allreduce is bit-exact on
 both transports at the 27B's gradient sizes
 (`scripts/poc_p2p_allreduce.py`), so the cause is model-side numerics, not
 communication. Until it is root-caused, the operational answer is: guards
-(already active), `--resume` from the last epoch checkpoint, and — to dodge
-it — math attention (`--set model.attn=eager`; slower, but no fused
-backward). `scripts/poc_deltanet_backward.py` isolates one Gated DeltaNet
-layer at the 27B's exact dimensions for a targeted reproduction (needs a free
-GPU).
+(already active), `--resume` from the last epoch checkpoint, and the
+automatic backend guard — the launcher disables SDPA backends the doctor
+probe flagged, so on this machine the mem-efficient backward is never
+dispatched to (padded batches run math attention; causal unmasked ones stay
+on flash). `--set model.attn=eager` forces math everywhere if you want to
+rule fused kernels out entirely. `scripts/poc_deltanet_backward.py` isolates
+one Gated DeltaNet layer at the 27B's exact dimensions for a targeted
+reproduction (needs a free GPU).
 
 ## "mat1 and mat2 shapes cannot be multiplied" (weird 1×N weights)
 

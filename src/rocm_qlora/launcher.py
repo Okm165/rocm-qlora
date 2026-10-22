@@ -14,7 +14,11 @@ machine and records a verdict in ``.context/doctor-latest.json``. The
 launcher consults it to decide:
 
 * attention implementation: ``sdpa`` vs ``eager`` (math fallback),
-* whether ``TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1`` should be exported.
+* whether ``TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1`` should be exported,
+* which SDPA backends to disable outright: a probe-failed backend stays off
+  for the whole worker process — the mem-efficient *backward* is the observed
+  intermittent-NaN source on gfx1100, and padded batches (4D mask) are what
+  dispatch to it (see docs/05).
 """
 
 from __future__ import annotations
@@ -67,6 +71,34 @@ def resolve_aotriton(cfg: Config) -> bool:
     if verdict and verdict.get("sdpa", {}).get("verdict"):
         return verdict["sdpa"]["verdict"] == "aotriton_on"
     return True  # recommended default on gfx1100; harmless elsewhere
+
+
+def apply_sdpa_verdict() -> list[str]:
+    """Turn off SDPA backends the doctor probe flagged as broken.
+
+    The probe covers *forward* kernels; on gfx1100 the mem-efficient
+    **backward** is the observed intermittent-NaN source (docs/05), and an
+    explicit attention mask — which padded batches always pass — is what
+    dispatches to it. A failed probe therefore disables the backend for the
+    whole worker process: masked batches fall back to math attention, while
+    causal unmasked ones stay on the AOTriton flash path. No verdict on
+    disk → no change.
+    """
+    verdict = load_doctor_verdict()
+    if not verdict:
+        return []
+    backends = verdict.get("sdpa", {}).get("backends", {})
+    mode = "on" if os.environ.get("TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL") == "1" else "off"
+    import torch
+
+    disabled: list[str] = []
+    if backends.get(f"flash_{mode}", {}).get("ok") is False and torch.backends.cuda.flash_sdp_enabled():
+        torch.backends.cuda.enable_flash_sdp(False)
+        disabled.append("flash")
+    if backends.get(f"efficient_{mode}", {}).get("ok") is False and torch.backends.cuda.mem_efficient_sdp_enabled():
+        torch.backends.cuda.enable_mem_efficient_sdp(False)
+        disabled.append("mem_efficient")
+    return disabled
 
 
 # ---------------------------------------------------------------------------

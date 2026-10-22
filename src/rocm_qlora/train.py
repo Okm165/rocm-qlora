@@ -360,9 +360,21 @@ def main(argv: list[str] | None = None) -> None:
             book.show("hybrid_attention")
             book.show("rocm_attention")
 
-        from .launcher import resolve_attn_impl
+        from .launcher import apply_sdpa_verdict, resolve_attn_impl
 
         attn = resolve_attn_impl(cfg)
+        disabled = apply_sdpa_verdict()
+        if disabled:
+            logger.info(
+                "SDPA backends disabled by the doctor verdict: %s — masked attention falls back to math (docs/05)",
+                ", ".join(disabled),
+            )
+        logger.info(
+            "SDPA backends: flash=%s mem_efficient=%s math=%s",
+            torch.backends.cuda.flash_sdp_enabled(),
+            torch.backends.cuda.mem_efficient_sdp_enabled(),
+            torch.backends.cuda.math_sdp_enabled(),
+        )
         from .model import attach_lora, load_model_for_training, parameter_report, prepare_for_qlora
 
         model = load_model_for_training(cfg, local_rank=local_rank, attn=attn)
@@ -398,7 +410,10 @@ def main(argv: list[str] | None = None) -> None:
             table.add_row("trainable (LoRA)", f"{fmt_int(report['trainable'])}  ({report['pct']:.3f}%)")
             breakdown = " · ".join(f"{k}: {fmt_int(v)}" for k, v in list(report["by_suffix"].items())[:8])
             table.add_row("by module", breakdown)
-            table.add_row("attention", f"{attn}  (doctor-verified where available)")
+            attn_note = f"{attn}  (doctor-verified where available)"
+            if disabled:
+                attn_note = f"{attn}  ({', '.join(disabled)} off per doctor verdict)"
+            table.add_row("attention", attn_note)
             console.print(Panel(table, title="[bold]model[/bold]", border_style="cyan"))
             book.show("lora_targets")
             book.show("rank_alpha")
@@ -414,6 +429,7 @@ def main(argv: list[str] | None = None) -> None:
                         "total_params": report["total"],
                         "trainable": report["trainable"],
                         "attn": attn,
+                        "sdpa_disabled": disabled,
                         "world_size": world_size,
                     }
                 )

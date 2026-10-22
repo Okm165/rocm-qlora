@@ -23,9 +23,12 @@ from generic guides. `rocm-qlora doctor` reproduces the probes.
   if a future driver/wheel combination breaks the fused path.
 * The probes cover **forward** kernels. The one fused kernel observed
   producing non-finite gradients is the *backward* of the mem-efficient path
-  (`ScaledDotProductEfficientAttentionBackward0`) — math attention
-  (`--set model.attn=eager`) has no fused backward; see the NaN note in
-  docs/05.
+  (`ScaledDotProductEfficientAttentionBackward0`), and an explicit attention
+  mask — which padded batches always pass — is what dispatches to it. The
+  launcher therefore **disables every backend the probe flagged** for the
+  whole training process: on this machine masked batches run math attention,
+  while causal unmasked ones stay on flash. `--set model.attn=eager` forces
+  math everywhere; see the NaN note in docs/05.
 
 ## Multi-GPU: RCCL P2P works (dma-buf IPC) — but SHM is the default
 

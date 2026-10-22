@@ -115,10 +115,12 @@ gradient sizes.
 
 **Root-cause lead (toy-scale)**: `ROCM_QLORA_DETECT_ANOMALY=1` pinned the
 first non-finite backward op to `ScaledDotProductEfficientAttentionBackward0`
-— the fused (mem-efficient) attention backward. A toy run forced to math
-attention (`--set model.attn=eager`) completed 92/92 steps clean. On hardware
-where the guard fires repeatedly, forcing math attention is the experiment to
-try (slower — no fused kernel — but no fused backward either).
+— the fused (mem-efficient) attention backward, which padded batches
+dispatch to via their 4D mask. Two follow-ups: the launcher now disables
+SDPA backends the doctor probe flags (this machine: mem-efficient), so
+training no longer dispatches to it — masked batches fall back to math; and a
+toy run forced fully to math (`--set model.attn=eager`) completed 92/92 steps
+clean.
 
 **What this means for a run**: the guard aborts cleanly (validated — it fired
 at step 3 of a dry run), and `--resume` continues from the last epoch
