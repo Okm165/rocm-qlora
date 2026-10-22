@@ -21,6 +21,11 @@ from generic guides. `rocm-qlora doctor` reproduces the probes.
 * The launcher reads the doctor verdict and sets the env + attention
   implementation automatically. `eager` (math attention) is the safe fallback
   if a future driver/wheel combination breaks the fused path.
+* The probes cover **forward** kernels. The one fused kernel observed
+  producing non-finite gradients is the *backward* of the mem-efficient path
+  (`ScaledDotProductEfficientAttentionBackward0`) — math attention
+  (`--set model.attn=eager`) has no fused backward; see the NaN note in
+  docs/05.
 
 ## Multi-GPU: RCCL P2P works (dma-buf IPC) — but SHM is the default
 

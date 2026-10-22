@@ -149,7 +149,8 @@ Rejected, with evidence:
   (`scripts/poc_p2p_allreduce.py`). The default is SHM
   (`NCCL_P2P_DISABLE=1`) — a simplicity choice at ~45 ms/step for LoRA; the
   intermittent NaN-grad events seen on the 27B are model-side, not
-  transport-related (see the runbook). Opt in with
+  transport-related (the fused attention backward is the lead — see the
+  runbook). Opt in with
   `[env.extra] NCCL_P2P_DISABLE = "0"`.
 * **bitsandbytes**: 0.50.2 passes both training-shape and decode-shape
   4-bit smoke tests (the ≤0.49.2 ROCm GEMV NaN bug is fixed).

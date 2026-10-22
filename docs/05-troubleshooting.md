@@ -90,14 +90,19 @@ saved that looks healthy.
 
 **Known occurrence & status (open)**: the 27B path shows this intermittently
 (~2 events in ~15 observed steps, across both transports and batch configs);
-the toy model shows it ~20× more rarely (1 event in ~230 steps). Plain
-allreduce is bit-exact on both transports at the 27B's gradient sizes
+the toy model shows it rarely (3 events in ~330 observed steps on the default
+`sdpa` path; 0 in 138 steps with math attention).
+`ROCM_QLORA_DETECT_ANOMALY=1` has pinned the first non-finite backward op to
+**`ScaledDotProductEfficientAttentionBackward0`** — the fused (mem-efficient)
+attention backward, not the DeltaNet layers. Plain allreduce is bit-exact on
+both transports at the 27B's gradient sizes
 (`scripts/poc_p2p_allreduce.py`), so the cause is model-side numerics, not
-communication. Until it is root-caused, the operational answer is:
-guards (already active), `--resume` from the last epoch checkpoint, and — to
-hunt it — the env-gated diagnostics above. `scripts/poc_deltanet_backward.py`
-isolates one Gated DeltaNet layer at the 27B's exact dimensions for a
-targeted reproduction (needs a free GPU).
+communication. Until it is root-caused, the operational answer is: guards
+(already active), `--resume` from the last epoch checkpoint, and — to dodge
+it — math attention (`--set model.attn=eager`; slower, but no fused
+backward). `scripts/poc_deltanet_backward.py` isolates one Gated DeltaNet
+layer at the 27B's exact dimensions for a targeted reproduction (needs a free
+GPU).
 
 ## "mat1 and mat2 shapes cannot be multiplied" (weird 1×N weights)
 

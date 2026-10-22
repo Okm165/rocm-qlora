@@ -106,12 +106,19 @@ NCCL_P2P_DISABLE = "0"
 ## Known issue: intermittent NaN gradients on the 27B (open)
 
 The 27B path intermittently produces a step with a *finite loss but
-`grad_norm = NaN`* (~2 events in ~15 observed steps; the toy shows this ~20×
-more rarely). After such a step the optimizer poisons the weights and the
+`grad_norm = NaN`* (~2 events in ~15 observed steps; the toy shows it rarely —
+see docs/05). After such a step the optimizer poisons the weights and the
 fused loss reports exactly 0.0 — which is why the guard exists and why it
 will likely fire early in a real 27B run. It is **model-side, not
 communication**: plain allreduce is bit-exact on both transports at the 27B's
 gradient sizes.
+
+**Root-cause lead (toy-scale)**: `ROCM_QLORA_DETECT_ANOMALY=1` pinned the
+first non-finite backward op to `ScaledDotProductEfficientAttentionBackward0`
+— the fused (mem-efficient) attention backward. A toy run forced to math
+attention (`--set model.attn=eager`) completed 92/92 steps clean. On hardware
+where the guard fires repeatedly, forcing math attention is the experiment to
+try (slower — no fused kernel — but no fused backward either).
 
 **What this means for a run**: the guard aborts cleanly (validated — it fired
 at step 3 of a dry run), and `--resume` continues from the last epoch
