@@ -1,0 +1,99 @@
+# =============================================================================
+# Qwen3.8-27B · QLoRA on gfx1100 (RDNA3, 24 GB cards)
+# =============================================================================
+# Every line here is explained in docs/03-hyperparameters.md. Numbers marked
+# "(measured)" come from `llm-finetune data` / `doctor`.
+#
+# Memory story (per GPU, DDP across the GPUs):
+#   NF4 weights (after `prepare` surgery)  ~17.3 GB  (measured: 19.1 GB used at bs=1)
+#   LoRA + 8-bit Adam (r=16, all-linear)   ~0.7 GB
+#   activations @ 1536 tokens, batch 2     ~2.5 GB  (gradient checkpointing)
+#   HIP context + fragmentation            ~1 GB
+#   ------------------------------------------------------------------
+#   total ≈ 21.5 GB of 24 GB  →  fits with ~2.5 GB headroom.
+# =============================================================================
+
+[run]
+name = "qwen3.8-27b"
+seed = 42
+output_root = ".outputs"
+explainers = true
+console_refresh_per_second = 4.0
+
+[model]
+# Pre-quantized NF4 source (unsloth's community 4-bit conversion of Qwen3.8-27B).
+name = "unsloth/Qwen3.8-27B-unsloth-bnb-4bit"
+# Where `prepare` writes the slimmed, train-ready checkpoint (git-ignored).
+prepared_dir = ".data/models/qwen3.8-27b-nf4"
+attn = "auto"          # let `doctor`'s probe pick sdpa/eager
+dtype = "bfloat16"     # compute dtype for the quantized matmuls
+
+[quantization]
+quant_type = "nf4"
+double_quant = true
+quant_storage = "uint8"
+requantize_vision = true
+# The upstream checkpoint leaves in_proj_qkv (2.5B params) in 16-bit.
+# `prepare` re-quantizes it to NF4 — ~5 GB less weight per GPU, the
+# difference between fitting and OOM on a 24 GB card.
+# lm_head is never quantized (TRL's fused loss slices the raw weight).
+requantize_modules = ["in_proj_qkv"]
+
+[data]
+path = ".data/raw/dataset.json"
+eval_fraction = 0.05   # ~29 holdout examples; enough to see the trend
+max_length = 1536      # ≈p97 of this dataset (measured); see `llm-finetune data`
+packing = false        # correctness first: see the packing explainer
+assistant_only_loss = true
+dataset_num_proc = 8
+
+[lora]
+r = 16
+alpha = 32             # scaling = alpha/r = 2 (common modern default)
+dropout = 0.05         # small dataset → mild regularization
+target_modules = [
+  # full attention (every 4th layer)
+  "q_proj", "k_proj", "v_proj", "o_proj",
+  # Gated DeltaNet linear attention (3 of 4 layers)
+  "in_proj_qkv", "in_proj_z", "in_proj_a", "in_proj_b", "out_proj",
+  # MLP
+  "gate_proj", "up_proj", "down_proj",
+]
+
+[optim]
+lr = 1.0e-4            # conservative end of the 1e-4…2e-4 QLoRA range
+epochs = 3
+# Micro-batch 2 × accum 2 on 3 GPUs = effective batch 12 (same optimization
+# dynamics as batch 1 × accum 4, but ~2× better arithmetic intensity: at
+# batch 1 the 17 GB of frozen weights are streamed per micro-step mostly for
+# nothing; batch 2 halves the weight-streaming overhead per token).
+per_device_batch_size = 2
+grad_accum = 2         # effective batch = 2 × 2 × GPU count (12 on a 3-GPU run)
+max_grad_norm = 0.3    # QLoRA paper value
+weight_decay = 0.01
+optimizer = "adamw_8bit"   # 8-bit optimizer states (ROCm-supported)
+scheduler = "cosine"
+warmup_ratio = 0.03
+gradient_checkpointing = true
+loss_type = "nll"          # standard NLL; TRL's fused kernel chunks it internally
+
+[eval]
+per_epoch = true
+per_device_batch_size = 2   # no-grad forwards are cheap; halves eval wall time
+eval_packing = false
+
+[logging]
+chart_snapshot_steps = 10   # live dashboard.png/loss.png refresh cadence
+gpu_sample_seconds = 5.0
+keep_epoch_checkpoints = true
+metrics_every_step = true
+
+[env]
+hip_alloc_conf = "garbage_collection_threshold:0.8"
+aotriton = "auto"       # doctor's SDPA verdict decides the env flag
+omp_num_threads = 8     # 3 ranks × 8 threads ≪ 64 cores
+
+[dist]
+mode = "auto"           # DDP across every GPU that fits
+gpus = "auto"
+safety_factor = 1.10

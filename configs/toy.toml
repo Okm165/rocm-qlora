@@ -1,0 +1,75 @@
+# =============================================================================
+# Toy config · Qwen3.5-0.8B — rehearse the whole pipeline in ~2 minutes
+# =============================================================================
+# Same architecture generation as Qwen3.8-27B (qwen3_5, hybrid DeltaNet +
+# full attention), same code path, tiny weights. Use it to validate that
+# training/plots/reports work before committing to a 27B run.
+# =============================================================================
+
+[run]
+name = "toy-qwen3.5-0.8b"
+seed = 42
+output_root = ".outputs"
+explainers = true
+
+[model]
+name = "Qwen/Qwen3.5-0.8B"
+prepared_dir = ".data/models/qwen3.5-0.8b-nf4"
+attn = "auto"
+dtype = "bfloat16"
+
+[quantization]
+quant_type = "nf4"
+double_quant = true
+requantize_vision = true
+requantize_modules = ["in_proj_qkv"]   # lm_head stays 16-bit (TRL's fused loss slices it)
+
+[data]
+path = ".data/raw/dataset.json"
+eval_fraction = 0.05
+max_length = 1024
+packing = false
+assistant_only_loss = true
+dataset_num_proc = 8
+
+[lora]
+r = 16
+alpha = 32
+dropout = 0.05
+target_modules = [
+  "q_proj", "k_proj", "v_proj", "o_proj",
+  "in_proj_qkv", "in_proj_z", "in_proj_a", "in_proj_b", "out_proj",
+  "gate_proj", "up_proj", "down_proj",
+]
+
+[optim]
+lr = 2.0e-4
+epochs = 2
+per_device_batch_size = 4
+grad_accum = 1
+max_grad_norm = 0.3
+weight_decay = 0.01
+optimizer = "adamw_torch"
+scheduler = "cosine"
+warmup_ratio = 0.05
+gradient_checkpointing = true
+loss_type = "nll"
+
+[eval]
+per_epoch = true
+per_device_batch_size = 4
+eval_packing = false
+
+[logging]
+chart_snapshot_steps = 5
+gpu_sample_seconds = 5.0
+
+[env]
+hip_alloc_conf = "garbage_collection_threshold:0.8"
+aotriton = "auto"
+omp_num_threads = 8
+
+[dist]
+mode = "auto"
+gpus = "auto"
+safety_factor = 1.10
