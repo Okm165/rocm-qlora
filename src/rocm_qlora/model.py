@@ -621,7 +621,10 @@ def merge_run(run_dir: str | Path, *, out_dir: str | Path | None = None, console
     model.config.use_cache = True
 
     console.print(f"[dim]saving bf16 model to {out} …[/dim]")
-    model.save_pretrained(out, safe_serialization=True, max_shard_size="4GB")
+    # `save_original_format=False`: transformers would otherwise try to revert
+    # the bnb load conversion (re-packing bf16 weights into NF4), which is not
+    # implemented — the weights are plain bf16 and are saved as such.
+    model.save_pretrained(out, safe_serialization=True, max_shard_size="4GB", save_original_format=False)
     load_tokenizer(cfg).save_pretrained(out)
 
     size = sum(f.stat().st_size for f in out.rglob("*") if f.is_file())
@@ -639,12 +642,23 @@ def merge_run(run_dir: str | Path, *, out_dir: str | Path | None = None, console
 
 
 def _estimate_model_bytes(cfg: Config) -> int:
-    try:
-        import json as _json
+    """Rough bf16 size of the merged model — drives the CPU-vs-GPU choice."""
+    import json as _json
 
-        index = Path(cfg.model.prepared_dir) / "model.safetensors.index.json"
+    base = Path(cfg.model.prepared_dir)
+    try:
+        total_params = _json.loads((base / "finetune_meta.json").read_text()).get("total_params")
+        if total_params:
+            return int(total_params) * 2  # bf16 bytes per parameter
+    except Exception:
+        pass
+    try:
+        index = base / "model.safetensors.index.json"
         if index.exists():
             return int(_json.loads(index.read_text())["metadata"].get("total_size", 0)) * 2
+        nf4_bytes = sum(f.stat().st_size for f in base.glob("*.safetensors"))
+        if nf4_bytes:
+            return nf4_bytes * 2
     except Exception:
         pass
     return 60 * 10**9
@@ -670,6 +684,13 @@ def _dequantize_linear4bit(model, *, dtype):
         for part in parts[:-1]:
             parent = getattr(parent, part)
         setattr(parent, parts[-1], new)
+    # The weights are bf16 now: drop the quantization metadata (a config that
+    # still claims 4-bit would re-quantize on reload and confuse GGUF
+    # converters) and the consumed load-time conversion record (its reverse —
+    # re-packing to NF4 — is not implemented, so keeping it breaks saving).
+    model.config.__dict__.pop("quantization_config", None)
+    with contextlib.suppress(Exception):
+        model._weight_conversions = None
     import gc
 
     gc.collect()
