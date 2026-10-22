@@ -72,7 +72,7 @@ uv run rocm-qlora train  --config configs/toy.toml --dry-run
 ### Why `prepare` exists (the 27B memory story)
 
 `load_in_4bit=True` on a **bf16 checkpoint** stages the entire bf16 model in
-host RAM before quantizing (~55 GB for 27B — ×3 for three DDP processes).
+host RAM before quantizing (~55 GB for 27B — times the number of DDP ranks).
 `prepare` instead:
 
 1. loads the **pre-quantized** upstream checkpoint (~22 GB, mostly NF4),
@@ -126,7 +126,7 @@ Rejected, with evidence:
 ```
 .outputs/runs/<timestamp>-<name>/
 ├── charts/            loss, eval, lr, grad_norm, throughput, vram, gpu_health, epochs, dashboard (.png, live-updated)
-├── logs/rank-{0,1,2}.log
+├── logs/rank-*.log
 ├── adapter/           final LoRA adapter + per-epoch checkpoints
 ├── metrics.jsonl      one JSON record per optimizer step (the single source of truth)
 ├── summary.json       headline numbers

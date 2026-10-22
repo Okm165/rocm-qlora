@@ -2,8 +2,8 @@
 """POC: one Qwen3.8 Gated DeltaNet layer at 27B dimensions — backward NaN hunt.
 
 Context: the 27B training path intermittently produces NaN gradients with a
-finite loss (observed at step 6/138 and step 3/3 of a dry run, over both P2P
-and shared-memory transports — plain allreduce is bit-exact at the 27B
+finite loss (observed at step 6 of a full run and step 3/3 of a dry run, over
+both P2P and shared-memory transports — plain allreduce is bit-exact at the 27B
 gradient sizes, see poc_p2p_allreduce.py). The toy model (same architecture,
 smaller dims) shows the same failure ~20x more rarely. This isolates ONE
 DeltaNet layer at the exact 27B dimensions with the same NF4 linears and the

@@ -44,7 +44,7 @@ target_modules = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj"
 lr = 1.0e-4
 epochs = 3
 per_device_batch_size = 2
-grad_accum = 2                # effective batch = 2 × 2 × 3 = 12
+grad_accum = 2                # effective batch = 2 × 2 × GPUs
 max_grad_norm = 0.3
 weight_decay = 0.01
 optimizer = "adamw_torch"     # plenty of VRAM — no need for 8-bit states

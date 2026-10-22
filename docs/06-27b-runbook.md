@@ -31,15 +31,15 @@ uv run rocm-qlora chat --run .outputs/runs/<timestamp>-qwen3.8-27b
 
 | | value |
 |---|---|
-| steps | ~46 per epoch × 3 epochs ≈ 138 (effective batch 12 = 2 × 2 accum × 3 GPUs; the effective batch scales with the GPU count) |
+| steps | `examples ÷ effective batch` per epoch × 3 epochs (effective batch = 2 × 2 accum × GPUs — it scales with the GPU count) |
 | wall time | ~30–60 min total (compute-bound; the dashboard ETA row is ground truth) |
 | VRAM | ~21–22 GB of 24 per GPU (weights 17.3 GB; rest is LoRA + activations + context) |
-| eval | 29-example holdout at each epoch end (~2–3 min each) |
+| eval | the 5% holdout at each epoch end (~2–3 min each) |
 | artifacts | `charts/` refresh every 10 steps; `metrics.jsonl` has one record per step |
 
 ## What to watch (dashboard rows)
 
-* **loss / EMA ↘** — with this dataset expect ~1.3 → ~0.7–0.9 over 3 epochs.
+* **loss / EMA ↘** — expect ~1.3 → ~0.7–0.9 over 3 epochs on small Q&A data.
   The EMA is the honest signal; single-step wiggles are noise.
 * **grad norm** — typically 0.3–1.5. Transient spikes are clipped and logged
   as `warn` events; a *sustained* rise is worth a look.
@@ -79,7 +79,7 @@ records the resumed segment.
 **Hunting a NaN further** — two env-gated diagnostics:
 
 ```bash
-LLM_FINETUNE_DETECT_ANOMALY=1 LLM_FINETUNE_GRAD_CHECK=1 \
+ROCM_QLORA_DETECT_ANOMALY=1 ROCM_QLORA_GRAD_CHECK=1 \
   uv run rocm-qlora train --config configs/qwen3.8-27b.toml
 ```
 
@@ -121,7 +121,7 @@ small job on the root cause:
 
 ```bash
 # 3 steps, ~4 min — names the exact op whose backward goes NaN
-LLM_FINETUNE_DETECT_ANOMALY=1 LLM_FINETUNE_GRAD_CHECK=1 \
+ROCM_QLORA_DETECT_ANOMALY=1 ROCM_QLORA_GRAD_CHECK=1 \
   uv run rocm-qlora train --config configs/qwen3.8-27b.toml --dry-run
 ```
 
@@ -132,7 +132,7 @@ LLM_FINETUNE_DETECT_ANOMALY=1 LLM_FINETUNE_GRAD_CHECK=1 \
 
 * `docs/05-troubleshooting.md` — every failure seen so far, with its fix.
 * The run dir is self-contained: `metrics.jsonl` (source of truth),
-  `logs/rank-{0,1,2}.log`, `charts/`, `report.md`, `env_fingerprint.json`,
+  `logs/rank-*.log`, `charts/`, `report.md`, `env_fingerprint.json`,
   `config.resolved.toml`.
 * An aborted run leaves its last good checkpoint — resume from it rather than
   starting over.

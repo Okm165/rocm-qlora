@@ -63,8 +63,8 @@ health checks, report.
 * Token lengths drive `max_length` — measure them with `rocm-qlora data`.
   Typical Q&A data lands around p50 ≈ 500 and p99 ≈ 1.5k tokens; pick the cap
   where the coverage curve flattens.
-* For scale: ~300k tokens total → ~46 optimizer steps per epoch at effective
-  batch 12.
+* For scale: a few hundred thousand tokens → a few dozen optimizer steps per
+  epoch at effective batch 12.
 
 ## Expectations for a small-dataset run (r=16, 3 epochs)
 

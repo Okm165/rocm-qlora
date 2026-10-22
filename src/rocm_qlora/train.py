@@ -152,7 +152,7 @@ def _install_grad_finite_checks(model, log) -> None:
             if grad is not None and not bool(torch.isfinite(grad).all()):
                 raise RuntimeError(
                     f"non-finite gradient in '{param_name}' — aborting before the optimizer step "
-                    "(LLM_FINETUNE_GRAD_CHECK=1). See docs/05-troubleshooting.md"
+                    "(ROCM_QLORA_GRAD_CHECK=1). See docs/05-troubleshooting.md"
                 )
 
         return hook
@@ -376,10 +376,10 @@ def main(argv: list[str] | None = None) -> None:
         # rank, the optimizer poisons the weights, and from then on the fused
         # loss reports exactly 0.0 (zero on ignored positions) while the EMA
         # keeps "improving". The on_log guard aborts, but *these* pinpoint.
-        if os.environ.get("LLM_FINETUNE_DETECT_ANOMALY") == "1":
+        if os.environ.get("ROCM_QLORA_DETECT_ANOMALY") == "1":
             torch.autograd.set_detect_anomaly(True)
             logger.info("autograd anomaly detection ON — the first NaN-producing op will raise with a traceback")
-        if os.environ.get("LLM_FINETUNE_GRAD_CHECK") == "1":
+        if os.environ.get("ROCM_QLORA_GRAD_CHECK") == "1":
             _install_grad_finite_checks(model, logger.info)
 
         # Reclaim the load-time casting transients still sitting in the

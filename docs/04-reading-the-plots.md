@@ -37,8 +37,8 @@ Train EMA vs holdout points. Rules:
 * train falling, eval flat/rising → memorization. Cut epochs or raise dropout.
 * both flat → underfitting (↑ lr) or data/template problem.
 
-With ~29 holdout examples, the curve is noisy by construction: read the
-**direction between epochs**, not the wiggle.
+With a small holdout (a few dozen examples), the curve is noisy by
+construction: read the **direction between epochs**, not the wiggle.
 
 ## lr.png — the schedule
 

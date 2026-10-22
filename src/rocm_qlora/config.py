@@ -143,7 +143,7 @@ class EnvConfig:
     hip_alloc_conf: str = "garbage_collection_threshold:0.8"
     #: "auto" -> use `doctor`'s SDPA verdict; "on"/"off" force the AOTriton env.
     aotriton: str = "auto"
-    #: Threads per rank. 3 ranks × 8 threads ≪ 64 cores — avoids oversubscription.
+    #: Threads per rank. A handful per rank avoids host oversubscription.
     omp_num_threads: int = 8
     #: Extra environment variables for the training workers (string→string).
     extra: dict[str, str] = field(default_factory=dict)

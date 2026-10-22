@@ -10,10 +10,10 @@ values are small integers, exactly representable in bf16, so the allreduce sum
 must match bit-for-bit — any corruption shows up immediately as a mismatch,
 not as a subtle numerical difference.
 
-Usage (3 ranks, P2P enabled exactly like the launcher does it):
+Usage (two ranks shown, P2P enabled exactly like the launcher does it):
 
-    HIP_VISIBLE_DEVICES=0,1,2 HSA_ENABLE_IPC_MODE_LEGACY=0 \
-        .venv/bin/torchrun --standalone --nproc_per_node=3 \
+    HIP_VISIBLE_DEVICES=0,1 HSA_ENABLE_IPC_MODE_LEGACY=0 \
+        .venv/bin/torchrun --standalone --nproc_per_node=2 \
         scripts/poc_p2p_allreduce.py --iters 30
 
 Exit code 0 = every payload matched on every iteration. Set

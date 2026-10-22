@@ -24,8 +24,8 @@ from generic guides. `rocm-qlora doctor` reproduces the probes.
 
 ## Multi-GPU: RCCL P2P works (dma-buf IPC) — but SHM is the default
 
-Topology (`rocm-smi --showtopo`): the GPUs are **PCIE**-attached, 2 hops apart,
-no XGMI, no PCIe switch — typically hanging off different root ports of the CPU.
+Topology (`rocm-smi --showtopo`): consumer gfx1100 cards are
+**PCIE**-attached — no XGMI, no PCIe switch.
 
 Out of the box, RCCL's P2P transport died at:
 
@@ -46,7 +46,7 @@ it, so the handle export fails and the P2P transport dies.
 HSA_ENABLE_IPC_MODE_LEGACY=0     # select the mainline dma-buf IPC path
 ```
 
-Measured with 3 ranks: **~26 GB/s bus bandwidth** (vs ~5.2 GB/s SHM), and
+Measured multi-GPU: **~26 GB/s bus bandwidth** (vs ~5.2 GB/s SHM), and
 `scripts/poc_p2p_allreduce.py` verifies P2P allreduce is **bit-exact** at the
 27B's real gradient sizes (30 iterations × 4 sizes, zero mismatches).
 
@@ -145,7 +145,7 @@ per GPU (upstream checkpoints keep it in 16-bit). That's `prepare`'s job.
 | `HSA_ENABLE_IPC_MODE_LEGACY` | `0` | dma-buf IPC → RCCL P2P works (~26 GB/s vs ~5.2) |
 | `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL` | `1` | enables AOTriton flash kernels |
 | `PYTORCH_HIP_ALLOC_CONF` | `garbage_collection_threshold:0.8` | fragmentation control |
-| `OMP_NUM_THREADS` | 8 per rank | 3 ranks × 8 ≪ 64 cores |
+| `OMP_NUM_THREADS` | 8 per rank | plenty for dataloading; avoids host oversubscription |
 | `TOKENIZERS_PARALLELISM` | `false` | silences fork warnings |
 | `NCCL_P2P_DISABLE` | `1` (SHM default) | simplicity default; both transports are bit-exact — set `"0"` via `[env.extra]` for P2P |
 

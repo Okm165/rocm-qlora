@@ -41,8 +41,8 @@ requantize_modules = ["in_proj_qkv"]
 
 [data]
 path = ".data/raw/dataset.json"
-eval_fraction = 0.05   # ~29 holdout examples; enough to see the trend
-max_length = 1536      # ≈p97 of this dataset (measured); see `rocm-qlora data`
+eval_fraction = 0.05   # a small holdout; enough to see the trend
+max_length = 1536      # ≈p97 of the token distribution; see `rocm-qlora data`
 packing = false        # correctness first: see the packing explainer
 assistant_only_loss = true
 dataset_num_proc = 8
@@ -63,7 +63,7 @@ target_modules = [
 [optim]
 lr = 1.0e-4            # conservative end of the 1e-4…2e-4 QLoRA range
 epochs = 3
-# Micro-batch 2 × accum 2 on 3 GPUs = effective batch 12 (same optimization
+# Micro-batch 2 × accum 2 × GPUs = effective batch (same optimization
 # dynamics as batch 1 × accum 4, but ~2× better arithmetic intensity: at
 # batch 1 the 17 GB of frozen weights are streamed per micro-step mostly for
 # nothing; batch 2 halves the weight-streaming overhead per token).
@@ -91,7 +91,7 @@ metrics_every_step = true
 [env]
 hip_alloc_conf = "garbage_collection_threshold:0.8"
 aotriton = "auto"       # doctor's SDPA verdict decides the env flag
-omp_num_threads = 8     # 3 ranks × 8 threads ≪ 64 cores
+omp_num_threads = 8     # a handful per rank; avoids host oversubscription
 
 [dist]
 mode = "auto"           # DDP across every GPU that fits

@@ -81,7 +81,7 @@ saved that looks healthy.
 2. To hunt the cause, re-run with the env-gated diagnostics:
 
    ```bash
-   LLM_FINETUNE_DETECT_ANOMALY=1 LLM_FINETUNE_GRAD_CHECK=1 uv run rocm-qlora train …
+   ROCM_QLORA_DETECT_ANOMALY=1 ROCM_QLORA_GRAD_CHECK=1 uv run rocm-qlora train …
    ```
 
    `DETECT_ANOMALY` raises at the exact op whose backward produced the NaN
