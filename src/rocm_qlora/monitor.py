@@ -391,7 +391,7 @@ class RichDashboard:
             metrics,
             Panel(gpu_table, title="GPUs", border_style="blue", padding=(0, 1)),
             Panel(
-                Text("\n".join(s.health or ["starting…"]), style="dim"),
+                Text.from_markup("\n".join(s.health or ["starting…"]), style="dim"),
                 title="health",
                 border_style="green",
                 padding=(0, 1),

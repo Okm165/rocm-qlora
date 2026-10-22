@@ -577,7 +577,7 @@ def render_explainer(explainer: Explainer) -> Panel:
     body = explainer.body
     if explainer.links:
         links = "\n".join(f"- {link}" for link in explainer.links)
-        body += f"\n\n[bold]Read more[/bold]\n{links}"
+        body += f"\n\n**Read more**\n{links}"
     return Panel(
         Markdown(body),
         title=f"[bold]{explainer.title}[/bold]",

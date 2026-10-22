@@ -523,6 +523,10 @@ def attach_lora(model, cfg: Config):
     """Attach LoRA adapters per config; returns the PeftModel."""
     from peft import LoraConfig, get_peft_model
 
+    # The vision tower is dropped at load (`load_model_for_training`); only pass
+    # the exclusion when it is actually present, or PEFT warns about an empty
+    # exclusion set on text-only checkpoints.
+    has_visual = any("visual" in name for name, _ in model.named_modules())
     lora = LoraConfig(
         r=cfg.lora.r,
         lora_alpha=cfg.lora.alpha,
@@ -530,7 +534,7 @@ def attach_lora(model, cfg: Config):
         bias=cfg.lora.bias,
         task_type="CAUSAL_LM",
         target_modules=cfg.lora.target_modules,
-        exclude_modules=["visual"],  # keep the unused vision tower untouched
+        exclude_modules=["visual"] if has_visual else None,  # keep the vision tower untouched when present
     )
     return get_peft_model(model, lora)
 

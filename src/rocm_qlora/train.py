@@ -587,6 +587,14 @@ def main(argv: list[str] | None = None) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _short_path(path: Path) -> str:
+    """cwd-relative when possible — keeps wrap-up lines short and copy-pasteable."""
+    try:
+        return str(path.relative_to(Path.cwd()))
+    except ValueError:
+        return str(path)
+
+
 def _print_wrapup(console, book, cfg: Config, run_dir: Path, summary: dict, *, dry_run: bool) -> None:
     from rich.panel import Panel
     from rich.table import Table
@@ -609,19 +617,18 @@ def _print_wrapup(console, book, cfg: Config, run_dir: Path, summary: dict, *, d
     table.add_row("tokens seen", fmt_int(summary.get("tokens_seen")))
     table.add_row("wall time", human_duration(summary.get("total_seconds")))
     table.add_row("peak VRAM (max GPU)", f"{summary.get('peak_vram_gb', float('nan')):.1f} GB")
-    table.add_row("adapter", str(Path(summary.get("adapter_dir", ""))))
-    table.add_row("charts", str(run_dir / "charts"))
-    table.add_row("report", str(run_dir / "report.md"))
+    table.add_row("adapter", _short_path(Path(summary.get("adapter_dir", ""))))
+    table.add_row("charts", _short_path(run_dir / "charts"))
+    table.add_row("report", _short_path(run_dir / "report.md"))
     console.print(Panel(table, title="[bold green]run complete[/bold green]", border_style="green"))
     if dry_run:
         console.print("[yellow]This was a dry run (3 steps). Launch without --dry-run for the real thing.[/yellow]")
     book.show("next_steps")
-    console.print(
-        "[dim]next:[/dim] "
-        f"[bold]rocm-qlora chat --run {run_dir}[/bold]  ·  "
-        f"[bold]rocm-qlora merge --run {run_dir}[/bold]  ·  "
-        f"[bold]rocm-qlora report --run {run_dir}[/bold]"
-    )
+    short = _short_path(run_dir)
+    console.print("[dim]next:[/dim]")
+    console.print(f"  [bold]rocm-qlora chat   --run {short}[/bold]")
+    console.print(f"  [bold]rocm-qlora merge  --run {short}[/bold]")
+    console.print(f"  [bold]rocm-qlora report --run {short}[/bold]")
 
 
 if __name__ == "__main__":
