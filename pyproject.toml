@@ -1,0 +1,133 @@
+# =============================================================================
+# llm-finetune — QLoRA fine-tuning workspace for AMD ROCm GPUs
+# =============================================================================
+# Everything is contained in this repository:
+#   * Python interpreter : managed by uv  (3.12, see .python-version)
+#   * Virtual environment: ./.venv        (created by `uv sync`)
+#   * Datasets & models  : ./.data        (git-ignored)
+#   * Run artifacts      : ./.outputs     (git-ignored)
+#   * Env fingerprints   : ./.context     (git-ignored)
+#
+# `torch` is NOT installed from PyPI. It is pinned to the official PyTorch
+# ROCm 7.1 wheel index, matching the ROCm 7.1 user-space (HIP 7.1.x).
+# The `[device-*]` extras / rocm-sdk packages are only needed for the AMD
+# "TheRock" wheels; the pytorch.org wheels bundle everything they need.
+# =============================================================================
+
+[project]
+name = "llm-finetune"
+version = "0.1.0"
+description = "Teaching-first, production-shaped QLoRA fine-tuning on AMD ROCm (RDNA3)"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    # --- Deep learning core (ROCm build, resolved from the custom index) ----
+    "torch>=2.13,<2.14",
+    # Triton ROCm fork. This is a *transitive* dependency of the torch ROCm
+    # wheel, but uv only applies [tool.uv.sources] index mappings to direct
+    # dependencies — so it is declared here explicitly. Keep it in lockstep
+    # with whatever triton version the pinned torch wheel requires.
+    "triton-rocm==3.7.1; sys_platform == 'linux'",
+    # --- The fine-tuning stack ---------------------------------------------
+    # transformers: model/tokenizer/chat-template machinery
+    "transformers>=5.20,<6",
+    # trl: SFTTrainer + SFTConfig (the training loop wrapper)
+    "trl>=1.16,<2",
+    # peft: LoRA adapters + k-bit preparation
+    "peft>=0.21,<1",
+    # bitsandbytes: NF4 4-bit quantization kernels (ROCm build from PyPI)
+    "bitsandbytes>=0.50.2,<1",
+    # datasets: dataset loading / splitting / preprocessing
+    "datasets>=5.1,<6",
+    # accelerate: device placement + distributed launch plumbing
+    "accelerate>=1.15,<2",
+    # --- Observability (the "explain everything" layer) ---------------------
+    "rich>=14",          # terminal dashboards, panels, tables
+    "matplotlib>=3.10",  # charts written to .outputs/runs/<id>/charts/
+    "numpy>=2",          # numeric helpers for charts/statistics
+    "psutil>=6",         # host RAM/CPU sampling for the health panel
+]
+
+[project.scripts]
+llm-finetune = "llm_finetune.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.9"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    # ruff = linter + formatter in one tool (the 2026 default for Python).
+    "ruff>=0.9",
+    # codespell = typo checker. The Rust `typos` tool needs a cargo toolchain;
+    # codespell gives the same service with zero system dependencies.
+    "codespell>=2.4",
+]
+
+# -----------------------------------------------------------------------------
+# Code quality (ruff + codespell; run via `uv run ruff check`, etc.)
+# -----------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+extend-exclude = [".venv", ".data", ".outputs", ".context"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # import sorting
+    "UP",   # pyupgrade (modern syntax)
+    "B",    # flake8-bugbear (real bugs)
+    "SIM",  # flake8-simplify (the "simplify project" rule set)
+    "C4",   # comprehension correctness
+    "PIE",  # misc lints
+    "RUF",  # ruff-specific
+    "PERF", # performance anti-patterns
+    "RET",  # return-style consistency
+    "ISC",  # implicit string concatenation
+]
+ignore = [
+    # Intentional typography in user-facing strings (·, →, ✗, ✓, …).
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.codespell]
+skip = ".venv,.data,.outputs,.context,uv.lock,*.json,*.jsonl,*.safetensors,*.svg"
+# Domain terms that codespell would otherwise flag.
+ignore-words-list = "arange,ba,te,nd,ist,ans,ue,fo"
+
+# -----------------------------------------------------------------------------
+# uv configuration
+# -----------------------------------------------------------------------------
+# The ROCm wheel index is "explicit": it is only consulted for the packages
+# listed in [tool.uv.sources] below. This prevents PyPI/ROCm index mixups.
+[[tool.uv.index]]
+name = "pytorch-rocm"
+url = "https://download.pytorch.org/whl/rocm7.1"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-rocm" }
+# Triton (ROCm fork) ships from the same index. torch 2.13+rocm7.1 declares a
+# hard dependency on `triton-rocm==3.7.1` (for torch.compile and some
+# attention kernels), so the index mapping must be explicit for uv.
+triton-rocm = { index = "pytorch-rocm" }
+# Older torch ROCm wheels used this package name; kept so version bumps of
+# the torch pin do not break resolution.
+pytorch-triton-rocm = { index = "pytorch-rocm" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = [
+    "gpu: tests that require a working ROCm GPU (skipped by default)",
+]

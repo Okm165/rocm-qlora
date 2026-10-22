@@ -1,0 +1,21 @@
+# --- Python / uv ---------------------------------------------------------
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Local-only working folders (by design, never committed) -------------
+# .data/    : raw datasets, pre-quantized models, derived artifacts
+# .context/ : environment fingerprints, doctor reports, research notes
+# .outputs/ : everything a training run produces (metrics, charts, adapters)
+.data/
+.context/
+.outputs/
+
+# --- Misc ----------------------------------------------------------------
+*.log
+.DS_Store
