@@ -397,7 +397,7 @@ class RichDashboard:
                 padding=(0, 1),
             ),
         )
-        return Panel(body, title=f"[bold cyan]llm-finetune[/bold cyan] · {s.run_name} · {s.phase}", border_style="cyan")
+        return Panel(body, title=f"[bold cyan]rocm-qlora[/bold cyan] · {s.run_name} · {s.phase}", border_style="cyan")
 
 
 # ---------------------------------------------------------------------------

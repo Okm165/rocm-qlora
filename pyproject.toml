@@ -1,5 +1,5 @@
 # =============================================================================
-# llm-finetune — QLoRA fine-tuning workspace for AMD ROCm GPUs
+# rocm-qlora — QLoRA fine-tuning workspace for AMD ROCm GPUs
 # =============================================================================
 # Everything is contained in this repository:
 #   * Python interpreter : managed by uv  (3.12, see .python-version)
@@ -15,7 +15,7 @@
 # =============================================================================
 
 [project]
-name = "llm-finetune"
+name = "rocm-qlora"
 version = "0.1.0"
 description = "Teaching-first, production-shaped QLoRA fine-tuning on AMD ROCm (RDNA3)"
 readme = "README.md"
@@ -50,7 +50,7 @@ dependencies = [
 ]
 
 [project.scripts]
-llm-finetune = "llm_finetune.cli:main"
+rocm-qlora = "rocm_qlora.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.9"]

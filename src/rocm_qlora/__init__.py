@@ -1,4 +1,4 @@
-"""llm-finetune: teaching-first QLoRA fine-tuning for AMD ROCm GPUs.
+"""rocm-qlora: teaching-first QLoRA fine-tuning for AMD ROCm GPUs.
 
 Package layout (each module explains itself — see module docstrings):
 
@@ -13,7 +13,7 @@ Package layout (each module explains itself — see module docstrings):
     explain.py    the teaching layer: contextual explainer panels
     chat.py       interactive sanity-check chat against a trained adapter
     utils.py      small shared helpers (formatting, timing, seeds)
-    cli.py        `llm-finetune <command>` entry point
+    cli.py        `rocm-qlora <command>` entry point
 """
 
 __version__ = "0.1.0"

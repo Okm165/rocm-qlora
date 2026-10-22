@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 import subprocess
 
-from llm_finetune import hardware
-from llm_finetune.hardware import (
+from rocm_qlora import hardware
+from rocm_qlora.hardware import (
     GpuInfo,
     ModelGeometry,
     estimate_training_vram,

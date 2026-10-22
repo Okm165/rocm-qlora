@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from llm_finetune.data import (
+from rocm_qlora.data import (
     DatasetError,
     load_sharegpt,
     profile_tokens,

@@ -9,7 +9,7 @@ HIP context: environment variables that must exist *before* torch initializes
 
 Doctor verdicts
 ---------------
-``llm-finetune doctor`` probes which SDPA backends actually launch on this
+``rocm-qlora doctor`` probes which SDPA backends actually launch on this
 machine and records a verdict in ``.context/doctor-latest.json``. The
 launcher consults it to decide:
 
@@ -152,7 +152,7 @@ def launch_worker(
     env = build_worker_env(cfg, gpu_ids)
     extra_args = extra_args or []
     if len(gpu_ids) == 1:
-        cmd = [sys.executable, "-m", "llm_finetune.train", "--run-dir", str(run_dir), *extra_args]
+        cmd = [sys.executable, "-m", "rocm_qlora.train", "--run-dir", str(run_dir), *extra_args]
     else:
         worker = REPO_ROOT / "scripts" / "train_worker.py"
         cmd = [

@@ -1,4 +1,4 @@
-"""`llm-finetune <command>` — the project's entry point.
+"""`rocm-qlora <command>` — the project's entry point.
 
 Commands
 --------
@@ -146,7 +146,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     context_dir = Path(".context")
     context_dir.mkdir(parents=True, exist_ok=True)
 
-    console.rule(f"[bold cyan]llm-finetune doctor[/bold cyan] · v{__version__}")
+    console.rule(f"[bold cyan]rocm-qlora doctor[/bold cyan] · v{__version__}")
 
     # --- host ---------------------------------------------------------------
     mem = host_memory()
@@ -414,7 +414,7 @@ def cmd_prepare(args: argparse.Namespace) -> int:
     if result.seconds:
         table.add_row("prepare time", human_duration(result.seconds))
     console.print(table)
-    console.print("[dim]next: uv run llm-finetune train --config …[/dim]")
+    console.print("[dim]next: uv run rocm-qlora train --config …[/dim]")
     return 0
 
 
@@ -431,7 +431,7 @@ def cmd_train(args: argparse.Namespace) -> int:
         console.print(
             Panel(
                 f"The prepared checkpoint [bold]{prepared}[/bold] does not exist yet.\n\n"
-                f"Run first:  [bold]uv run llm-finetune prepare --config {args.config}[/bold]\n\n"
+                f"Run first:  [bold]uv run rocm-qlora prepare --config {args.config}[/bold]\n\n"
                 "[dim]Why: quantizing once to NF4 avoids staging the full bf16 model in host RAM "
                 "in every data-parallel process (see the 'prepared checkpoint' explainer in the docs).[/dim]",
                 title="[yellow]prepare required[/yellow]",
@@ -539,10 +539,10 @@ def cmd_merge(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="llm-finetune",
+        prog="rocm-qlora",
         description="Teaching-first QLoRA fine-tuning for AMD ROCm GPUs",
     )
-    parser.add_argument("--version", action="version", version=f"llm-finetune {__version__}")
+    parser.add_argument("--version", action="version", version=f"rocm-qlora {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     def add_common(p: argparse.ArgumentParser) -> None:

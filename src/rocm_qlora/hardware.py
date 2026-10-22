@@ -272,7 +272,7 @@ class ModelGeometry:
     """Parameter accounting for the *prepared* (quantized) checkpoint.
 
     Numbers come from ``finetune_meta.json`` when the checkpoint was created
-    by ``llm-finetune prepare`` (exact), otherwise from ``config.json``
+    by ``rocm-qlora prepare`` (exact), otherwise from ``config.json``
     (heuristic). Everything is in *parameters*, not bytes.
     """
 

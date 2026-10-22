@@ -33,7 +33,7 @@ from .utils import fmt_int, human_duration, seed_everything, write_json
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="llm-finetune training worker")
+    parser = argparse.ArgumentParser(description="rocm-qlora training worker")
     parser.add_argument("--run-dir", required=True, help="Run directory containing config.resolved.json")
     parser.add_argument("--dry-run", action="store_true", help="3 steps, tiny slice, no eval")
     parser.add_argument("--max-steps", type=int, default=None, help="Override optimizer steps")
@@ -53,7 +53,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def setup_logging(run_dir: Path, rank: int) -> logging.Logger:
     log_file = run_dir / "logs" / f"rank-{rank}.log"
     log_file.parent.mkdir(parents=True, exist_ok=True)
-    logger = logging.getLogger("llm_finetune")
+    logger = logging.getLogger("rocm_qlora")
     logger.setLevel(logging.INFO)
     handler = logging.FileHandler(log_file, mode="a", encoding="utf-8")
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
@@ -207,7 +207,7 @@ def build_sft_config(
         "save_strategy": "epoch" if not dry_run else "no",
         # Full checkpoints (adapter + optimizer/scheduler/rng state, ~0.5 GB
         # each at 27B) so an aborted run can truly resume with
-        # `llm-finetune train --resume <run-dir>`.
+        # `rocm-qlora train --resume <run-dir>`.
         "save_only_model": False,
         "save_total_limit": None if cfg.logging.keep_epoch_checkpoints else 1,
         "eval_strategy": "epoch" if eval_enabled else "no",
@@ -618,9 +618,9 @@ def _print_wrapup(console, book, cfg: Config, run_dir: Path, summary: dict, *, d
     book.show("next_steps")
     console.print(
         "[dim]next:[/dim] "
-        f"[bold]llm-finetune chat --run {run_dir}[/bold]  ·  "
-        f"[bold]llm-finetune merge --run {run_dir}[/bold]  ·  "
-        f"[bold]llm-finetune report --run {run_dir}[/bold]"
+        f"[bold]rocm-qlora chat --run {run_dir}[/bold]  ·  "
+        f"[bold]rocm-qlora merge --run {run_dir}[/bold]  ·  "
+        f"[bold]rocm-qlora report --run {run_dir}[/bold]"
     )
 
 

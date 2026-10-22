@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 
-from llm_finetune.monitor import (
+from rocm_qlora.monitor import (
     MetricsWriter,
     ema,
     read_metrics,
@@ -12,7 +12,7 @@ from llm_finetune.monitor import (
     summarize,
     trend_arrow,
 )
-from llm_finetune.plots import render_charts, write_report
+from rocm_qlora.plots import render_charts, write_report
 
 
 def synth_records(n=60, epochs=3):
@@ -86,7 +86,7 @@ def test_health_guard_catches_broken_training():
     at step 6 (finite loss, poisoned backward), then exactly-0.0 losses for
     every following step while the EMA kept "improving".
     """
-    from llm_finetune.monitor import health_violation
+    from rocm_qlora.monitor import health_violation
 
     assert health_violation({"step": 1, "loss": 1.25, "grad_norm": 0.5}) is None
 

@@ -97,7 +97,7 @@ def run_chat(
         Panel(
             "Type a question. Commands: [bold]/think on|off[/bold] · [bold]/temp X[/bold] · "
             "[bold]/max N[/bold] · [bold]/reset[/bold] · [bold]/exit[/bold]",
-            title="[bold]llm-finetune chat[/bold]",
+            title="[bold]rocm-qlora chat[/bold]",
             border_style="cyan",
         )
     )

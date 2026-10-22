@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from llm_finetune.config import Config, ConfigError, dumps_toml
+from rocm_qlora.config import Config, ConfigError, dumps_toml
 
 
 def test_defaults_load():
