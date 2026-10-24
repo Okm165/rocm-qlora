@@ -235,7 +235,7 @@ def render_preview(
     template_kwargs: dict[str, Any] | None = None,
     max_chars: int = 1400,
 ) -> str:
-    """Render one example with the real chat template (for teaching output)."""
+    """Render one example with the real chat template (shown by the `data` command)."""
     try:
         text = cast(
             "str",
@@ -248,7 +248,7 @@ def render_preview(
         )  # tokenize=False ⟹ str
     except Exception as exc:  # pragma: no cover - depends on tokenizer quirks
         return f"<chat template failed: {exc}>"
-    text = text.replace("<|im_start|>", "⟨im_start⟩").replace("<|im_end|>", "⟨im_end|⟩")
+    text = text.replace("<|im_start|>", "⟨im_start⟩").replace("<|im_end|>", "⟨im_end⟩")
     if len(text) > max_chars:
         text = text[:max_chars] + f"\n… [truncated for display, {len(text):,} chars total]"
     return text
