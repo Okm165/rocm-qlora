@@ -158,9 +158,10 @@ src/rocm_qlora/
   panels.py             rank-0 terminal panels (dataset · model · wrap-up)
   doctor.py             environment + hardware report (.context artifacts)
   chat.py               interactive sanity check
+  utils.py              formatting / timing / JSON helpers
 docs/                   01-qlora-explained · 02-amd-rocm-notes · 03-hyperparameters · 04-reading-the-plots · 05-troubleshooting · 06-27b-runbook
 scripts/                 poc_p2p_allreduce.py (RCCL transport POC) · poc_deltanet_backward.py (27B NaN hunt)
-tests/                   62 tests, none needs a GPU
+tests/                   unit + smoke tests (stub tokenizers, synthetic metrics — no GPU)
 ```
 
 **Before the 27B run**: `docs/06-27b-runbook.md` — exact commands,
@@ -179,7 +180,7 @@ uv run ruff check .        # lint (E,W,F,I,UP,B,SIM,C4,PIE,RUF,PERF,RET,ISC)
 uv run ruff format .       # format (120 cols, double quotes)
 uv run codespell           # typos (skips .venv/.data/.outputs/.context)
 uv run basedpyright        # type gate: 0 errors
-uv run pytest              # 62 tests, no GPU required
+uv run pytest              # unit + smoke tests, no GPU required
 ```
 
 All five pass clean on this tree — treat a red run as a bug, not noise.

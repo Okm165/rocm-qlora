@@ -93,9 +93,7 @@ def merge_run(run_dir: str | Path, *, out_dir: str | Path | None = None, console
     console.print(
         Panel(
             f"merged model: [bold]{out}[/bold] ({human_bytes(size)})\n\n"
-            "Convert to GGUF for llama.cpp:\n"
-            f"  python llama.cpp/convert_hf_to_gguf.py {out} --outfile model-f16.gguf --outtype f16\n"
-            "  llama-quantize model-f16.gguf model-Q4_K_M.gguf Q4_K_M",
+            "[dim]GGUF export for llama.cpp: docs/06-27b-runbook.md (step 6).[/dim]",
             title="[bold green]merge complete[/bold green]",
             border_style="green",
         )

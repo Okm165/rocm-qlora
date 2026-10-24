@@ -213,8 +213,7 @@ def _ensure_prepared(cfg: Config, args: argparse.Namespace) -> bool:
         Panel(
             f"The prepared checkpoint [bold]{prepared}[/bold] does not exist yet.\n\n"
             f"Run first:  [bold]uv run rocm-qlora prepare --config {args.config}[/bold]\n\n"
-            "[dim]Why: quantizing once to NF4 avoids staging the full bf16 model in host RAM "
-            "in every data-parallel process (docs/02-amd-rocm-notes.md).[/dim]",
+            "[dim]docs/01 + docs/02 explain what prepare does and why.[/dim]",
             title="[yellow]prepare required[/yellow]",
             border_style="yellow",
         )
@@ -230,11 +229,7 @@ def _resolve_resume(args: argparse.Namespace) -> Path | None:
     if checkpoint is None:
         console.print(f"[red]no checkpoint found under {args.resume}[/red]")
         return None
-    console.print(
-        f"[bold]resuming from[/bold] {checkpoint}\n"
-        "[dim]optimizer, scheduler and step counters are restored from the checkpoint; "
-        "the new run dir records the resumed segment.[/dim]"
-    )
+    console.print(f"[bold]resuming from[/bold] {checkpoint}")
     return checkpoint
 
 

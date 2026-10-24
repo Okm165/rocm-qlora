@@ -174,10 +174,6 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     verdict["packages"] = versions
     write_json(context_dir / "doctor-latest.json", verdict)
     console.print(f"[dim]saved: {context_dir / 'doctor-latest.json'}[/dim]")
-    console.print(
-        "[dim]hint: the train launcher reads the SDPA verdict from doctor-latest.json to pick "
-        "attention settings automatically.[/dim]"
-    )
     return 0
 
 

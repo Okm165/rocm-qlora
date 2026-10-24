@@ -25,6 +25,13 @@ uv run rocm-qlora report --run .outputs/runs/<timestamp>-qwen3.8-27b
 
 # 5. talk to the adapter (base + LoRA) as a sanity check
 uv run rocm-qlora chat --run .outputs/runs/<timestamp>-qwen3.8-27b
+
+# 6. fold the adapter into a bf16 model (~55 GB: host RAM when it fits the
+#    model twice over, else sharded across the GPUs), then export GGUF
+uv run rocm-qlora merge --run .outputs/runs/<timestamp>-qwen3.8-27b
+python llama.cpp/convert_hf_to_gguf.py .outputs/runs/<run>/merged \
+    --outfile model-f16.gguf --outtype f16
+llama-quantize model-f16.gguf model-Q4_K_M.gguf Q4_K_M
 ```
 
 ## What to expect
@@ -89,31 +96,17 @@ gradient sizes). To experiment with P2P, add `[env.extra] NCCL_P2P_DISABLE =
 ## Known issue: intermittent NaN gradients on the 27B (open)
 
 The 27B path intermittently produces a step with a *finite loss but
-`grad_norm = NaN`* (~2 events in ~15 observed steps). After such a step the
-optimizer poisons the weights and the fused loss reports exactly 0.0 — which
-is why the guard exists and why it will likely fire early in a real 27B run.
-It is **model-side, not communication**.
-
-**Root-cause lead (toy-scale)**: the anomaly detector pinned the first
-non-finite backward op to `ScaledDotProductEfficientAttentionBackward0` — the
-fused attention backward that padded batches dispatch to via their 4D mask.
-The launcher now disables SDPA backends the doctor probe flags (this machine:
-mem-efficient), and a toy run forced fully to math (`--set model.attn=eager`)
-completed 92/92 steps clean. Full evidence: `docs/05-troubleshooting.md`.
+`grad_norm = NaN`*; after such a step the optimizer poisons the weights and
+the fused loss reports exactly 0.0 — which is why the guard exists and why it
+may fire early in a real 27B run. It is **model-side, not communication**.
+The root-cause lead, the measured rates and the diagnostic run are in
+`docs/05-troubleshooting.md` ("grad_norm is NaN"); the env-gated diagnostics
+above name the exact op / parameter when it happens.
 
 **What this means for a run**: the guard aborts cleanly (validated — it fired
 at step 3 of a dry run) and `--resume` continues from the last checkpoint
 (validated on the toy). With this rate, a full 3-epoch run may need several
-resumes — before committing to that, spend one small job on the root cause:
-
-```bash
-# 3 steps, ~4 min — names the exact op whose backward goes NaN
-ROCM_QLORA_DETECT_ANOMALY=1 ROCM_QLORA_GRAD_CHECK=1 \
-  uv run rocm-qlora train --config configs/qwen3.8-27b.toml --dry-run
-```
-
-`scripts/poc_deltanet_backward.py` isolates one Gated DeltaNet layer at the
-27B's exact dimensions (needs a free GPU) for a targeted reproduction.
+resumes.
 
 ## If something goes wrong
 
