@@ -4,8 +4,9 @@ This is the fastest way to answer "did it actually learn?" — load the base
 model in 4-bit + the adapter, and talk to it. Differences from the base
 model (style, reasoning structure, domain vocabulary) show up immediately.
 
-Rendering: thinking blocks (` thinking…</think>`) are shown as dim text,
-the final answer as Markdown — the same split the model was trained with.
+Rendering: reasoning traces (everything up to the closing reasoning tag)
+are shown as dim text, the final answer as Markdown — the same split the
+model was trained with.
 
 Commands inside the loop:  /think on|off · /temp <x> · /max <n> · /reset · /exit
 """
@@ -21,7 +22,7 @@ from rich.markdown import Markdown
 from rich.prompt import Prompt
 
 from .config import Config
-from .data import ChatMessage
+from .data import THINK_OPEN, ChatMessage
 
 if TYPE_CHECKING:
     from transformers import GenerationConfig, PreTrainedModel, PreTrainedTokenizerBase
@@ -77,7 +78,7 @@ def _load(
 def _split_thinking(text: str) -> tuple[str | None, str]:
     if "</think>" in text:
         think, _, answer = text.partition("</think>")
-        think = think.replace(" thinking", "").strip("\n ")
+        think = think.replace(THINK_OPEN, "").strip("\n ")
         return think.strip(), answer.strip()
     return None, text
 

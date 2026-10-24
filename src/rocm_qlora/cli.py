@@ -91,6 +91,8 @@ def _resolve_resume_checkpoint(path: str) -> Path | None:
 
 def _print_dataset_table(cfg: Config, stats: DatasetStats) -> None:
     """Raw-file summary table (examples, turns, roles, char percentiles)."""
+    from .data import THINK_CLOSE, THINK_OPEN
+
     table = Table(title=f"{cfg.data.path}")
     table.add_column("property", style="dim")
     table.add_column("value")
@@ -102,7 +104,9 @@ def _print_dataset_table(cfg: Config, stats: DatasetStats) -> None:
         "assistant chars",
         f"p50={cp.p50:.0f} p90={cp.p90:.0f} p95={cp.p95:.0f} p99={cp.p99:.0f} p100={cp.p100:.0f}",
     )
-    table.add_row("reasoning traces", f"{stats.think_blocks} with  thinking, {stats.think_complete} complete")
+    table.add_row(
+        "reasoning traces", f"{stats.think_blocks} with {THINK_OPEN}…{THINK_CLOSE}, {stats.think_complete} complete"
+    )
     console.print(table)
 
 

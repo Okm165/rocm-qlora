@@ -153,6 +153,8 @@ def _print_dataset_status(
     console: Console, cfg: Config, stats: DatasetStats, profile: TokenProfile, n_train: int, n_eval: int
 ) -> None:
     """Dataset summary lines (rank 0); the rendered-example preview is `rocm-qlora data`'s job."""
+    from .data import THINK_CLOSE, THINK_OPEN
+
     pcts = profile.percentiles()
     turns = ", ".join(f"{k}: {v}" for k, v in stats.turns_per_example.items())
     console.print(
@@ -164,7 +166,7 @@ def _print_dataset_status(
         f"@ {cfg.data.max_length} ({profile.n_truncated} truncated, {profile.truncation_pct:.1f}%)"
     )
     console.print(
-        f"[dim]reasoning traces:[/dim] {stats.think_blocks} assistant turns with  thinking "
+        f"[dim]reasoning traces:[/dim] {stats.think_blocks} assistant turns with {THINK_OPEN}…{THINK_CLOSE} "
         f"({stats.think_complete} complete)"
     )
 

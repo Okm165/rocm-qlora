@@ -7,6 +7,8 @@ import json
 import pytest
 
 from rocm_qlora.data import (
+    THINK_CLOSE,
+    THINK_OPEN,
     DatasetError,
     load_sharegpt,
     profile_tokens,
@@ -102,3 +104,51 @@ def test_to_hf_dataset_and_split_are_seeded():
     split_b = split_dataset(ds, eval_fraction=0.2, seed=42)
     assert len(split_a["train"]) == 16 and len(split_a["test"]) == 4
     assert split_a["train"]["messages"] == split_b["train"]["messages"]  # seeded → deterministic
+
+
+def test_non_dict_turn_is_a_dataset_error(tmp_path):
+    path = tmp_path / "ds.json"
+    path.write_text(json.dumps([{"messages": [{"role": "user", "content": "hi"}, "oops"]}]))
+    with pytest.raises(DatasetError, match="turn 1 is not an object"):
+        load_sharegpt(path)
+
+
+def test_hf_dataset_always_uses_trl_messages_key(tmp_path):
+    """`data.messages_field` names the raw file's key; TRL only understands `messages`."""
+    path = tmp_path / "ds.json"
+    path.write_text(
+        json.dumps(
+            [
+                {"conversations": [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "yo"}]},
+                {"conversations": [{"role": "user", "content": "bye"}, {"role": "assistant", "content": "later"}]},
+            ]
+        )
+    )
+    examples, _ = load_sharegpt(path, messages_field="conversations")
+    ds = to_hf_dataset(examples, messages_field="conversations")
+    assert ds.column_names == ["messages"]
+
+
+def test_think_stats_use_the_documented_tags_and_order(tmp_path):
+    """` thinking` opens, `</think>` closes — a close before the open is not complete."""
+    path = tmp_path / "ds.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "messages": [
+                        {"role": "user", "content": "q"},
+                        {"role": "assistant", "content": THINK_OPEN + "here" + THINK_CLOSE + "answer"},
+                    ]
+                },
+                {
+                    "messages": [
+                        {"role": "user", "content": "q"},
+                        {"role": "assistant", "content": THINK_CLOSE + "stray" + THINK_CLOSE + "no open tag"},
+                    ]
+                },
+            ]
+        )
+    )
+    _, stats = load_sharegpt(path)
+    assert stats.think_blocks == 1 and stats.think_complete == 1

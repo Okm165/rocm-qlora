@@ -86,7 +86,7 @@ class QuantizationConfig(_Section):
 class DataConfig(_Section):
     #: ShareGPT-style JSON file (list of {messages: [...]}).
     path: str = ".data/raw/dataset.json"
-    #: Key holding the conversation turns in each example.
+    #: Key holding the conversation turns in the raw JSON file (TRL always sees `messages`).
     messages_field: str = "messages"
     #: Fraction held out for eval ([0, 0.5); tiny is fine).
     eval_fraction: Annotated[float, Field(ge=0.0, lt=0.5)] = 0.05

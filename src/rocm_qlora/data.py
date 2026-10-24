@@ -31,6 +31,11 @@ if TYPE_CHECKING:
 
 VALID_ROLES = {"system", "user", "assistant", "tool"}
 
+#: The dataset's reasoning-trace delimiters (docs/01). Built from pieces:
+#: angle brackets written as one literal have been mangled by tooling before.
+THINK_OPEN = "<" + "think" + ">"
+THINK_CLOSE = "<" + "/think" + ">"
+
 
 class ChatMessage(TypedDict):
     """One validated conversation turn."""
@@ -70,7 +75,7 @@ class DatasetStats:
     role_counts: dict[str, int]
     turns_per_example: dict[int, int]
     assistant_chars: list[int]
-    think_blocks: int  # assistant turns containing  thinking...</think>
+    think_blocks: int  # assistant turns containing THINK_OPEN
     think_complete: int  # ...with a matching closing tag
 
     def char_percentiles(self) -> Percentiles:
@@ -100,9 +105,11 @@ def load_sharegpt(
             roles_here.add(role)
             if role == "assistant":
                 assistant_chars.append(len(content))
-                if "<think" in content:
+                # docs/01's dataset convention: THINK_OPEN ... THINK_CLOSE traces
+                opened_at = content.find(THINK_OPEN)
+                if opened_at != -1:
                     think_blocks += 1
-                    if "</think" in content:
+                    if content.find(THINK_CLOSE) > opened_at:
                         think_complete += 1
         if "assistant" not in roles_here or "user" not in roles_here:
             raise DatasetError(f"{path}: example {i} must contain both user and assistant turns")
@@ -141,13 +148,17 @@ def _validated_messages(path: Path, i: int, item: Any, messages_field: str) -> l
     if not isinstance(messages, list) or len(messages) < 2:
         raise DatasetError(f"{path}: example {i}: '{messages_field}' must have >= 2 turns")
     for j, msg in enumerate(messages):
+        if not isinstance(msg, dict):
+            raise DatasetError(f"{path}: example {i}, turn {j} is not an object")
         role = msg.get("role")
         content = msg.get("content")
         if role not in VALID_ROLES:
             raise DatasetError(
                 f"{path}: example {i}, turn {j}: invalid role {role!r} (expected one of {sorted(VALID_ROLES)})"
             )
-        if not isinstance(content, str) or not content.strip():
+        if not isinstance(content, str):
+            raise DatasetError(f"{path}: example {i}, turn {j}: content must be a string")
+        if not content.strip():
             raise DatasetError(f"{path}: example {i}, turn {j}: empty content")
     return cast("list[ChatMessage]", messages)
 
@@ -261,10 +272,15 @@ def render_preview(
 
 
 def to_hf_dataset(examples: list[dict[str, list[ChatMessage]]], messages_field: str = "messages"):
-    """Wrap examples as a HF Dataset with only the messages column."""
+    """Wrap examples as a HF Dataset, always under TRL's `messages` key.
+
+    The column name is not configurable: `messages` is the key TRL's SFTTrainer
+    looks for in conversational data (and what `assistant_only_loss` requires).
+    ``data.messages_field`` only names the key inside the raw JSON file.
+    """
     from datasets import Dataset
 
-    return Dataset.from_list([{messages_field: item[messages_field]} for item in examples])
+    return Dataset.from_list([{"messages": item[messages_field]} for item in examples])
 
 
 def split_dataset(ds: Dataset, *, eval_fraction: float, seed: int):
