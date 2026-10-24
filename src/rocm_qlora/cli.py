@@ -321,7 +321,7 @@ def cmd_merge(args: argparse.Namespace) -> int:
     from .merge import merge_run
 
     console.rule("[bold cyan]merge[/bold cyan]")
-    merge_run(args.run, out_dir=args.out, console=console, device=args.device)
+    merge_run(args.run, out_dir=args.out, console=console)
     return 0
 
 
@@ -393,12 +393,6 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("merge", help="merge adapter into a bf16 model")
     p.add_argument("--run", required=True)
     p.add_argument("--out", default=None)
-    p.add_argument(
-        "--device",
-        choices=["auto", "cpu", "gpu"],
-        default="auto",
-        help="auto: CPU when host RAM fits the exact bf16 size + measured runtime overhead, else sharded GPUs",
-    )
     p.set_defaults(func=cmd_merge)
 
     return parser

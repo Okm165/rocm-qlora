@@ -2,22 +2,16 @@
 
 from __future__ import annotations
 
-import contextlib
-import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from .config import Config
-from .hardware import host_memory
-from .model import compute_dtype, load_tokenizer, parent_of, resolve_model_class
+from .model import compute_dtype, load_tokenizer, resolve_model_class
 from .utils import human_bytes
 
 if TYPE_CHECKING:
-    import torch
     from rich.console import Console
     from transformers import PreTrainedModel
-
-    from .hardware import HostMemory
 
 
 # ---------------------------------------------------------------------------
@@ -25,55 +19,43 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
-#: Host RAM the CPU merge path needs beyond the bf16 model itself: interpreter
-#: + torch/transformers/peft/bnb imports and the write path. Measured — a
-#: 1.6 GiB toy merge peaked at 4.1 GiB RSS; the bare import floor is 3.1 GiB.
-_MERGE_RUNTIME_BYTES = 4 * 2**30
+def _gpu_memory_budget() -> dict[int, int]:
+    """Free VRAM per GPU, as the dispatch budget.
 
-
-def _choose_merge_device(model_bytes: int, ram: HostMemory, console: Console, *, device: str = "auto") -> Any:
-    """Device map for the merge — CPU when host RAM fits, else shard across GPUs.
-
-    ``auto`` decides on two facts only: the exact bf16 size (safetensors
-    headers) and the measured runtime overhead. No safety-factor modelling —
-    if it still does not fit, the process OOMs and these printed facts are
-    what to react with; ``--device`` overrides the choice.
+    ``device_map="balanced"`` on its own would let accelerate spill layers to
+    the CPU (its default budget includes host RAM); passing only GPUs makes a
+    too-small device set fail loudly instead of silently merging on CPU.
     """
-    free = ram.get("available_gib", 0) * 2**30
-    needed = model_bytes + _MERGE_RUNTIME_BYTES
-    if device == "auto":
-        device = "cpu" if free > needed else "gpu"
-    if device == "cpu":
-        console.print(
-            f"[dim]merging on CPU ({human_bytes(model_bytes)} model + ~{human_bytes(_MERGE_RUNTIME_BYTES)} runtime, "
-            f"{ram['available_gib']:.0f} GiB RAM free)[/dim]"
-        )
-        return {"": "cpu"}
-    console.print(
-        f"[dim]merging sharded across GPUs ({human_bytes(model_bytes)} model, "
-        f"{ram['available_gib']:.0f} GiB RAM free vs ~{human_bytes(needed)} needed on CPU)[/dim]"
-    )
-    return "balanced"
+    import torch
+
+    count = torch.cuda.device_count()
+    if count == 0:
+        raise RuntimeError("merge needs visible GPUs — this tool has no CPU path")
+    return {i: torch.cuda.mem_get_info(i)[0] for i in range(count)}
 
 
-def _fold_adapter(cfg: Config, adapter_dir: Path, device_map: Any, console: Console) -> Any:
-    """Load the prepared 4-bit base, fold the LoRA adapter, dequantize to bf16."""
+def _fold_adapter(cfg: Config, adapter_dir: Path, console: Console) -> PreTrainedModel:
+    """Load the prepared 4-bit base on the GPUs, fold the LoRA adapter, dequantize."""
     import torch
     from peft import PeftModel
 
-    console.print("[dim]loading prepared 4-bit checkpoint…[/dim]")
+    console.print("[dim]loading prepared 4-bit checkpoint on the GPUs…[/dim]")
     model_cls = resolve_model_class(cfg.model.prepared_dir)
     model = model_cls.from_pretrained(
         cfg.model.prepared_dir,
         dtype=compute_dtype(cfg),
-        device_map=device_map,
+        device_map="balanced",
+        max_memory=_gpu_memory_budget(),
     )
     console.print("[dim]folding LoRA weights into the quantized model…[/dim]")
     model = PeftModel.from_pretrained(model, str(adapter_dir))
     model = model.merge_and_unload()
 
-    console.print("[dim]dequantizing NF4 → bf16…[/dim]")
-    model = _dequantize_linear4bit(model, dtype=torch.bfloat16)
+    console.print("[dim]dequantizing NF4 → bf16 on the GPUs…[/dim]")
+    # transformers' own dequantize path: replaces every Linear4bit with a
+    # plain Linear (bf16), keeps the accelerate dispatch hooks, and drops the
+    # quantization metadata so the saved config cannot claim 4-bit.
+    model = model.dequantize(dtype=torch.bfloat16)
     model.config.use_cache = True
     return model
 
@@ -83,13 +65,12 @@ def merge_run(
     *,
     out_dir: str | Path | None = None,
     console: Console | None = None,
-    device: str = "auto",
 ) -> Path:
     """Fold the adapter into the base, dequantize NF4 → bf16, save.
 
-    A 27B model needs ~55 GB of bf16 memory: host RAM if it fits, otherwise
-    the model is sharded across the available GPUs (``device_map="balanced"``).
-    ``device`` ("auto"/"cpu"/"gpu") overrides that choice.
+    A 27B model needs ~55 GB of bf16 memory, sharded across the GPUs
+    (``device_map="balanced"``, GPUs only — the free-VRAM budget is printed
+    by the run itself; if the device set is too small, it fails loudly).
     """
     from rich.console import Console
 
@@ -102,15 +83,12 @@ def merge_run(
     out = Path(out_dir) if out_dir else run_dir / "merged"
     out.mkdir(parents=True, exist_ok=True)
 
-    device_map = _choose_merge_device(
-        _bf16_model_bytes(Path(cfg.model.prepared_dir)), host_memory(), console, device=device
-    )
-    model = _fold_adapter(cfg, adapter_dir, device_map, console)
+    model = _fold_adapter(cfg, adapter_dir, console)
 
     console.print(f"[dim]saving bf16 model to {out} …[/dim]")
-    # `save_original_format=False`: transformers would otherwise try to revert
-    # the bnb load conversion (re-packing bf16 weights into NF4), which is not
-    # implemented — the weights are plain bf16 and are saved as such.
+    # `save_original_format=False`: the model is already in its final format
+    # (plain bf16), so transformers must not try to revert the bnb load
+    # conversion (re-packing bf16 weights into NF4 is not implemented).
     model.save_pretrained(out, max_shard_size="4GB", save_original_format=False)
     load_tokenizer(cfg).save_pretrained(out)
 
@@ -120,63 +98,3 @@ def merge_run(
         "  [dim]GGUF export for llama.cpp: docs/06-27b-runbook.md (step 6).[/dim]"
     )
     return out
-
-
-def _bf16_model_bytes(prepared_dir: Path) -> int:
-    """Exact bf16 size of a prepared checkpoint, from the safetensors headers.
-
-    Disk bytes are not parameter counts (NF4 packs two values per uint8), and
-    the headers carry the shapes — so the merged size is exact for any
-    prepared directory, no meta file required.
-    """
-    import math
-    import struct
-
-    dtype_bytes = {"U8": 4, "F16": 2, "BF16": 2, "F32": 4}  # U8 = 2 NF4 values/byte, 2 bytes each in bf16
-    aux = (".absmax", ".quant_map", ".nested_", ".quant_state")
-    total = 0
-    for shard in sorted(prepared_dir.glob("*.safetensors")):
-        with open(shard, "rb") as fh:
-            header_len = struct.unpack("<Q", fh.read(8))[0]
-            header = json.loads(fh.read(header_len))
-        for name, info in header.items():
-            if name == "__metadata__" or any(tag in name for tag in aux):
-                continue
-            total += math.prod(info["shape"]) * dtype_bytes.get(info["dtype"], 2)
-    return total
-
-
-def _dequantize_linear4bit(model: PreTrainedModel, *, dtype: torch.dtype):
-    """Replace every Linear4bit module with a plain Linear holding bf16 weights."""
-    import bitsandbytes as bnb
-    import torch
-
-    for name, module in list(model.named_modules()):
-        if not isinstance(module, bnb.nn.Linear4bit):
-            continue
-        weight = module.weight
-        dequant = bnb.functional.dequantize_4bit(  # pyright: ignore[reportAttributeAccessIssue]  # runtime API
-            weight.data,
-            weight.quant_state,  # pyright: ignore[reportAttributeAccessIssue]  # set by Params4bit
-        ).to(dtype)
-        new = torch.nn.Linear(module.in_features, module.out_features, bias=module.bias is not None)  # pyright: ignore[reportUnnecessaryComparison]
-        new.weight = torch.nn.Parameter(dequant, requires_grad=False)
-        if module.bias is not None:  # pyright: ignore[reportUnnecessaryComparison]  # biasless Linears
-            new.bias = torch.nn.Parameter(module.bias.data.to(dtype), requires_grad=False)
-        new = new.to(device=dequant.device)
-        parent, attr = parent_of(model, name)
-        setattr(parent, attr, new)
-    # The weights are bf16 now: drop the quantization metadata (a config that
-    # still claims 4-bit would re-quantize on reload and confuse GGUF
-    # converters) and the consumed load-time conversion record (its reverse —
-    # re-packing to NF4 — is not implemented, so keeping it breaks saving).
-    with contextlib.suppress(AttributeError):
-        delattr(model.config, "quantization_config")
-    with contextlib.suppress(Exception):
-        model._weight_conversions = None  # pyright: ignore[reportArgumentType]  # dynamic attr
-    import gc
-
-    gc.collect()
-    with contextlib.suppress(Exception):
-        torch.cuda.empty_cache()
-    return model

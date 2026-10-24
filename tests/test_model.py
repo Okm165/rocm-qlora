@@ -35,7 +35,7 @@ def _model() -> _Fake27BShape:
 
 
 def test_prepare_meta_counts_tied_weights_once():
-    """A tied embed/lm_head is one tensor; merge sizes the bf16 output from this total."""
+    """A tied embed/lm_head is one tensor; the meta must count it once."""
     model = _model()
     model.lm_head.weight = model.embed_tokens.weight
     cfg = Config.from_dict({})

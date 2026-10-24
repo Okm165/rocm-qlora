@@ -427,9 +427,7 @@ def _build_trainer(
     logger: logging.Logger,
 ) -> tuple[SFTTrainer, MetricsCallback | None]:
     """Phase 3: SFTConfig, observability callback, init-sync skip, SFTTrainer."""
-    sft_config = build_sft_config(
-        cfg, run_dir, world_size=world_size, n_train=data.n_train, dry_run=args.dry_run, max_steps=args.max_steps
-    )
+    sft_config = build_sft_config(cfg, run_dir, dry_run=args.dry_run, max_steps=args.max_steps)
     if ui is not None:  # ui exists exactly on rank 0
         eff = cfg.optim.per_device_batch_size * cfg.optim.grad_accum * world_size
         ui.console.print(

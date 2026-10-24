@@ -3,7 +3,8 @@
 The lifecycle of a fine-tune in this project:
 
     prepare   (once per base model)
-        load source checkpoint on CPU (fp16)
+        load source checkpoint into host RAM (fp16; it is far larger than
+        one card — only each module's quantization runs on a GPU)
         optionally re-quantize modules the upstream checkpoint left in 16-bit
         normalize the stored quantization config (compute dtype, skip list)
         save -> .data/models/<name>-nf4  +  finetune_meta.json (exact numbers)
@@ -133,8 +134,12 @@ class PrepareResult:
     disk_gb: float
 
 
-def _requantize_linear(module: nn.Linear, cfg: Config, *, device: str | None = None):
-    """Convert an fp16 nn.Linear into bnb Linear4bit (NF4), preserving math."""
+def _requantize_linear(module: nn.Linear, cfg: Config):
+    """Convert an fp16 nn.Linear into bnb Linear4bit (NF4), preserving math.
+
+    The source module must already live on the target GPU: moving the new
+    module triggers bitsandbytes' lazy quantization there.
+    """
     import bitsandbytes as bnb
     import torch
 
@@ -157,8 +162,7 @@ def _requantize_linear(module: nn.Linear, cfg: Config, *, device: str | None = N
     )
     if module.bias is not None:  # pyright: ignore[reportUnnecessaryComparison]  # biasless Linears exist
         new.bias = torch.nn.Parameter(module.bias.data.clone(), requires_grad=False)
-    # Moving the module triggers lazy quantization on the target device.
-    return new.to(device or weight.device)
+    return new.to(weight.device)
 
 
 def parent_of(model: nn.Module, dotted_name: str):
@@ -195,7 +199,7 @@ def prepare_checkpoint(cfg: Config, *, force: bool = False, log: Callable[[str],
 
     log(f"Saving prepared checkpoint to {out_dir} …")
     out_dir.mkdir(parents=True, exist_ok=True)
-    _save_prepared(model, out_dir, log=log)
+    _save_prepared(model, out_dir)
     load_tokenizer(cfg).save_pretrained(out_dir)
 
     meta = _prepare_meta(model, cfg, requantized)
@@ -226,10 +230,15 @@ def _cached_prepare_result(out_dir: Path, meta_path: Path, *, force: bool) -> Pr
 
 
 def _load_source_model(cfg: Config, log: Callable[[str], None]):
-    """Load the source checkpoint on CPU in fp16 (low-RAM mode)."""
+    """Load the source checkpoint into host RAM in fp16.
+
+    Host staging, not a CPU execution mode: the checkpoint is far too large
+    for one card, so it lives in host RAM and only each module's quantization
+    hops onto a GPU (see `_requantize_all`).
+    """
     import torch
 
-    log(f"Loading source checkpoint {cfg.model.name!r} on CPU (fp16, low RAM mode)…")
+    log(f"Loading source checkpoint {cfg.model.name!r} into host RAM (fp16)…")
     model_cls = resolve_model_class(cfg.model.name)
     model = model_cls.from_pretrained(
         cfg.model.name,
@@ -266,19 +275,15 @@ def _requantize_all(model: nn.Module, cfg: Config, *, source_quantized: bool, lo
     requantized: list[str] = []
     if not (cfg.quantization.requantize_modules or cfg.quantization.requantize_vision or not source_quantized):
         return requantized
-    # Quantizing on a GPU is much faster than CPU; use the freest GPU.
-    target_device = _pick_free_gpu_for_surgery()
+    # The quantization runs on the freest GPU (this is a GPU-only tool); the
+    # model itself stays host-resident because it is far larger than one card.
+    device = _surgery_device()
     for name, module in list(model.named_modules()):
         if not _should_quantize(name, module, cfg, source_quantized=source_quantized):
             continue
         parent, attr = parent_of(model, name)
-        old = module
-        if target_device is not None:
-            old = old.to(target_device)
-        new = _requantize_linear(cast("nn.Linear", old), cfg, device=target_device or "cpu")
-        if target_device is not None:
-            new = new.to("cpu")  # keep the model CPU-resident for save
-        setattr(parent, attr, new)
+        new = _requantize_linear(cast("nn.Linear", module.to(device)), cfg)
+        setattr(parent, attr, new.to("cpu"))  # back to host RAM for the save
         requantized.append(name)
     log(f"Re-quantized {len(requantized)} module(s) to NF4")
     return requantized
@@ -332,49 +337,33 @@ def _prepare_meta(model: PreTrainedModel, cfg: Config, requantized: list[str]) -
     }
 
 
-def _save_prepared(model: PreTrainedModel, out_dir: Path, *, log: Callable[[str], None]) -> None:
-    """save_pretrained with a fallback for non-reversible weight conversions.
+def _save_prepared(model: PreTrainedModel, out_dir: Path) -> None:
+    """Save the prepared checkpoint.
 
-    transformers v5 replays checkpoint->model conversions in reverse when
-    saving; some VLM checkpoints carry vision-side conversions without a
-    reverse, failing the plain save. Vision tensors are unused for text-only
-    training, so dropping the non-reversible conversions is safe (the dry-run
-    reload verifies the text-side round-trip).
+    ``save_original_format=False``: the weights are already in their final
+    format (NF4 + the 16-bit leftovers), so transformers must not try to
+    revert the load-time weight conversions — some VLM checkpoints carry
+    vision-side conversions without a reverse, which fails the plain save.
     """
-    try:
-        model.save_pretrained(out_dir, max_shard_size="4GB")
-        return
-    except (NotImplementedError, ValueError) as exc:
-        log(f"save hit a non-reversible weight conversion ({type(exc).__name__}); retrying with a filtered set")
-
-    conversions = list(getattr(model, "_weight_conversions", None) or [])
-    kept = []
-    for conversion in conversions:
-        try:
-            conversion.reverse_transform()
-            kept.append(conversion)
-        except (NotImplementedError, ValueError):
-            log(
-                f"  dropping non-reversible conversion: {type(conversion).__name__} "
-                f"{getattr(conversion, 'source_patterns', '')}"
-            )
-    model._weight_conversions = kept or None  # pyright: ignore[reportArgumentType]  # dynamic attr
-    model.save_pretrained(out_dir, safe_serialization=True, max_shard_size="4GB")
+    model.save_pretrained(out_dir, max_shard_size="4GB", save_original_format=False)
 
 
-def _pick_free_gpu_for_surgery() -> str | None:
-    try:
-        from .hardware import gpu_snapshot
+def _surgery_device() -> str:
+    """The freest visible GPU for the quantization surgery.
 
-        snap = gpu_snapshot()
-        if not snap:
-            return None
-        best = max(snap, key=lambda g: g.mem_free_b)
-        if best.mem_free_b < 2 * 10**9:
-            return None
-        return f"cuda:{best.index}"
-    except Exception:
-        return None
+    ``prepare`` is a GPU tool: quantizing on the host CPU is not supported, so
+    a machine where rocm-smi reports no GPUs fails here loudly.
+    """
+    from .hardware import gpu_snapshot
+
+    snap = gpu_snapshot()
+    if not snap:
+        raise RuntimeError(
+            "prepare needs a visible GPU for the quantization surgery "
+            "(rocm-smi reported none — run `rocm-qlora doctor` to see why)"
+        )
+    best = max(snap, key=lambda g: g.mem_free_b)
+    return f"cuda:{best.index}"
 
 
 def _dir_size_gb(path: Path) -> float:

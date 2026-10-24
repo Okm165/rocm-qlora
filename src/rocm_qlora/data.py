@@ -189,20 +189,14 @@ def _token_count(
     same template renders the training data, so an estimate here would poison
     the length profile that `max_length` is chosen from.
     """
-    ids: Any = tokenizer.apply_chat_template(  # dynamic union; normalized just below
+    ids = tokenizer.apply_chat_template(
         cast("list[dict[str, str]]", messages),  # TypedDict rows are plain dicts
         tokenize=True,
         add_generation_prompt=False,
+        return_dict=False,  # a plain list[int], not a BatchEncoding
         **(template_kwargs or {}),
     )
-    # transformers v5 may return a BatchEncoding/dict, a tensor, or a list.
-    if isinstance(ids, dict) or hasattr(ids, "input_ids"):
-        ids = ids["input_ids"]
-    if hasattr(ids, "tolist"):
-        ids = ids.tolist()
-    while ids and isinstance(ids[0], list):  # strip batch dims
-        ids = ids[0]
-    return len(ids)
+    return len(cast("list[int]", ids))
 
 
 def profile_tokens(

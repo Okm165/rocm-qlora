@@ -38,7 +38,7 @@ dependencies = [
     "rich>=14",          # terminal output: progress lines, tables, chat
     "matplotlib>=3.10",  # charts written to .outputs/runs/<id>/charts/
     "numpy>=2",          # numeric helpers for charts/statistics
-    "psutil>=6",         # host RAM/CPU sampling (doctor, merge device choice)
+    "psutil>=6",         # host RAM/CPU sampling (doctor)
     "tomli-w>=1.2",      # TOML writer for config snapshots (tomllib only reads)
     "pydantic>=2.14",    # config schema: strict parsing + field-level constraints
 ]

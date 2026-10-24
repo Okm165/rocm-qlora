@@ -26,10 +26,9 @@ uv run rocm-qlora report --run .outputs/runs/<timestamp>-qwen3.8-27b
 # 5. talk to the adapter (base + LoRA) as a sanity check
 uv run rocm-qlora chat --run .outputs/runs/<timestamp>-qwen3.8-27b
 
-# 6. fold the adapter into a bf16 model (~55 GB, sized exactly from the
-#    checkpoint's safetensors headers; host RAM when it fits the size plus
-#    the measured ~4 GiB runtime overhead, else sharded across the GPUs —
-#    override with --device cpu|gpu), then export GGUF
+# 6. fold the adapter into a bf16 model (~55 GB, sharded across the GPUs —
+#    needs ~55 GB of aggregate free VRAM; fails loudly if the device set is
+#    too small), then export GGUF
 uv run rocm-qlora merge --run .outputs/runs/<timestamp>-qwen3.8-27b
 python llama.cpp/convert_hf_to_gguf.py .outputs/runs/<run>/merged \
     --outfile model-f16.gguf --outtype f16

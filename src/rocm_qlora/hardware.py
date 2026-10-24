@@ -295,11 +295,7 @@ def torch_runtime_info() -> TorchRuntime:
                 archs.append(getattr(props, "gcnArchName", "?"))
             info["device_names"] = names
             info["gcn_arch"] = archs
-            info["bf16_supported"] = all(
-                torch.cuda.get_device_properties(i).major >= 8
-                or "gfx11" in getattr(torch.cuda.get_device_properties(i), "gcnArchName", "")
-                for i in range(torch.cuda.device_count())
-            )
+            info["bf16_supported"] = torch.cuda.is_bf16_supported()
     except Exception as exc:  # pragma: no cover - doctor reports instead of crashing
         info["error"] = f"{type(exc).__name__}: {exc}"
     return info

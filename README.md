@@ -41,6 +41,10 @@ rendered into your terminal at runtime.
   `docs/05`.
 * **Configs explain themselves.** Every knob is commented where you set
   it (`configs/*.toml`); the reasoning behind the values is `docs/03`.
+* **GPU-only, no CPU paths.** Model work (quantize, train, merge) runs on the
+  GPUs — host RAM is staging for checkpoints too large for one card, nothing
+  more. If a device set is too small, the run fails loudly; the numbers to
+  react with are in `docs/02`/`docs/06`.
 * **Loud guards, no silent rot.** Numerically broken training (NaN or
   exactly-zero loss, NaN `grad_norm`) aborts with a named `error` event
   and a doc pointer instead of continuing (`docs/05`).
@@ -52,8 +56,8 @@ rendered into your terminal at runtime.
 * Python 3.12 via [uv](https://docs.astral.sh/uv/) — the interpreter and the
   whole stack (torch, TRL, PEFT, bitsandbytes, Triton) are pinned in
   `pyproject.toml` / `uv.lock`
-* Disk: ~20 GB for the 27B checkpoint; host RAM matters for `prepare` (stages
-  the checkpoint to re-quantize) and `merge` (holds the bf16 result)
+* Disk: ~20 GB for the 27B checkpoint; host RAM matters only for `prepare`
+  (staging a checkpoint that is far larger than one card)
 
 ## Quickstart
 
