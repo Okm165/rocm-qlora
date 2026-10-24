@@ -1,9 +1,11 @@
 # =============================================================================
 # Qwen3-8B · QLoRA — the comfortable fallback (downloads on first use)
 # =============================================================================
-# Much smaller memory footprint than the 27B (≈8 GB/GPU), no checkpoint
-# surgery needed (this model is fully quantized by prepare), and the whole
-# pipeline is identical. Use it to iterate on data/hyperparameters quickly,
+# Much smaller memory footprint than the 27B (≈8 GB/GPU, derived from the
+# parameter count — this config has not been run on this box; the 27B numbers
+# in configs/qwen3.8-27b.toml are measured), no checkpoint surgery needed
+# (this model is fully quantized by prepare), and the whole pipeline is
+# identical. Use it to iterate on data/hyperparameters quickly,
 # then apply the lessons to the 27B config.
 # =============================================================================
 

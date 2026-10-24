@@ -63,6 +63,7 @@ def _sft_kwargs(cfg: Config, run_dir: Path, *, dry_run: bool, max_steps: int | N
     eval_enabled = cfg.eval.per_epoch and cfg.data.eval_fraction > 0 and not dry_run
     kwargs: dict[str, Any] = {
         "output_dir": str(run_dir / "adapter"),
+        # A dry run is a smoke test: short sequences keep the three steps quick.
         "max_length": min(cfg.data.max_length, 512) if dry_run else cfg.data.max_length,
         "truncation_mode": cfg.data.truncation_mode,
         "packing": cfg.data.packing,
