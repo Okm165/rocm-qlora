@@ -348,29 +348,6 @@ def gpu_health(records: Sequence[MetricsRecord], out_path: str | Path, *, meta: 
         _watermark(fig, meta)
 
 
-def eval_curve(records: Sequence[MetricsRecord], out_path: str | Path, *, meta: dict[str, Any] | None = None) -> None:
-    """Eval-loss chart."""
-    train = select(records, "train")
-    evals = select(records, "eval")
-    with _chart(out_path, figsize=(10, 4)) as (fig, ax):
-        if not train and not evals:
-            _no_data(ax)
-            return
-        if train:
-            losses = [r["loss"] for r in train]
-            steps = [r["step"] for r in train]
-            ax.plot(steps, ema(losses, span=20), color=COLORS["loss_ema"], lw=2.0, label="train EMA")
-        if evals:
-            es = [r["step"] for r in evals]
-            el = [r["eval_loss"] for r in evals]
-            ax.plot(es, el, "o--", color=COLORS["eval"], lw=1.8, ms=7, label="eval (holdout)")
-        ax.set_xlabel("optimizer step")
-        ax.set_ylabel("loss (nats/token)")
-        ax.set_title("Train vs eval")
-        ax.legend(loc="upper right")
-        _watermark(fig, meta)
-
-
 def epoch_bars(records: Sequence[MetricsRecord], out_path: str | Path, *, meta: dict[str, Any] | None = None) -> None:
     """Per-epoch train/eval loss bars."""
     epochs = select(records, "epoch_end")
@@ -541,6 +518,11 @@ def render_charts(
     run_dir = Path(run_dir)
     charts = run_dir / "charts"
     charts.mkdir(parents=True, exist_ok=True)
+    if not live:
+        # The full pass owns the chart set: drop stale PNGs (e.g. a chart
+        # removed from the code) so the report only embeds current output.
+        for stale in charts.glob("*.png"):
+            stale.unlink()
     evals = select(records, "eval")
     if live:
         specs = [
@@ -550,7 +532,6 @@ def render_charts(
     else:
         specs = [
             ("loss.png", lambda p: loss_curve(records, p, meta=meta, eval_records=evals)),
-            ("eval.png", lambda p: eval_curve(records, p, meta=meta)),
             ("lr.png", lambda p: lr_schedule(records, p, meta=meta)),
             ("grad_norm.png", lambda p: grad_norm(records, p, meta=meta)),
             ("throughput.png", lambda p: throughput(records, p, meta=meta)),

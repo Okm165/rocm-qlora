@@ -115,21 +115,6 @@ EXPLAINERS: dict[str, Explainer] = {
             ),
             links=("docs/04-reading-the-plots.md",),
         ),
-        Explainer(
-            key="vram_budget",
-            title="Where the VRAM goes",
-            body=(
-                "Per GPU, roughly: `NF4 weights + 16-bit parts (embeddings/head) + LoRA "
-                "weights + optimizer states + activations`.\n\n"
-                "* gradient checkpointing recomputes activations instead of storing them "
-                "(slower, much smaller); `activation_offloading` parks the saved copies in "
-                "pinned host RAM\n"
-                "* TRL's fused chunked head never materializes full logits — which is also "
-                "why `lm_head` stays 16-bit\n\n"
-                "The preflight table prints this decomposition for the resolved config."
-            ),
-            links=("docs/04-reading-the-plots.md",),
-        ),
     ]
 }
 

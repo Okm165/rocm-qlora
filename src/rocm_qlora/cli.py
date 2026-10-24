@@ -285,13 +285,12 @@ def _ensure_prepared(cfg: Config, args: argparse.Namespace) -> bool:
     return False
 
 
-def _plan_vram(cfg: Config, book: ExplainerBook) -> float:
+def _plan_vram(cfg: Config) -> float:
     """VRAM estimate for the preflight; falls back to 30 GB without geometry."""
     geom = _load_geometry(cfg)
     if geom is None:
         console.print("[yellow]could not load model geometry — skipping the VRAM estimate[/yellow]")
         return 30.0
-    book.show("vram_budget")
     return _print_vram_estimate(cfg, geom)
 
 
@@ -345,7 +344,7 @@ def cmd_train(args: argparse.Namespace) -> int:
 
     book.show("qlora")
 
-    needed = _plan_vram(cfg, book)
+    needed = _plan_vram(cfg)
     plan = preflight_gpus(cfg, needed)
     for warning in plan.warnings:
         console.print(f"[yellow]! {warning}[/yellow]")

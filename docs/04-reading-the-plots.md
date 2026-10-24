@@ -27,11 +27,12 @@ Interpretation table:
 | sawtooth up | LR too high / grad noise | ↓ lr, ↑ grad_accum |
 | flat from step 0 | no learning: template bug, LR too low, or adapters not attached | check the model panel, ↑ lr |
 | sudden cliff down | a hard subset learned / schedule step | inspect per-epoch means |
-| slow climb at the end | overfitting or schedule ended early | watch eval.png |
+| slow climb at the end | overfitting or schedule ended early | watch the eval markers |
 
-## eval.png — the overfitting dial
+## The eval markers — the overfitting dial
 
-Train EMA vs holdout points. Rules:
+The orange dashed points on loss.png are the holdout evaluations (epochs.png
+summarizes them per epoch). Rules:
 
 * both falling, gap stable → healthy generalization.
 * train falling, eval flat/rising → memorization. Cut epochs or raise dropout.

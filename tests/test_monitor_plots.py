@@ -132,9 +132,13 @@ def test_truncated_last_line_tolerated(tmp_path):
 def test_render_charts_and_report(tmp_path):
     records = synth_records()
     meta = {"run_name": "test", "model": "toy", "max_grad_norm": 0.3, "warmup_end_step": 5}
+    charts_dir = tmp_path / "charts"
+    charts_dir.mkdir()
+    (charts_dir / "stale-chart.png").write_bytes(b"old")  # a chart removed from the code
     written = render_charts(tmp_path, records=records, meta=meta, live=False)
     names = {p.name for p in written}
-    assert {"loss.png", "eval.png", "dashboard.png", "vram.png"} <= names
+    assert {"loss.png", "dashboard.png", "vram.png"} <= names
+    assert not (charts_dir / "stale-chart.png").exists()  # the full pass owns the set
     assert all(p.exists() and p.stat().st_size > 1000 for p in written)
     # live subset is smaller and cheap
     live = render_charts(tmp_path, records=records, meta=meta, live=True)

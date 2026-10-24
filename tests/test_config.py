@@ -80,6 +80,7 @@ def test_checkpoint_every_n_steps_default_and_validation():
 )
 def test_validate_reports_each_section(mutate, needle):
     cfg = Config.from_dict({})
-    assert cfg.validation_errors() == []
     mutate(cfg)
-    assert any(needle in e for e in cfg.validation_errors())
+    with pytest.raises(ConfigError) as exc:
+        Config.from_dict(cfg.model_dump())
+    assert needle in str(exc.value)

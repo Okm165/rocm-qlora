@@ -291,16 +291,6 @@ class Config(_Section):
             node[parts[-1]] = value
         return Config.from_dict(merged)
 
-    # -- validation ----------------------------------------------------------
-
-    def validation_errors(self) -> list[str]:
-        """Re-validate the current values; returns human-readable errors (empty = valid)."""
-        try:
-            Config.model_validate(self.model_dump())
-        except ValidationError as exc:
-            return _format_errors(exc)
-        return []
-
 
 def _format_errors(exc: ValidationError) -> list[str]:
     """One user-facing line per pydantic error (loc path + message)."""
