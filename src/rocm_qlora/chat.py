@@ -96,11 +96,13 @@ def _apply_command(
     if user.startswith("/temp"):
         try:
             value = float(user.split()[-1])
-            gen.temperature = max(value, 1e-5)
-            gen.do_sample = value > 0
-            console.print(f"[dim]temperature = {gen.temperature}[/dim]")
         except ValueError:
-            console.print("[red]usage: /temp 0.7[/red]")
+            console.print("[red]usage: /temp 0.7  (0 = greedy)[/red]")
+            return True, think
+        gen.do_sample = value > 0
+        if value > 0:
+            gen.temperature = value
+        console.print(f"[dim]temperature = {value if value > 0 else 'greedy (0)'}[/dim]")
         return True, think
     if user.startswith("/max"):
         try:
@@ -174,7 +176,7 @@ def run_chat(
     # temperature/top_p/top_k defaults are the Qwen3.8 model-card sampling values
     gen = GenerationConfig(
         max_new_tokens=max_new_tokens,
-        temperature=max(temperature, 1e-5),
+        temperature=temperature if temperature > 0 else 1.0,
         do_sample=temperature > 0,
         top_p=top_p,
         top_k=top_k,

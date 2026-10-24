@@ -24,7 +24,7 @@ def test_apply_command_mutates_generation_config():
     assert abs(gen.temperature - 0.2) < 1e-9 and gen.do_sample is True
 
     _, _ = _apply_command("/temp 0", gen, think=True, history=history, console=console)
-    assert gen.do_sample is False and gen.temperature >= 1e-5  # greedy path, clamped
+    assert gen.do_sample is False and abs(gen.temperature - 0.2) < 1e-9  # greedy; temperature unused
 
     _, _ = _apply_command("/max 512", gen, think=True, history=history, console=console)
     assert gen.max_new_tokens == 512
