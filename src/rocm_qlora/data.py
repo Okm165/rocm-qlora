@@ -18,9 +18,10 @@ which keeps unit tests fast (stub tokenizer, no downloads).
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from .utils import percentile
 
@@ -29,6 +30,42 @@ if TYPE_CHECKING:
     from transformers import PreTrainedTokenizerBase
 
 VALID_ROLES = {"system", "user", "assistant", "tool"}
+
+
+class ChatMessage(TypedDict):
+    """One validated conversation turn."""
+
+    role: str
+    content: str
+
+
+class DataProfile(TypedDict):
+    """The ``profile.json`` artifact written by the ``rocm-qlora data`` command."""
+
+    n_examples: int
+    percentiles: dict[str, float]
+    coverage_at_max_length: float
+    max_length: int
+    truncated: int
+    total_tokens: int
+    suggested_max_length_p99: int
+    think_blocks: int
+
+
+@dataclass(frozen=True)
+class Percentiles:
+    """The five-point length profile used to choose ``max_length``."""
+
+    p50: float
+    p90: float
+    p95: float
+    p99: float
+    p100: float
+
+
+def _percentiles(values: Sequence[float]) -> Percentiles:
+    p50, p90, p95, p99, p100 = (percentile(values, q) for q in (50, 90, 95, 99, 100))
+    return Percentiles(p50, p90, p95, p99, p100)
 
 
 # ---------------------------------------------------------------------------
@@ -50,18 +87,19 @@ class DatasetStats:
     think_blocks: int  # assistant turns containing  thinking...</think>
     think_complete: int  # ...with a matching closing tag
 
-    def char_percentiles(self, which: str = "assistant") -> dict[str, float]:
+    def char_percentiles(self, which: str = "assistant") -> Percentiles:
         """Character-length percentiles of assistant (or user) turns."""
-        values = sorted(self.assistant_chars if which == "assistant" else self.user_chars)
-        return {f"p{q}": percentile(values, q) for q in (50, 90, 95, 99, 100)}
+        return _percentiles(self.assistant_chars if which == "assistant" else self.user_chars)
 
 
-def load_sharegpt(path: str | Path, messages_field: str = "messages") -> tuple[list[dict[str, Any]], DatasetStats]:
+def load_sharegpt(
+    path: str | Path, messages_field: str = "messages"
+) -> tuple[list[dict[str, list[ChatMessage]]], DatasetStats]:
     """Load + validate a ShareGPT-style JSON file."""
     path = Path(path)
     raw = _read_json_list(path)
 
-    examples: list[dict[str, Any]] = []
+    examples: list[dict[str, list[ChatMessage]]] = []
     role_counts: dict[str, int] = {}
     turns_hist: dict[int, int] = {}
     assistant_chars: list[int] = []
@@ -113,7 +151,7 @@ def _read_json_list(path: Path) -> list[Any]:
     return raw
 
 
-def _validated_messages(path: Path, i: int, item: Any, messages_field: str) -> list[dict[str, Any]]:
+def _validated_messages(path: Path, i: int, item: Any, messages_field: str) -> list[ChatMessage]:
     """Validate example `i` and every turn; returns the type-checked turns."""
     if not isinstance(item, dict) or messages_field not in item:
         raise DatasetError(f"{path}: example {i} has no '{messages_field}' key")
@@ -129,7 +167,7 @@ def _validated_messages(path: Path, i: int, item: Any, messages_field: str) -> l
             )
         if not isinstance(content, str) or not content.strip():
             raise DatasetError(f"{path}: example {i}, turn {j}: empty content")
-    return messages
+    return cast("list[ChatMessage]", messages)
 
 
 # ---------------------------------------------------------------------------
@@ -150,9 +188,9 @@ class TokenProfile:
         """Percentage of examples truncated at max_length."""
         return 100.0 * self.n_truncated / max(1, self.n_total)
 
-    def percentiles(self) -> dict[str, float]:
+    def percentiles(self) -> Percentiles:
         """Token-length percentiles (p50/p90/p95/p99/p100)."""
-        return {f"p{q}": percentile(self.lengths, q) for q in (50, 90, 95, 99, 100)}
+        return _percentiles(self.lengths)
 
     def coverage_at(self, cap: int) -> float:
         """Fraction of examples that fit under ``cap`` tokens."""
@@ -163,7 +201,7 @@ class TokenProfile:
 
 def profile_tokens(
     tokenizer: PreTrainedTokenizerBase,
-    examples: list[dict[str, Any]],
+    examples: list[dict[str, list[ChatMessage]]],
     *,
     messages_field: str = "messages",
     max_length: int = 1024,
@@ -180,7 +218,10 @@ def profile_tokens(
     for item in examples:
         try:
             ids: Any = tokenizer.apply_chat_template(  # dynamic union; normalized just below
-                item[messages_field], tokenize=True, add_generation_prompt=False, **(template_kwargs or {})
+                cast("list[dict[str, str]]", item[messages_field]),  # TypedDict rows are plain dicts
+                tokenize=True,
+                add_generation_prompt=False,
+                **(template_kwargs or {}),
             )
             # transformers v5 may return a BatchEncoding/dict, a tensor, or a list.
             if isinstance(ids, dict) or hasattr(ids, "input_ids"):
@@ -207,7 +248,7 @@ def profile_tokens(
 
 def render_preview(
     tokenizer: PreTrainedTokenizerBase,
-    example: dict[str, Any],
+    example: dict[str, list[ChatMessage]],
     *,
     messages_field: str = "messages",
     template_kwargs: dict[str, Any] | None = None,
@@ -218,7 +259,10 @@ def render_preview(
         text = cast(
             "str",
             tokenizer.apply_chat_template(
-                example[messages_field], tokenize=False, add_generation_prompt=False, **(template_kwargs or {})
+                cast("list[dict[str, str]]", example[messages_field]),  # TypedDict rows are plain dicts
+                tokenize=False,
+                add_generation_prompt=False,
+                **(template_kwargs or {}),
             ),
         )  # tokenize=False ⟹ str
     except Exception as exc:  # pragma: no cover - depends on tokenizer quirks
@@ -234,7 +278,7 @@ def render_preview(
 # ---------------------------------------------------------------------------
 
 
-def to_hf_dataset(examples: list[dict[str, Any]], messages_field: str = "messages"):
+def to_hf_dataset(examples: list[dict[str, list[ChatMessage]]], messages_field: str = "messages"):
     """Wrap examples as a HF Dataset with only the messages column."""
     from datasets import Dataset
 

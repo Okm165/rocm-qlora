@@ -23,18 +23,27 @@ launcher consults it to decide:
 
 from __future__ import annotations
 
-import json
 import os
 import socket
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import TypedDict
 
 from .config import Config
-from .hardware import HipIpcProbe, MatmulBench, SdpaProbe, gpu_processes, gpu_snapshot, select_gpus
-from .utils import read_json, timestamp_slug
+from .hardware import (
+    CpuInfo,
+    HipIpcProbe,
+    HostMemory,
+    MatmulBench,
+    SdpaProbe,
+    TorchRuntime,
+    gpu_processes,
+    gpu_snapshot,
+    select_gpus,
+)
+from .utils import now_iso, read_json, timestamp_slug, write_json
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DOCTOR_VERDICT = REPO_ROOT / ".context" / "doctor-latest.json"
@@ -55,6 +64,13 @@ class BnbSmoke(TypedDict, total=False):
     max_err_seq4: float
 
 
+class DoctorHost(TypedDict):
+    """The ``host`` section of doctor-latest.json."""
+
+    ram: HostMemory
+    cpu: CpuInfo
+
+
 class DoctorVerdict(TypedDict, total=False):
     """`.context/doctor-latest.json`: what `doctor` writes, what the launcher reads.
 
@@ -62,7 +78,7 @@ class DoctorVerdict(TypedDict, total=False):
     """
 
     created: str
-    host: dict[str, Any]
+    host: DoctorHost
     packages: dict[str, str]
     sdpa: SdpaProbe
     bnb_smoke: BnbSmoke
@@ -261,6 +277,31 @@ def preflight_gpus(cfg: Config, needed_gb: float) -> Preflight:
     return Preflight(gpu_ids=plan.gpus, free_gb=plan.free_gb, warnings=warnings)
 
 
+class GpuFingerprint(TypedDict):
+    """One GPU as recorded in env_fingerprint.json."""
+
+    index: int
+    mem_total_gb: float
+    mem_free_gb: float
+    temp_edge_c: float | None
+    power_w: float | None
+
+
+class EnvFingerprint(TypedDict):
+    """``env_fingerprint.json``: machine + software state stored with a run."""
+
+    created: str
+    gpus_selected: list[int]
+    gpu_snapshot: list[GpuFingerprint]
+    host_memory: HostMemory
+    cpu: CpuInfo
+    kernel: str
+    amdgpu_driver: str
+    packages: dict[str, str]
+    torch_runtime: TorchRuntime
+    env: dict[str, str | bool]
+
+
 def write_env_fingerprint(run_dir: Path, cfg: Config, gpu_ids: list[int]) -> None:
     """Snapshot of machine + software state, stored with the run."""
     from .hardware import (
@@ -272,17 +313,17 @@ def write_env_fingerprint(run_dir: Path, cfg: Config, gpu_ids: list[int]) -> Non
         torch_runtime_info,
     )
 
-    fingerprint = {
-        "created": __import__("datetime").datetime.now().astimezone().isoformat(timespec="seconds"),
+    fingerprint: EnvFingerprint = {
+        "created": now_iso(),
         "gpus_selected": gpu_ids,
         "gpu_snapshot": [
-            {
-                "index": g.index,
-                "mem_total_gb": g.mem_total_gb,
-                "mem_free_gb": g.mem_free_gb,
-                "temp_edge_c": g.temp_edge_c,
-                "power_w": g.power_w,
-            }
+            GpuFingerprint(
+                index=g.index,
+                mem_total_gb=g.mem_total_gb,
+                mem_free_gb=g.mem_free_gb,
+                temp_edge_c=g.temp_edge_c,
+                power_w=g.power_w,
+            )
             for g in gpu_snapshot()
         ],
         "host_memory": host_memory(),
@@ -302,4 +343,4 @@ def write_env_fingerprint(run_dir: Path, cfg: Config, gpu_ids: list[int]) -> Non
             ),
         },
     }
-    (run_dir / "env_fingerprint.json").write_text(json.dumps(fingerprint, indent=2, default=str))
+    write_json(run_dir / "env_fingerprint.json", fingerprint)

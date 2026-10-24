@@ -35,7 +35,6 @@ from rich.text import Text
 from transformers import TrainerCallback, TrainerControl, TrainerState, TrainingArguments
 
 from .config import Config
-from .explain import ExplainerBook
 from .hardware import GpuInfo, gpu_snapshot
 from .utils import Stopwatch, as_float, fmt_eta, fmt_float, fmt_int, human_duration, linear_slope, now_iso, safe_div
 
@@ -543,7 +542,6 @@ class MetricsCallback(TrainerCallback):
         *,
         console: Console,
         dashboard: RichDashboard | None,
-        book: ExplainerBook,
         sampler: GpuSampler,
         writer: MetricsWriter,
         total_tokens_estimate: int = 0,
@@ -554,7 +552,6 @@ class MetricsCallback(TrainerCallback):
         self.run_dir = run_dir
         self.console = console
         self.dashboard = dashboard
-        self.book = book
         self.sampler = sampler
         self.writer = writer
         self.total_tokens_estimate = total_tokens_estimate

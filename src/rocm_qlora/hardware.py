@@ -183,9 +183,18 @@ def host_memory() -> HostMemory:
             return {"total_gib": float("nan"), "available_gib": float("nan")}
 
 
-def cpu_info() -> dict[str, Any]:
+class CpuInfo(TypedDict, total=False):
+    """`cpu_info`'s result — the ``cpu`` section of doctor-latest.json."""
+
+    cores: int | None
+    physical_cores: int | None
+    freq_mhz: int
+    model: str
+
+
+def cpu_info() -> CpuInfo:
     """CPU model + thread count from /proc/cpuinfo."""
-    info: dict[str, Any] = {"cores": os.cpu_count()}
+    info: CpuInfo = {"cores": os.cpu_count()}
     try:
         import psutil
 
@@ -248,9 +257,22 @@ def package_versions() -> dict[str, str]:
     return out
 
 
-def torch_runtime_info() -> dict[str, Any]:
+class TorchRuntime(TypedDict, total=False):
+    """`torch_runtime_info`'s result — the ``torch_runtime`` section of the fingerprint."""
+
+    torch: str
+    hip: str | None
+    cuda_available: bool
+    device_count: int
+    device_names: list[str]
+    gcn_arch: list[str]
+    bf16_supported: bool
+    error: str
+
+
+def torch_runtime_info() -> TorchRuntime:
     """Torch/HIP runtime facts. Imports torch — call only in GPU-aware commands."""
-    info: dict[str, Any] = {}
+    info: TorchRuntime = {}
     try:
         import torch
 

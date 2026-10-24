@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from transformers import PreTrainedModel, PreTrainedTokenizerBase
     from trl import SFTTrainer
 
-    from .data import DatasetStats, TokenProfile
+    from .data import ChatMessage, DatasetStats, TokenProfile
     from .explain import ExplainerBook
     from .monitor import GpuSampler, MetricsCallback, MetricsWriter, RichDashboard, RunSummary
 
@@ -248,7 +248,7 @@ def _show_dataset_panel(
     profile: TokenProfile,
     n_train: int,
     eval_ds: Dataset | None,
-    examples: list[dict[str, Any]],
+    examples: list[dict[str, list[ChatMessage]]],
     tokenizer: PreTrainedTokenizerBase,
     logger: logging.Logger,
 ) -> None:
@@ -266,7 +266,7 @@ def _show_dataset_panel(
     table.add_row("turns", ", ".join(f"{k}: {v}" for k, v in stats.turns_per_example.items()))
     table.add_row(
         "tokens/example",
-        " ".join(f"p{k}={pcts[f'p{k}']:.0f}" for k in (50, 90, 95, 99)) + f" max={pcts['p100']:.0f}",
+        f"p50={pcts.p50:.0f} p90={pcts.p90:.0f} p95={pcts.p95:.0f} p99={pcts.p99:.0f} max={pcts.p100:.0f}",
     )
     table.add_row(
         f"coverage @ max_length={cfg.data.max_length}",
@@ -420,7 +420,6 @@ def _build_trainer(
             run_dir,
             console=ui.console,
             dashboard=ui.dashboard,
-            book=ui.book,
             sampler=ui.sampler,
             writer=ui.writer,
             total_tokens_estimate=data.total_tokens_estimate,

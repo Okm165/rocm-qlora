@@ -16,8 +16,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import asdict
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from rich.console import Console
 from rich.panel import Panel
@@ -29,9 +30,9 @@ from .explain import kv_table
 from .utils import fmt_int, human_bytes, human_duration, timestamp_slug, write_json
 
 if TYPE_CHECKING:
-    from .data import DatasetStats, TokenProfile
+    from .data import DataProfile, DatasetStats, Percentiles, TokenProfile
     from .explain import ExplainerBook
-    from .hardware import GpuInfo, HostMemory, ModelGeometry
+    from .hardware import CpuInfo, GpuInfo, HostMemory, ModelGeometry, TorchRuntime
     from .launcher import BnbSmoke, DoctorVerdict
 
 DEFAULT_CONFIG = "configs/qwen3.8-27b.toml"
@@ -75,7 +76,7 @@ def _load_config(args: argparse.Namespace) -> Config:
     return cfg
 
 
-def _load_geometry(cfg: Config):
+def _load_geometry(cfg: Config) -> ModelGeometry | None:
     """Model geometry: exact from prepare's meta, else fetched config.json."""
     from .hardware import geometry_from_finetune_meta, geometry_from_hf_config
 
@@ -136,7 +137,7 @@ def _resolve_resume_checkpoint(path: str) -> Path | None:
 # ---------------------------------------------------------------------------
 
 
-def _doctor_host_panel(mem: HostMemory, cpu: dict[str, Any]) -> None:
+def _doctor_host_panel(mem: HostMemory, cpu: CpuInfo) -> None:
     """Host summary panel (CPU/RAM/kernel/driver/disk)."""
     from .hardware import disk_free_gb, kernel_version, rocm_driver_version
 
@@ -166,7 +167,7 @@ def _doctor_gpu_table(gpus: list[GpuInfo]) -> None:
     console.print(gpu_table)
 
 
-def _doctor_software_tables(versions: dict[str, Any], runtime: dict[str, Any]) -> None:
+def _doctor_software_tables(versions: dict[str, str], runtime: TorchRuntime) -> None:
     """Installed-package and torch-runtime tables."""
     vtable = Table(title="software")
     vtable.add_column("package", style="dim")
@@ -323,7 +324,7 @@ def _doctor_bnb_smoke() -> BnbSmoke:
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
 
-def _doctor_markdown(verdict: DoctorVerdict, runtime: dict[str, Any], gpus: list[GpuInfo]) -> str:
+def _doctor_markdown(verdict: DoctorVerdict, runtime: TorchRuntime, gpus: list[GpuInfo]) -> str:
     """Render the doctor verdict as the `.context/doctor-latest.md` artifact."""
     lines = [f"# Doctor report — {verdict.get('created', '')}", ""]
     lines.append(f"- torch: {runtime.get('torch', '?')} · HIP: {runtime.get('hip', '?')}")
@@ -349,18 +350,21 @@ def _print_dataset_table(cfg: Config, stats: DatasetStats) -> None:
     table.add_row("turns/example", ", ".join(f"{k}: {v}" for k, v in stats.turns_per_example.items()))
     table.add_row("roles", ", ".join(f"{k}: {v}" for k, v in stats.role_counts.items()))
     cp = stats.char_percentiles("assistant")
-    table.add_row("assistant chars", " ".join(f"p{k[1:]}={v:.0f}" for k, v in cp.items()))
+    table.add_row(
+        "assistant chars",
+        f"p50={cp.p50:.0f} p90={cp.p90:.0f} p95={cp.p95:.0f} p99={cp.p99:.0f} p100={cp.p100:.0f}",
+    )
     table.add_row("reasoning traces", f"{stats.think_blocks} with  thinking, {stats.think_complete} complete")
     console.print(table)
 
 
-def _print_token_table(cfg: Config, profile: TokenProfile, pcts: dict[str, float]) -> None:
+def _print_token_table(cfg: Config, profile: TokenProfile, pcts: Percentiles) -> None:
     """Chat-templated token-length table."""
     ttable = Table(title="token lengths (chat-templated)")
     ttable.add_column("metric", style="dim")
     ttable.add_column("value", justify="right")
-    for k, v in pcts.items():
-        ttable.add_row(k, f"{v:.0f}")
+    for name, value in asdict(pcts).items():
+        ttable.add_row(name, f"{value:.0f}")
     ttable.add_row("total tokens", fmt_int(profile.total_tokens))
     ttable.add_row(
         f"coverage @ max_length={cfg.data.max_length}", f"{profile.coverage_at(cfg.data.max_length) * 100:.1f}%"
@@ -369,9 +373,9 @@ def _print_token_table(cfg: Config, profile: TokenProfile, pcts: dict[str, float
     console.print(ttable)
 
 
-def _print_max_length_hint(cfg: Config, pcts: dict[str, float]) -> int:
+def _print_max_length_hint(cfg: Config, pcts: Percentiles) -> int:
     """Suggest a max_length at p99 (rounded to 128); returns the suggestion."""
-    suggestion = int(round(pcts["p99"] / 128) * 128)
+    suggestion = int(round(pcts.p99 / 128) * 128)
     console.print(
         f"[dim]hint: for ≥99% coverage set data.max_length ≈ [bold]{suggestion}[/bold] "
         f"(current: {cfg.data.max_length})[/dim]"
@@ -380,7 +384,7 @@ def _print_max_length_hint(cfg: Config, pcts: dict[str, float]) -> int:
 
 
 def _write_profile_artifacts(
-    cfg: Config, profile: TokenProfile, stats: DatasetStats, pcts: dict[str, float], suggestion: int
+    cfg: Config, profile: TokenProfile, stats: DatasetStats, pcts: Percentiles, suggestion: int
 ) -> Path:
     """Chart + profile.json under <output_root>/data-profile/<timestamp>."""
     from .plots import token_length_hist
@@ -393,19 +397,17 @@ def _write_profile_artifacts(
         max_length=cfg.data.max_length,
         meta={"run_name": "data-profile"},
     )
-    write_json(
-        out_dir / "profile.json",
-        {
-            "n_examples": stats.n_examples,
-            "percentiles": pcts,
-            "coverage_at_max_length": profile.coverage_at(cfg.data.max_length),
-            "max_length": cfg.data.max_length,
-            "truncated": profile.n_truncated,
-            "total_tokens": profile.total_tokens,
-            "suggested_max_length_p99": suggestion,
-            "think_blocks": stats.think_blocks,
-        },
-    )
+    payload: DataProfile = {
+        "n_examples": stats.n_examples,
+        "percentiles": asdict(pcts),
+        "coverage_at_max_length": profile.coverage_at(cfg.data.max_length),
+        "max_length": cfg.data.max_length,
+        "truncated": profile.n_truncated,
+        "total_tokens": profile.total_tokens,
+        "suggested_max_length_p99": suggestion,
+        "think_blocks": stats.think_blocks,
+    }
+    write_json(out_dir / "profile.json", payload)
     return out_dir
 
 
