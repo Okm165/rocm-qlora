@@ -53,7 +53,7 @@ uv run rocm-qlora merge --run .outputs/runs/<id>  # bf16 merge → GGUF for llam
 uv run rocm-qlora report --run .outputs/runs/<id> # regenerate charts + report
 ```
 
-Validate the whole pipeline in ~2 minutes with the toy model (same hybrid
+Validate the whole pipeline in ~4 minutes with the toy model (same hybrid
 architecture, tiny weights):
 
 ```bash
@@ -65,7 +65,7 @@ uv run rocm-qlora train  --config configs/toy.toml --dry-run
 
 | config | model | notes |
 |---|---|---|
-| `configs/qwen3.8-27b.toml` | `unsloth/Qwen3.8-27B-unsloth-bnb-4bit` | the heavy config: 27B dense hybrid (Gated DeltaNet + full attention), ~20 GB/GPU with DDP across all GPUs |
+| `configs/qwen3.8-27b.toml` | `unsloth/Qwen3.8-27B-unsloth-bnb-4bit` | the heavy config: 27B dense hybrid (Gated DeltaNet + full attention), ~21–24 GB/GPU measured (batch 1; peaks near the 24 GB ceiling) |
 | `configs/qwen3-8b.toml` | `Qwen/Qwen3-8B` | comfortable fallback, ~8 GB/GPU, downloads on first use |
 | `configs/toy.toml` | `Qwen/Qwen3.5-0.8B` | same architecture family as 3.8; pipeline rehearsal |
 
@@ -77,7 +77,7 @@ host RAM before quantizing (~55 GB for 27B — times the number of DDP ranks).
 
 1. loads the **pre-quantized** upstream checkpoint (~22 GB, mostly NF4),
 2. **re-quantizes the modules upstream left in 16-bit** (`in_proj_qkv`, the
-   vision tower) — worth ~6 GB per GPU, the difference between fitting and
+   vision tower) — worth ~5 GB per GPU, the difference between fitting and
    OOM on 24 GB cards,
 3. keeps `lm_head` in 16-bit (TRL 1.16 computes every SFT loss through a
    fused chunked head that slices the raw weight tensor — a quantized head
@@ -89,11 +89,11 @@ host RAM before quantizing (~55 GB for 27B — times the number of DDP ranks).
 
 | component | GB |
 |---|---|
-| NF4 weights + 16-bit embeddings/lm_head | ~19 (measured: 19.1 at step 1) |
+| NF4 weights + 16-bit embeddings/lm_head | ~17.3 (exact accounting in finetune_meta.json) |
 | LoRA (r=16, all-linear) + 8-bit Adam | ~0.7 |
-| activations @ 1536 tokens, batch 2, gradient checkpointing | ~2 |
+| activations @ 1536 tokens, batch 1, gradient checkpointing | ~1.3 |
 | HIP context + fragmentation | ~1 |
-| **total** | **~22 of 24** |
+| **total** | **~21 of 24** (measured 21.1 at step 1; sawtooths toward ~24 — docs/06) |
 
 ### Speed: what's applied, what was rejected — and why
 
@@ -105,8 +105,8 @@ Applied (all measured):
 | AOTriton flash SDPA | 16 full-attention layers run flash kernels |
 | RCCL dma-buf IPC (`HSA_ENABLE_IPC_MODE_LEGACY=0`) | ~26 GB/s vs ~5.2 GB/s SHM collectives (bit-exact at 27B sizes; SHM kept as the default — see the notes below) |
 | pre-quantized checkpoint (`prepare`) | no 55 GB on-the-fly quantization pass at load |
-| micro-batch 2 × accum 2 (same effective batch) | ~2× arithmetic intensity: at batch 1 the 17 GB of frozen weights stream through memory mostly for nothing |
-| `embed_tokens`/`lm_head` stay bf16 | step memory 25 → ~20 GB, which is what lets batch 2 + 1536 tokens fit |
+| micro-batch 1 × accum 4 (same effective batch) | ~half the activation memory of 2 × 2 — the 1536-token batch-2 runs peaked at 25.5/25.75 GB and OOMed (see docs/05); batch 2 is faster when it fits |
+| `embed_tokens`/`lm_head` stay bf16 | step memory 25 → ~20 GB; the fit comes from batch 1 × accum 4 (batch 2 × 1536 peaked 25.5–25.75 GB and OOMed — docs/05) |
 | DDP init-broadcast skip | removes a redundant 4.9 GB transient (identical checkpoints + shared seed ⇒ replicas identical by construction) |
 | `adamw_8bit`, non-reentrant gradient checkpointing, 8 dataloader workers | standard hygiene |
 
@@ -127,7 +127,7 @@ Rejected, with evidence:
 .outputs/runs/<timestamp>-<name>/
 ├── charts/            loss, eval, lr, grad_norm, throughput, vram, gpu_health, epochs, dashboard (.png, live-updated)
 ├── logs/rank-*.log
-├── adapter/           final LoRA adapter + per-epoch checkpoints
+├── adapter/           final LoRA adapter + checkpoints (27B: every 42 steps)
 ├── metrics.jsonl      one JSON record per optimizer step (the single source of truth)
 ├── summary.json       headline numbers
 ├── report.md          auto-generated with interpretation + next steps
@@ -161,7 +161,7 @@ Rejected, with evidence:
   pure-PyTorch fallbacks (no flash-linear-attention/Triton kernels — the
   RDNA3 Triton path is the unstable part of the ecosystem).
 * **Allocator**: `PYTORCH_HIP_ALLOC_CONF=garbage_collection_threshold:0.8`
-  (no `expandable_segments` — contested on RDNA3).
+  (no `expandable_segments` — tried 2026-10-23, corrupted numerics; see docs/05).
 
 ## Repository layout
 
@@ -185,8 +185,9 @@ tests/                   26 tests: config, data, metrics/charts/health-guards, h
 ```
 
 **Before the 27B run**: `docs/06-27b-runbook.md` — exact commands,
-expected timings/VRAM, what to watch, the open intermittent-NaN issue, and
-the guard/resume behaviour.
+expected timings/VRAM, what to watch, the open intermittent-NaN issue, the
+GPU-reset/MES failure class, the mid-epoch checkpoint cadence (42 steps),
+and the guard/resume behaviour.
 
 ## Code quality
 

@@ -11,10 +11,10 @@ import math
 import os
 import random
 import time
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO, final
 
 # ---------------------------------------------------------------------------
 # Human-friendly formatting (used everywhere in the terminal UI)
@@ -49,12 +49,6 @@ def human_duration(seconds: float | None) -> str:
     return f"{minutes}m {sec:02d}s"
 
 
-def human_rate(value: float | None, unit: str = "/s", digits: int = 1) -> str:
-    if value is None or (isinstance(value, float) and math.isnan(value)):
-        return "n/a"
-    return f"{value:,.{digits}f}{unit}"
-
-
 def fmt_float(value: float | None, digits: int = 4) -> str:
     if value is None:
         return "n/a"
@@ -69,12 +63,6 @@ def fmt_int(value: int | float | None) -> str:
     if value is None:
         return "n/a"
     return f"{int(value):,}"
-
-
-def fmt_pct(value: float | None, digits: int = 1) -> str:
-    if value is None:
-        return "n/a"
-    return f"{value * 100:.{digits}f}%"
 
 
 def fmt_eta(seconds: float | None) -> str:
@@ -99,20 +87,15 @@ def timestamp_slug() -> str:
     return datetime.now().strftime("%Y-%m-%d_%H%M")
 
 
+@final
 class Stopwatch:
-    """Tiny monotonic stopwatch with laps."""
+    """Tiny monotonic stopwatch."""
 
     def __init__(self) -> None:
         self._t0 = time.monotonic()
-        self._last = self._t0
 
     def elapsed(self) -> float:
         return time.monotonic() - self._t0
-
-    def lap(self) -> float:
-        now = time.monotonic()
-        dt, self._last = now - self._last, now
-        return dt
 
 
 # ---------------------------------------------------------------------------
@@ -121,30 +104,39 @@ class Stopwatch:
 
 
 def read_json(path: str | Path) -> Any:
+    """Read a JSON file (raises on parse errors)."""
     with open(path, encoding="utf-8") as fh:
         return json.load(fh)
 
 
-def write_json(path: str | Path, obj: Any) -> None:
+def _atomic_write(path: str | Path, write: Callable[[TextIO], None]) -> None:
+    """Write via a sibling tmp file + fsync + rename (crash-safe)."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(obj, fh, indent=2, ensure_ascii=False, default=str)
+        write(fh)
         fh.flush()
         os.fsync(fh.fileno())
     os.replace(tmp, path)
+
+
+def write_json(path: str | Path, obj: Any) -> None:
+    """Write JSON (UTF-8, indent=2), creating parent dirs."""
+
+    def dump(fh: TextIO) -> None:
+        json.dump(obj, fh, indent=2, ensure_ascii=False, default=str)
+
+    _atomic_write(path, dump)
 
 
 def write_text(path: str | Path, text: str) -> None:
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with open(tmp, "w", encoding="utf-8") as fh:
+    """Write text (UTF-8), creating parent dirs."""
+
+    def dump(fh: TextIO) -> None:
         fh.write(text)
-        fh.flush()
-        os.fsync(fh.fileno())
-    os.replace(tmp, path)
+
+    _atomic_write(path, dump)
 
 
 # ---------------------------------------------------------------------------
@@ -152,7 +144,14 @@ def write_text(path: str | Path, text: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def safe_div(a: float, b: float, default: float = float("nan")) -> float:
+def as_float(value: float | None) -> float:
+    """Coerce a filtered optional metric to float (callers drop the Nones)."""
+    assert value is not None  # the caller's comprehension filtered Nones
+    return value
+
+
+def safe_div(a: float, b: float, default: float = float("nan")) -> float:  # pyright: ignore[reportCallInDefaultInitializer]  # NaN sentinel
+    """Division that returns a fallback on zero denominators."""
     return a / b if b else default
 
 
@@ -170,7 +169,7 @@ def percentile(sorted_values: Sequence[float], q: float) -> float:
     return float(sorted_values[lo] * (1 - frac) + sorted_values[hi] * frac)
 
 
-def linear_slope(values: Iterable[float]) -> float:
+def linear_slope(values: Iterable[float | None]) -> float:
     """Least-squares slope of y over x=0..n-1. Used for loss-trend arrows."""
     vals = [v for v in values if v is not None and not math.isnan(v)]
     n = len(vals)

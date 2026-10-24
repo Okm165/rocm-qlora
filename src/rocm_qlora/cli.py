@@ -17,6 +17,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from rich.console import Console
 from rich.panel import Panel
@@ -24,7 +25,14 @@ from rich.table import Table
 
 from . import __version__
 from .config import Config, ConfigError
+from .explain import kv_table
 from .utils import fmt_int, human_bytes, human_duration, timestamp_slug, write_json
+
+if TYPE_CHECKING:
+    from .data import DatasetStats, TokenProfile
+    from .explain import ExplainerBook
+    from .hardware import GpuInfo, ModelGeometry
+    from .launcher import BnbSmoke, DoctorVerdict
 
 DEFAULT_CONFIG = "configs/qwen3.8-27b.toml"
 console = Console()
@@ -73,19 +81,19 @@ def _load_geometry(cfg: Config):
 
     meta = Path(cfg.model.prepared_dir) / "finetune_meta.json"
     if meta.exists():
-        geom = geometry_from_finetune_meta(meta, lora_r=cfg.lora.r)
+        geom = geometry_from_finetune_meta(meta)
         if geom:
             return geom
     try:
         from huggingface_hub import hf_hub_download
 
         p = hf_hub_download(cfg.model.name, "config.json")
-        return geometry_from_hf_config(Path(p), lora_r=cfg.lora.r)
+        return geometry_from_hf_config(Path(p))
     except Exception:
         return None
 
 
-def _print_vram_estimate(cfg: Config, geom) -> float:
+def _print_vram_estimate(cfg: Config, geom: ModelGeometry) -> float:
     """Print the VRAM decomposition table; returns the estimated total (GB)."""
     from .hardware import estimate_training_vram
 
@@ -128,32 +136,11 @@ def _resolve_resume_checkpoint(path: str) -> Path | None:
 # ---------------------------------------------------------------------------
 
 
-def cmd_doctor(args: argparse.Namespace) -> int:
-    from .hardware import (
-        cpu_info,
-        disk_free_gb,
-        gpu_snapshot,
-        host_memory,
-        kernel_version,
-        matmul_benchmark,
-        package_versions,
-        probe_sdpa,
-        rocm_driver_version,
-        torch_runtime_info,
-    )
+def _doctor_host_panel(mem: dict[str, Any], cpu: dict[str, Any]) -> None:
+    """Host summary panel (CPU/RAM/kernel/driver/disk)."""
+    from .hardware import disk_free_gb, kernel_version, rocm_driver_version
 
-    _load_config(args) if getattr(args, "config", None) else None
-    context_dir = Path(".context")
-    context_dir.mkdir(parents=True, exist_ok=True)
-
-    console.rule(f"[bold cyan]rocm-qlora doctor[/bold cyan] · v{__version__}")
-
-    # --- host ---------------------------------------------------------------
-    mem = host_memory()
-    cpu = cpu_info()
-    host = Table.grid(padding=(0, 2))
-    host.add_column(style="dim", justify="right")
-    host.add_column()
+    host = kv_table()
     host.add_row("CPU", f"{cpu.get('model', '?')} ({cpu.get('cores')} threads)")
     host.add_row("RAM", f"{mem['total_gib']:.0f} GiB total · {mem['available_gib']:.0f} GiB available")
     host.add_row("kernel", kernel_version())
@@ -161,8 +148,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     host.add_row("disk free", human_bytes(disk_free_gb(".") * 1e9))
     console.print(Panel(host, title="host", border_style="blue"))
 
-    # --- GPUs ---------------------------------------------------------------
-    gpus = gpu_snapshot()
+
+def _doctor_gpu_table(gpus: list[GpuInfo]) -> None:
+    """Per-GPU VRAM/temp/power/util table."""
     gpu_table = Table(title="GPUs (rocm-smi)")
     for col in ("#", "VRAM total", "VRAM free", "temp", "power", "util"):
         gpu_table.add_column(col, justify="right" if col != "#" else "left")
@@ -177,8 +165,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         )
     console.print(gpu_table)
 
-    # --- versions -----------------------------------------------------------
-    versions = package_versions()
+
+def _doctor_software_tables(versions: dict[str, Any], runtime: dict[str, Any]) -> None:
+    """Installed-package and torch-runtime tables."""
     vtable = Table(title="software")
     vtable.add_column("package", style="dim")
     vtable.add_column("version")
@@ -186,8 +175,6 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         vtable.add_row(name, version)
     console.print(vtable)
 
-    # --- torch runtime ------------------------------------------------------
-    runtime = torch_runtime_info()
     rtable = Table(title="torch runtime")
     rtable.add_column("key", style="dim")
     rtable.add_column("value")
@@ -195,9 +182,16 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         rtable.add_row(key, str(value))
     console.print(rtable)
 
-    # --- SDPA probe ---------------------------------------------------------
-    verdict: dict = {}
+
+def _doctor_probes(args: argparse.Namespace) -> DoctorVerdict:
+    """SDPA / bitsandbytes / RCCL-IPC probes (+ optional matmul bench).
+
+    Returns the verdict dict the launcher reads from .context/doctor-latest.json.
+    """
+    verdict: DoctorVerdict = {}
     if not args.fast:
+        from .hardware import probe_sdpa
+
         console.print("[dim]probing SDPA backends (fresh subprocess per backend, ~30-60 s)…[/dim]")
         sdpa = probe_sdpa()
         verdict["sdpa"] = sdpa
@@ -216,9 +210,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         console.print(stable)
         console.print(f"[bold]verdict:[/bold] {sdpa['verdict']} → attn_implementation={sdpa['attn_implementation']}")
 
-    # --- bitsandbytes 4-bit smoke test ---------------------------------------
-    if not args.fast:
-        bnb_result = _bnb_smoke()
+        bnb_result = _doctor_bnb_smoke()
         verdict["bnb_smoke"] = bnb_result
         status = "[green]✓[/green]" if bnb_result.get("ok") else f"[red]✗[/red] {bnb_result.get('error', '')}"
         console.print(f"bitsandbytes 4-bit smoke (train + decode shapes): {status}")
@@ -227,8 +219,6 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                 "[red]decode-shape NaN detected — upgrade bitsandbytes (ROCm GEMV fix) before using `chat`[/red]"
             )
 
-    # --- RCCL IPC transport probe --------------------------------------------
-    if not args.fast:
         from .hardware import probe_hip_ipc
 
         ipc = probe_hip_ipc()
@@ -243,14 +233,39 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                 "training will fall back to shared-memory collectives; set NCCL_P2P_DISABLE=1 in [env.extra] to silence"
             )
 
-    # --- optional matmul benchmark -------------------------------------------
     if args.bench:
+        from .hardware import matmul_benchmark
+
         console.print("[dim]bf16 matmul benchmark (8192³)…[/dim]")
         bench = matmul_benchmark()
         verdict["bench"] = bench
         console.print(
             f"[bold]{bench['tflops']:.1f} TFLOPS[/bold] bf16 (8192³, {bench['seconds'] * 1000:.0f} ms/matmul)"
         )
+    return verdict
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    """Run the environment doctor; writes .context/doctor-latest.{json,md}."""
+    from .hardware import cpu_info, gpu_snapshot, host_memory, package_versions, torch_runtime_info
+
+    context_dir = Path(".context")
+    context_dir.mkdir(parents=True, exist_ok=True)
+
+    console.rule(f"[bold cyan]rocm-qlora doctor[/bold cyan] · v{__version__}")
+
+    mem = host_memory()
+    cpu = cpu_info()
+    _doctor_host_panel(mem, cpu)
+
+    gpus = gpu_snapshot()
+    _doctor_gpu_table(gpus)
+
+    versions = package_versions()
+    runtime = torch_runtime_info()
+    _doctor_software_tables(versions, runtime)
+
+    verdict = _doctor_probes(args)
 
     # --- write artifacts ------------------------------------------------------
     verdict["created"] = timestamp_slug()
@@ -267,7 +282,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 0
 
 
-def _bnb_smoke() -> dict:
+def _doctor_bnb_smoke() -> BnbSmoke:
     """Quantize a Linear on GPU; check train-shape and decode-shape numerics."""
     import torch
 
@@ -283,24 +298,33 @@ def _bnb_smoke() -> dict:
         q = bnb.nn.Linear4bit(
             512, 256, bias=False, compute_dtype=torch.bfloat16, compress_statistics=True, quant_type="nf4"
         )
-        q.weight = bnb.nn.Params4bit(lin.weight.data, requires_grad=False, quant_type="nf4", compress_statistics=True)
+        q.weight = bnb.nn.Params4bit(
+            lin.weight.data,
+            requires_grad=False,
+            quant_type="nf4",  # pyright: ignore[reportCallIssue]  # bnb stubs omit the 4-bit params
+            compress_statistics=True,  # pyright: ignore[reportCallIssue]
+        )
         q = q.to(device)
-        result: dict = {"ok": True}
+        result: BnbSmoke = {"ok": True}
+        errors: dict[int, float] = {}
         for seq in (1, 4):
             x = torch.randn(1, seq, 512, device=device, dtype=torch.bfloat16)
             y = q(x)
             ref = lin(x.to(torch.float16)).float()
             err = (y.float() - ref).abs().max().item()
-            result[f"max_err_seq{seq}"] = err
+            errors[seq] = err
             if seq == 1 and (torch.isnan(y).any() or err > 1.0):
                 result["decode_nan"] = True
                 result["ok"] = False
+        result["max_err_seq1"] = errors.get(1, float("nan"))
+        result["max_err_seq4"] = errors.get(4, float("nan"))
         return result
     except Exception as exc:
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
 
-def _doctor_markdown(verdict: dict, runtime: dict, gpus) -> str:
+def _doctor_markdown(verdict: DoctorVerdict, runtime: dict[str, Any], gpus: list[GpuInfo]) -> str:
+    """Render the doctor verdict as the `.context/doctor-latest.md` artifact."""
     lines = [f"# Doctor report — {verdict.get('created', '')}", ""]
     lines.append(f"- torch: {runtime.get('torch', '?')} · HIP: {runtime.get('hip', '?')}")
     lines.append(f"- devices: {runtime.get('device_count', 0)}")
@@ -316,15 +340,8 @@ def _doctor_markdown(verdict: dict, runtime: dict, gpus) -> str:
     return "\n".join(lines) + "\n"
 
 
-def cmd_data(args: argparse.Namespace) -> int:
-    from .data import load_sharegpt, profile_tokens, render_preview
-    from .model import load_tokenizer
-    from .plots import token_length_hist
-
-    cfg = _load_config(args)
-    console.rule("[bold cyan]dataset profile[/bold cyan]")
-    examples, stats = load_sharegpt(cfg.data.path, cfg.data.messages_field)
-
+def _print_dataset_table(cfg: Config, stats: DatasetStats) -> None:
+    """Raw-file summary table (examples, turns, roles, char percentiles)."""
     table = Table(title=f"{cfg.data.path}")
     table.add_column("property", style="dim")
     table.add_column("value")
@@ -336,30 +353,37 @@ def cmd_data(args: argparse.Namespace) -> int:
     table.add_row("reasoning traces", f"{stats.think_blocks} with  thinking, {stats.think_complete} complete")
     console.print(table)
 
-    console.print("[dim]tokenizing with the model's chat template…[/dim]")
-    tokenizer = load_tokenizer(cfg)
-    profile = profile_tokens(
-        tokenizer, examples, messages_field=cfg.data.messages_field, max_length=cfg.data.max_length
-    )
-    pcts = profile.percentiles()
+
+def _print_token_table(cfg: Config, profile: TokenProfile, pcts: dict[str, float]) -> None:
+    """Chat-templated token-length table."""
     ttable = Table(title="token lengths (chat-templated)")
     ttable.add_column("metric", style="dim")
     ttable.add_column("value", justify="right")
     for k, v in pcts.items():
         ttable.add_row(k, f"{v:.0f}")
     ttable.add_row("total tokens", fmt_int(profile.total_tokens))
-    coverage = profile.coverage_at(cfg.data.max_length)
-    ttable.add_row(f"coverage @ max_length={cfg.data.max_length}", f"{coverage * 100:.1f}%")
+    ttable.add_row(
+        f"coverage @ max_length={cfg.data.max_length}", f"{profile.coverage_at(cfg.data.max_length) * 100:.1f}%"
+    )
     ttable.add_row("truncated", f"{profile.n_truncated} ({profile.truncation_pct:.1f}%)")
     console.print(ttable)
 
-    # suggestion for max_length at p99
-    p99 = pcts["p99"]
-    suggestion = int(round(p99 / 128) * 128)
+
+def _print_max_length_hint(cfg: Config, pcts: dict[str, float]) -> int:
+    """Suggest a max_length at p99 (rounded to 128); returns the suggestion."""
+    suggestion = int(round(pcts["p99"] / 128) * 128)
     console.print(
         f"[dim]hint: for ≥99% coverage set data.max_length ≈ [bold]{suggestion}[/bold] "
         f"(current: {cfg.data.max_length})[/dim]"
     )
+    return suggestion
+
+
+def _write_profile_artifacts(
+    cfg: Config, profile: TokenProfile, stats: DatasetStats, pcts: dict[str, float], suggestion: int
+) -> Path:
+    """Chart + profile.json under <output_root>/data-profile/<timestamp>."""
+    from .plots import token_length_hist
 
     out_dir = Path(cfg.run.output_root) / "data-profile" / timestamp_slug()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -374,7 +398,7 @@ def cmd_data(args: argparse.Namespace) -> int:
         {
             "n_examples": stats.n_examples,
             "percentiles": pcts,
-            "coverage_at_max_length": coverage,
+            "coverage_at_max_length": profile.coverage_at(cfg.data.max_length),
             "max_length": cfg.data.max_length,
             "truncated": profile.n_truncated,
             "total_tokens": profile.total_tokens,
@@ -382,6 +406,31 @@ def cmd_data(args: argparse.Namespace) -> int:
             "think_blocks": stats.think_blocks,
         },
     )
+    return out_dir
+
+
+def cmd_data(args: argparse.Namespace) -> int:
+    """Profile the dataset (tokens, coverage, truncation) and save the report."""
+    from .data import load_sharegpt, profile_tokens, render_preview
+    from .model import load_tokenizer
+
+    cfg = _load_config(args)
+    console.rule("[bold cyan]dataset profile[/bold cyan]")
+    examples, stats = load_sharegpt(cfg.data.path, cfg.data.messages_field)
+
+    _print_dataset_table(cfg, stats)
+
+    console.print("[dim]tokenizing with the model's chat template…[/dim]")
+    tokenizer = load_tokenizer(cfg)
+    profile = profile_tokens(
+        tokenizer, examples, messages_field=cfg.data.messages_field, max_length=cfg.data.max_length
+    )
+    pcts = profile.percentiles()
+    _print_token_table(cfg, profile, pcts)
+    suggestion = _print_max_length_hint(cfg, pcts)
+
+    out_dir = _write_profile_artifacts(cfg, profile, stats, pcts, suggestion)
+
     console.print(
         Panel(
             render_preview(tokenizer, examples[0], messages_field=cfg.data.messages_field),
@@ -394,10 +443,15 @@ def cmd_data(args: argparse.Namespace) -> int:
 
 
 def cmd_prepare(args: argparse.Namespace) -> int:
+    """Create the prepared NF4 checkpoint from the source model."""
+    from .explain import ExplainerBook
     from .model import prepare_checkpoint
 
     cfg = _load_config(args)
     console.rule("[bold cyan]prepare checkpoint[/bold cyan]")
+    book = ExplainerBook(console, enabled=cfg.run.explainers)
+    book.show("prepare_surgery")
+    book.show("nf4")
     console.print(
         f"source: [bold]{cfg.model.name}[/bold] → target: [bold]{cfg.model.prepared_dir}[/bold]\n"
         f"[dim]requantize: {cfg.quantization.requantize_modules} · vision: "
@@ -418,7 +472,73 @@ def cmd_prepare(args: argparse.Namespace) -> int:
     return 0
 
 
+def _ensure_prepared(cfg: Config, args: argparse.Namespace) -> bool:
+    """Print the prepare-required panel when the NF4 checkpoint is missing."""
+    prepared = Path(cfg.model.prepared_dir)
+    if (prepared / "config.json").exists():
+        return True
+    console.print(
+        Panel(
+            f"The prepared checkpoint [bold]{prepared}[/bold] does not exist yet.\n\n"
+            f"Run first:  [bold]uv run rocm-qlora prepare --config {args.config}[/bold]\n\n"
+            "[dim]Why: quantizing once to NF4 avoids staging the full bf16 model in host RAM "
+            "in every data-parallel process (see the 'prepared checkpoint' explainer in the docs).[/dim]",
+            title="[yellow]prepare required[/yellow]",
+            border_style="yellow",
+        )
+    )
+    return False
+
+
+def _plan_vram(cfg: Config, book: ExplainerBook) -> float:
+    """VRAM estimate for the preflight; falls back to 30 GB without geometry."""
+    geom = _load_geometry(cfg)
+    if geom is None:
+        console.print("[yellow]could not load model geometry — skipping the VRAM estimate[/yellow]")
+        return 30.0
+    book.show("vram_budget")
+    return _print_vram_estimate(cfg, geom)
+
+
+def _resolve_resume(args: argparse.Namespace) -> Path | None:
+    """Resolve --resume to a checkpoint dir; None when absent or not found."""
+    if not args.resume:
+        return None
+    checkpoint = _resolve_resume_checkpoint(args.resume)
+    if checkpoint is None:
+        console.print(f"[red]no checkpoint found under {args.resume}[/red]")
+        return None
+    console.print(
+        f"[bold]resuming from[/bold] {checkpoint}\n"
+        "[dim]optimizer, scheduler and step counters are restored from the checkpoint; "
+        "the new run dir records the resumed segment.[/dim]"
+    )
+    return checkpoint
+
+
+def _worker_extra_args(args: argparse.Namespace, resume_checkpoint: Path | None) -> list[str]:
+    """CLI flags forwarded to the training worker."""
+    extra = ["--dry-run"] if args.dry_run else []
+    if args.max_steps:
+        extra += ["--max-steps", str(args.max_steps)]
+    if resume_checkpoint:
+        extra += ["--resume", str(resume_checkpoint)]
+    return extra
+
+
+def _print_launch_failure(run_dir: Path, returncode: int) -> None:
+    """Failure panel for a non-zero worker exit."""
+    console.print(
+        Panel(
+            f"training exited with code {returncode}\nlogs: {run_dir / 'logs'} · see docs/05-troubleshooting.md",
+            title="[red]failure[/red]",
+            border_style="red",
+        )
+    )
+
+
 def cmd_train(args: argparse.Namespace) -> int:
+    """Preflight GPUs, snapshot the config, and launch the training worker(s)."""
     from .explain import ExplainerBook
     from .launcher import launch_worker, make_run_dir, preflight_gpus, write_env_fingerprint
 
@@ -426,30 +546,17 @@ def cmd_train(args: argparse.Namespace) -> int:
     book = ExplainerBook(console, enabled=cfg.run.explainers)
 
     console.rule(f"[bold cyan]train[/bold cyan] · {cfg.run.name}")
-    prepared = Path(cfg.model.prepared_dir)
-    if not (prepared / "config.json").exists():
-        console.print(
-            Panel(
-                f"The prepared checkpoint [bold]{prepared}[/bold] does not exist yet.\n\n"
-                f"Run first:  [bold]uv run rocm-qlora prepare --config {args.config}[/bold]\n\n"
-                "[dim]Why: quantizing once to NF4 avoids staging the full bf16 model in host RAM "
-                "in every data-parallel process (see the 'prepared checkpoint' explainer in the docs).[/dim]",
-                title="[yellow]prepare required[/yellow]",
-                border_style="yellow",
-            )
-        )
+    if not _ensure_prepared(cfg, args):
         return 2
 
-    geom = _load_geometry(cfg)
-    needed = None
-    if geom is not None:
-        book.show("vram_budget")
-        needed = _print_vram_estimate(cfg, geom)
-    else:
-        console.print("[yellow]could not load model geometry — skipping the VRAM estimate[/yellow]")
+    book.show("qlora")
+    book.show("lr_schedule")
+    book.show("packing")
+    book.show("seed")
+    if cfg.optim.loss_type == "dft":
+        book.show("dft")
 
-    if needed is None:
-        needed = 30.0
+    needed = _plan_vram(cfg, book)
     preflight = preflight_gpus(cfg, needed)
     for warning in preflight.warnings:
         console.print(f"[yellow]! {warning}[/yellow]")
@@ -466,44 +573,24 @@ def cmd_train(args: argparse.Namespace) -> int:
     write_env_fingerprint(run_dir, cfg, preflight.gpu_ids)
     console.print(f"[dim]run directory: {run_dir}[/dim]")
 
-    resume_checkpoint = None
-    if args.resume:
-        resume_checkpoint = _resolve_resume_checkpoint(args.resume)
-        if resume_checkpoint is None:
-            console.print(f"[red]no checkpoint found under {args.resume}[/red]")
-            return 2
-        console.print(
-            f"[bold]resuming from[/bold] {resume_checkpoint}\n"
-            "[dim]optimizer, scheduler and step counters are restored from the checkpoint; "
-            "the new run dir records the resumed segment.[/dim]"
-        )
+    resume_checkpoint = _resolve_resume(args)
+    if args.resume and resume_checkpoint is None:
+        return 2
 
-    result = launch_worker(
-        cfg,
-        run_dir,
-        preflight.gpu_ids,
-        extra_args=(["--dry-run"] if args.dry_run else [])
-        + (["--max-steps", str(args.max_steps)] if args.max_steps else [])
-        + (["--resume", str(resume_checkpoint)] if resume_checkpoint else []),
-    )
+    result = launch_worker(cfg, run_dir, preflight.gpu_ids, extra_args=_worker_extra_args(args, resume_checkpoint))
     if result.returncode != 0:
-        console.print(
-            Panel(
-                f"training exited with code {result.returncode}\n"
-                f"logs: {run_dir / 'logs'} · see docs/05-troubleshooting.md",
-                title="[red]failure[/red]",
-                border_style="red",
-            )
-        )
+        _print_launch_failure(run_dir, result.returncode)
     return result.returncode
 
 
 def cmd_report(args: argparse.Namespace) -> int:
+    """Regenerate charts and the Markdown report for a finished run."""
     from .plots import replot, write_report
 
     run_dir = Path(args.run)
     if not run_dir.exists():
         raise SystemExit(f"run directory not found: {run_dir}")
+    console.rule("[bold cyan]report[/bold cyan]")
     charts = replot(run_dir)
     report = write_report(run_dir)
     console.print(f"[green]✓[/green] regenerated {len(charts)} chart(s) in {run_dir / 'charts'}")
@@ -512,8 +599,10 @@ def cmd_report(args: argparse.Namespace) -> int:
 
 
 def cmd_chat(args: argparse.Namespace) -> int:
+    """Talk to a trained adapter (thin wrapper around chat.run_chat)."""
     from .chat import run_chat
 
+    console.rule("[bold cyan]chat[/bold cyan]")
     run_chat(
         run_dir=args.run,
         base=args.base,
@@ -526,8 +615,10 @@ def cmd_chat(args: argparse.Namespace) -> int:
 
 
 def cmd_merge(args: argparse.Namespace) -> int:
+    """Fold the adapter into the base model in bf16 (ready for GGUF export)."""
     from .model import merge_run
 
+    console.rule("[bold cyan]merge[/bold cyan]")
     merge_run(args.run, out_dir=args.out, console=console)
     return 0
 
@@ -538,6 +629,7 @@ def cmd_merge(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """The full CLI: one subparser per command; shared flags via add_common."""
     parser = argparse.ArgumentParser(
         prog="rocm-qlora",
         description="Teaching-first QLoRA fine-tuning for AMD ROCm GPUs",
@@ -546,6 +638,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     def add_common(p: argparse.ArgumentParser) -> None:
+        """Attach the flags shared by every subcommand."""
         p.add_argument("--config", default=DEFAULT_CONFIG, help=f"TOML config (default: {DEFAULT_CONFIG})")
         p.add_argument(
             "--set", action="append", metavar="KEY=VALUE", help="arbitrary config override, e.g. --set optim.lr=2e-4"
@@ -605,6 +698,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Silence the torch-wheel libdrm "(null): No such file or directory" spam:
+    # it looks for the ASIC-ID table only under /opt/amdgpu/share/libdrm.
+    # Point it at the system table; the workers inherit this via build_worker_env.
+    """Parse arguments and dispatch to the selected command."""
+    import os
+
+    os.environ.setdefault("AMDGPU_ASIC_ID_TABLE_PATHS", "/usr/share/libdrm")
     parser = build_parser()
     args = parser.parse_args(argv)
     try:

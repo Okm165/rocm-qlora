@@ -144,3 +144,18 @@ def test_render_charts_and_report(tmp_path):
     report = write_report(tmp_path)
     text = report.read_text()
     assert "Headline numbers" in text and "loss.png" in text
+
+
+def test_run_summary_round_trip():
+    """summary.json is a typed round-trip: RunSummary -> dict -> RunSummary."""
+    from rocm_qlora.monitor import RunSummary
+
+    records = synth_records(n=30)
+    summary = summarize(records)
+    summary.model = "org/model"
+    summary.world_size = 3
+    summary.dry_run = True
+
+    restored = RunSummary.from_dict({**summary.to_dict(), "unknown_future_key": 1})
+    assert restored == summary  # unknown keys ignored, every field preserved
+    assert restored.model == "org/model" and restored.world_size == 3 and restored.dry_run is True

@@ -124,5 +124,63 @@ def test_vram_estimate_monotonicity():
 def test_geometry_from_meta(tmp_path):
     meta = tmp_path / "finetune_meta.json"
     meta.write_text(json.dumps({"total_params": 1e9, "hidden_size": 2048, "n_layers": 24, "lora_units": 1e6}))
-    geom = geometry_from_finetune_meta(meta, lora_r=16)
+    geom = geometry_from_finetune_meta(meta)
     assert geom is not None and geom.n_layers == 24 and geom.source == "finetune_meta"
+
+
+def test_geometry_from_hf_config_hybrid_with_vision(tmp_path):
+    cfg = {
+        "text_config": {
+            "hidden_size": 5120,
+            "num_hidden_layers": 64,
+            "vocab_size": 152064,
+            "intermediate_size": 13824,
+            "num_attention_heads": 40,
+            "num_key_value_heads": 8,
+            "head_dim": 128,
+            "tie_word_embeddings": False,
+            "layer_types": ["linear_attention"] * 48 + ["full_attention"] * 16,
+            "linear_num_key_heads": 16,
+            "linear_num_value_heads": 32,
+            "linear_key_head_dim": 128,
+            "linear_value_head_dim": 128,
+        },
+        "vision_config": {"hidden_size": 1152, "depth": 27},
+        "_name_or_path": "fake/Qwen3.8-27B",
+    }
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps(cfg))
+    geom = hardware.geometry_from_hf_config(path)
+    assert geom is not None
+    # geometry_from_hf_config fills parameter counts only; hidden_size/n_layers
+    # stay 0 and the VRAM estimator falls back (see _activations_gb).
+    assert geom.n_layers == 0 and geom.hidden_size == 0
+    assert geom.quantized_params > geom.nonquant_16bit_params
+    assert geom.lm_head_params > 0  # untied embeddings
+    assert geom.vision_params > 0
+    assert geom.total_params > 20e9
+
+
+def test_geometry_from_hf_config_plain_tied(tmp_path):
+    cfg = {
+        "hidden_size": 4096,
+        "num_hidden_layers": 32,
+        "vocab_size": 152064,
+        "intermediate_size": 11008,
+        "num_attention_heads": 32,
+        "num_key_value_heads": 8,
+        "tie_word_embeddings": True,
+    }
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps(cfg))
+    geom = hardware.geometry_from_hf_config(path)
+    assert geom is not None
+    assert geom.lm_head_params == 0.0  # tied
+    assert geom.vision_params == 0.0
+    assert geom.total_params > 0
+
+
+def test_geometry_from_hf_config_rejects_missing_fields(tmp_path):
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"hidden_size": 4096}))  # missing layers/vocab/inter
+    assert hardware.geometry_from_hf_config(path) is None

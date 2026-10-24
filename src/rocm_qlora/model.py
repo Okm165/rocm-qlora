@@ -22,29 +22,38 @@ of data-parallel processes). Preparing once removes that wall entirely.
 from __future__ import annotations
 
 import contextlib
+import json
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from .config import Config
 from .utils import human_bytes, now_iso, write_json
+
+if TYPE_CHECKING:
+    import torch
+    from rich.console import Console
+    from torch import nn
+    from transformers import PreTrainedModel, PreTrainedTokenizerBase
+
+    from .hardware import FinetuneMeta
 
 # ---------------------------------------------------------------------------
 # Small helpers
 # ---------------------------------------------------------------------------
 
-_DTYPE_MAP = {"bfloat16": "torch.bfloat16", "float16": "torch.float16"}
-
 
 def compute_dtype(cfg: Config):
+    """torch dtype for quantized matmuls (from model.dtype)."""
     import torch
 
     return {"bfloat16": torch.bfloat16, "float16": torch.float16}[cfg.model.dtype]
 
 
 def quant_storage_dtype(cfg: Config):
+    """torch dtype for the 4-bit storage format."""
     import torch
 
     return {"uint8": torch.uint8, "bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torch.float32}[
@@ -52,21 +61,8 @@ def quant_storage_dtype(cfg: Config):
     ]
 
 
-def bnb_config_from(cfg: Config):
-    """BitsAndBytesConfig that mirrors what `prepare` wrote into the checkpoint."""
-    from transformers import BitsAndBytesConfig
-
-    return BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_quant_type=cfg.quantization.quant_type,
-        bnb_4bit_use_double_quant=cfg.quantization.double_quant,
-        bnb_4bit_compute_dtype=compute_dtype(cfg),
-        bnb_4bit_quant_storage=quant_storage_dtype(cfg),
-        llm_int8_skip_modules=None,  # pre-quantized checkpoint: stored config governs
-    )
-
-
-def load_tokenizer(cfg: Config):
+def load_tokenizer(cfg: Config) -> PreTrainedTokenizerBase:
+    """Tokenizer from the prepared checkpoint (or the hub source)."""
     from transformers import AutoTokenizer
 
     tokenizer = AutoTokenizer.from_pretrained(cfg.model.name, trust_remote_code=cfg.model.trust_remote_code)
@@ -77,26 +73,22 @@ def load_tokenizer(cfg: Config):
     return tokenizer
 
 
-def resolve_model_class(model_name: str, *, prefer_text_only: bool = False):
+def resolve_model_class(model_name: str):
     """Pick the right Auto class for a checkpoint (VLM vs text-only)."""
     import transformers
     from transformers import AutoConfig
 
     config = AutoConfig.from_pretrained(model_name)
     archs = getattr(config, "architectures", []) or []
-    getattr(config, "model_type", "")
-    if prefer_text_only and "vision_config" not in getattr(config, "to_dict", dict)():
-        pass
     # Multimodal checkpoints (e.g. Qwen3.8-27B) use the *ForConditionalGeneration
     # class; text-only checkpoints (e.g. Qwen3-8B) use AutoModelForCausalLM.
     is_vlm = any("ConditionalGeneration" in a for a in archs) or (
         hasattr(config, "vision_config") and getattr(config, "vision_config", None)
     )
-    if is_vlm and not prefer_text_only:
-        for attr in ("AutoModelForImageTextToText", "AutoModelForVision2Seq"):
-            cls = getattr(transformers, attr, None)
-            if cls is not None:
-                return cls
+    if is_vlm:
+        cls = getattr(transformers, "AutoModelForImageTextToText", None)
+        if cls is not None:
+            return cls
         # Last resort: explicit class by architecture name
         for a in archs:
             cls = getattr(transformers, a, None)
@@ -122,7 +114,7 @@ class PrepareResult:
     disk_gb: float
 
 
-def _requantize_linear(module, cfg: Config, *, device: str | None = None):
+def _requantize_linear(module: nn.Linear, cfg: Config, *, device: str | None = None):
     """Convert an fp16 nn.Linear into bnb Linear4bit (NF4), preserving math."""
     import bitsandbytes as bnb
     import torch
@@ -130,7 +122,7 @@ def _requantize_linear(module, cfg: Config, *, device: str | None = None):
     new = bnb.nn.Linear4bit(
         module.in_features,
         module.out_features,
-        bias=module.bias is not None,
+        bias=module.bias is not None,  # pyright: ignore[reportUnnecessaryComparison]  # biasless Linears
         compute_dtype=compute_dtype(cfg),
         compress_statistics=cfg.quantization.double_quant,
         quant_type=cfg.quantization.quant_type,
@@ -140,17 +132,17 @@ def _requantize_linear(module, cfg: Config, *, device: str | None = None):
     new.weight = bnb.nn.Params4bit(
         weight,
         requires_grad=False,
-        quant_type=cfg.quantization.quant_type,
-        compress_statistics=cfg.quantization.double_quant,
-        quant_storage=quant_storage_dtype(cfg),
+        quant_type=cfg.quantization.quant_type,  # pyright: ignore[reportCallIssue]  # bnb stubs omit 4-bit params
+        compress_statistics=cfg.quantization.double_quant,  # pyright: ignore[reportCallIssue]
+        quant_storage=quant_storage_dtype(cfg),  # pyright: ignore[reportCallIssue]
     )
-    if module.bias is not None:
+    if module.bias is not None:  # pyright: ignore[reportUnnecessaryComparison]  # biasless Linears exist
         new.bias = torch.nn.Parameter(module.bias.data.clone(), requires_grad=False)
     # Moving the module triggers lazy quantization on the target device.
     return new.to(device or weight.device)
 
 
-def _parent_of(model, dotted_name: str):
+def _parent_of(model: nn.Module, dotted_name: str):
     parts = dotted_name.split(".")
     parent = model
     for part in parts[:-1]:
@@ -167,81 +159,123 @@ def _match_requantize(name: str, cfg: Config) -> bool:
 
 def prepare_checkpoint(cfg: Config, *, force: bool = False, log: Callable[[str], None] = print) -> PrepareResult:
     """Create the prepared NF4 checkpoint at ``cfg.model.prepared_dir``."""
-    import torch
-
     out_dir = Path(cfg.model.prepared_dir)
     meta_path = out_dir / "finetune_meta.json"
-    if out_dir.exists() and (out_dir / "config.json").exists() and meta_path.exists() and not force:
-        import json
-
-        meta = json.loads(meta_path.read_text())
-        return PrepareResult(
-            out_dir=out_dir,
-            source=meta.get("source", "?"),
-            requantized=meta.get("requantized", []),
-            seconds=0.0,
-            total_params=float(meta.get("total_params", 0.0)),
-            disk_gb=_dir_size_gb(out_dir),
-        )
+    cached = _cached_prepare_result(out_dir, meta_path, force=force)
+    if cached is not None:
+        return cached
 
     t0 = time.perf_counter()
+    model = _load_source_model(cfg, log)
+    # Two kinds of sources: already-quantized checkpoints (e.g. unsloth
+    # bnb-4bit) need surgery only where the upstream left 16-bit modules;
+    # plain bf16/fp16 checkpoints get every Linear quantized.
+    source_quantized = getattr(model.config, "quantization_config", None) is not None
+    requantized = _requantize_all(model, cfg, source_quantized=source_quantized, log=log)
+    _write_quantization_config(model, cfg)
+
+    log(f"Saving prepared checkpoint to {out_dir} …")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    _save_prepared(model, out_dir, log=log)
+    load_tokenizer(cfg).save_pretrained(out_dir)
+
+    meta = _prepare_meta(model, cfg, requantized)
+    write_json(meta_path, meta)
+    seconds = time.perf_counter() - t0
+    log(f"Prepared checkpoint ready ({_dir_size_gb(out_dir):.1f} GB on disk, {seconds / 60:.1f} min)")
+    return PrepareResult(
+        out_dir=out_dir,
+        source=cfg.model.name,
+        requantized=requantized,
+        seconds=seconds,
+        total_params=meta["total_params"],
+        disk_gb=_dir_size_gb(out_dir),
+    )
+
+
+def _cached_prepare_result(out_dir: Path, meta_path: Path, *, force: bool) -> PrepareResult | None:
+    """Return the cached result when a complete prepared dir exists (and not forced)."""
+    if force or not out_dir.exists() or not (out_dir / "config.json").exists() or not meta_path.exists():
+        return None
+    meta = json.loads(meta_path.read_text())
+    return PrepareResult(
+        out_dir=out_dir,
+        source=meta.get("source", "?"),
+        requantized=meta.get("requantized", []),
+        seconds=0.0,
+        total_params=float(meta.get("total_params", 0.0)),
+        disk_gb=_dir_size_gb(out_dir),
+    )
+
+
+def _load_source_model(cfg: Config, log: Callable[[str], None]):
+    """Load the source checkpoint on CPU in fp16 (low-RAM mode)."""
+    import torch
+
     log(f"Loading source checkpoint {cfg.model.name!r} on CPU (fp16, low RAM mode)…")
     model_cls = resolve_model_class(cfg.model.name)
     model = model_cls.from_pretrained(
         cfg.model.name,
         dtype=torch.float16,
         device_map={"": "cpu"},
-        low_cpu_mem_usage=True,
         trust_remote_code=cfg.model.trust_remote_code,
     )
     model.eval()
+    return model
 
-    # --- decide what to quantize -------------------------------------------
-    # Two kinds of sources:
-    #  * already-quantized checkpoints (e.g. unsloth bnb-4bit): only the
-    #    modules the upstream left in 16-bit need surgery;
-    #  * plain bf16/fp16 checkpoints: every Linear gets quantized.
-    source_quantized = getattr(model.config, "quantization_config", None) is not None
 
-    def should_quantize(name: str, module) -> bool:
-        if not isinstance(module, torch.nn.Linear):
-            return False
-        import bitsandbytes as bnb
+def _should_quantize(name: str, module: nn.Module, cfg: Config, *, source_quantized: bool) -> bool:
+    """Whether one module needs NF4 surgery (lm_head always stays 16-bit)."""
+    import torch
 
-        if isinstance(module, bnb.nn.Linear4bit):
-            return False
-        if name.endswith("lm_head"):
-            # The output head always stays 16-bit: TRL 1.16 computes the SFT
-            # loss through a fused chunked head that slices the raw weight
-            # tensor — a quantized head (flattened uint8 buffer) breaks it.
-            return False
-        if source_quantized:
-            return _match_requantize(name, cfg)
-        return True  # plain source: quantize all remaining Linears
-
-    requantized: list[str] = []
-    if cfg.quantization.requantize_modules or cfg.quantization.requantize_vision or not source_quantized:
-        # Quantizing on a GPU is much faster than CPU; use the freest GPU.
-        target_device = _pick_free_gpu_for_surgery()
-        for name, module in list(model.named_modules()):
-            if not should_quantize(name, module):
-                continue
-            parent, attr = _parent_of(model, name)
-            old = module
-            if target_device is not None:
-                old = old.to(target_device)
-            new = _requantize_linear(old, cfg, device=target_device or "cpu")
-            if target_device is not None:
-                new = new.to("cpu")  # keep the model CPU-resident for save
-            setattr(parent, attr, new)
-            requantized.append(name)
-        log(f"Re-quantized {len(requantized)} module(s) to NF4")
-
-    # --- write the quantization config the checkpoint will carry ------------
-    # The stored config is authoritative at load time (it lists exactly which
-    # modules are NOT quantized), so derive the skip list from *reality*:
-    # every plain Linear that survived surgery, by its module suffix.
+    if not isinstance(module, torch.nn.Linear):
+        return False
     import bitsandbytes as bnb
+
+    if isinstance(module, bnb.nn.Linear4bit):
+        return False
+    if name.endswith("lm_head"):
+        # The output head always stays 16-bit: TRL 1.16 computes the SFT
+        # loss through a fused chunked head that slices the raw weight
+        # tensor — a quantized head (flattened uint8 buffer) breaks it.
+        return False
+    if source_quantized:
+        return _match_requantize(name, cfg)
+    return True  # plain source: quantize all remaining Linears
+
+
+def _requantize_all(model: nn.Module, cfg: Config, *, source_quantized: bool, log: Callable[[str], None]) -> list[str]:
+    """Quantize every module that needs it; returns the requantized names."""
+    requantized: list[str] = []
+    if not (cfg.quantization.requantize_modules or cfg.quantization.requantize_vision or not source_quantized):
+        return requantized
+    # Quantizing on a GPU is much faster than CPU; use the freest GPU.
+    target_device = _pick_free_gpu_for_surgery()
+    for name, module in list(model.named_modules()):
+        if not _should_quantize(name, module, cfg, source_quantized=source_quantized):
+            continue
+        parent, attr = _parent_of(model, name)
+        old = module
+        if target_device is not None:
+            old = old.to(target_device)
+        new = _requantize_linear(cast("nn.Linear", old), cfg, device=target_device or "cpu")
+        if target_device is not None:
+            new = new.to("cpu")  # keep the model CPU-resident for save
+        setattr(parent, attr, new)
+        requantized.append(name)
+    log(f"Re-quantized {len(requantized)} module(s) to NF4")
+    return requantized
+
+
+def _write_quantization_config(model: PreTrainedModel, cfg: Config) -> None:
+    """Attach the load-time-authoritative bnb config.
+
+    The stored config is authoritative at load time (it lists exactly which
+    modules are NOT quantized), so derive the skip list from *reality*:
+    every plain Linear that survived surgery, by its module suffix.
+    """
+    import bitsandbytes as bnb
+    import torch
 
     remaining = sorted(
         {
@@ -260,14 +294,9 @@ def prepare_checkpoint(cfg: Config, *, force: bool = False, log: Callable[[str],
         "llm_int8_skip_modules": remaining,
     }
 
-    # --- save ---------------------------------------------------------------
-    log(f"Saving prepared checkpoint to {out_dir} …")
-    out_dir.mkdir(parents=True, exist_ok=True)
-    _save_prepared(model, out_dir, log=log)
-    tokenizer = load_tokenizer(cfg)
-    tokenizer.save_pretrained(out_dir)
 
-    # --- exact parameter accounting for the VRAM estimator ------------------
+def _prepare_meta(model: PreTrainedModel, cfg: Config, requantized: list[str]) -> FinetuneMeta:
+    """Exact parameter accounting + provenance for the VRAM estimator."""
     meta = model_parameter_meta(model, cfg)
     meta.update(
         {
@@ -282,20 +311,10 @@ def prepare_checkpoint(cfg: Config, *, force: bool = False, log: Callable[[str],
             },
         }
     )
-    write_json(meta_path, meta)
-    seconds = time.perf_counter() - t0
-    log(f"Prepared checkpoint ready ({_dir_size_gb(out_dir):.1f} GB on disk, {seconds / 60:.1f} min)")
-    return PrepareResult(
-        out_dir=out_dir,
-        source=cfg.model.name,
-        requantized=requantized,
-        seconds=seconds,
-        total_params=meta["total_params"],
-        disk_gb=_dir_size_gb(out_dir),
-    )
+    return meta
 
 
-def _save_prepared(model, out_dir: Path, *, log: Callable[[str], None]) -> None:
+def _save_prepared(model: PreTrainedModel, out_dir: Path, *, log: Callable[[str], None]) -> None:
     """save_pretrained with a fallback for non-reversible weight conversions.
 
     transformers v5 replays the checkpoint->model weight conversions in
@@ -307,7 +326,7 @@ def _save_prepared(model, out_dir: Path, *, log: Callable[[str], None]) -> None:
     text-side round-trip end to end.
     """
     try:
-        model.save_pretrained(out_dir, safe_serialization=True, max_shard_size="4GB")
+        model.save_pretrained(out_dir, max_shard_size="4GB")
         return
     except (NotImplementedError, ValueError) as exc:
         log(f"save hit a non-reversible weight conversion ({type(exc).__name__}); retrying with a filtered set")
@@ -323,7 +342,7 @@ def _save_prepared(model, out_dir: Path, *, log: Callable[[str], None]) -> None:
                 f"  dropping non-reversible conversion: {type(conversion).__name__} "
                 f"{getattr(conversion, 'source_patterns', '')}"
             )
-    model._weight_conversions = kept or None
+    model._weight_conversions = kept or None  # pyright: ignore[reportArgumentType]  # dynamic attr
     model.save_pretrained(out_dir, safe_serialization=True, max_shard_size="4GB")
 
 
@@ -364,43 +383,60 @@ def _match_target(name: str, target_modules: str | list[str]) -> bool:
     return any(name.endswith(suffix) for suffix in target_modules)
 
 
-def _logical_numel(param) -> int:
+def _logical_numel(param: nn.Parameter) -> int:
     """True parameter count of a tensor.
 
     bitsandbytes packs two NF4 values per uint8, so ``numel()`` on a 4-bit
     weight reports half the logical parameter count — the difference between
     the ~15B a naive sum shows and the real ~27B of this checkpoint.
     """
-    if param.dtype == torch_uint8() and getattr(param, "quant_state", None) is not None:
+    import torch
+
+    if param.dtype == torch.uint8 and getattr(param, "quant_state", None) is not None:
         return param.numel() * 2
     return param.numel()
 
 
-def model_parameter_meta(model, cfg: Config) -> dict[str, Any]:
-    """Exact parameter counts for the VRAM estimator + teaching output."""
+def _classify_param(
+    param: torch.nn.Parameter,
+    module: nn.Module,
+    name: str,
+    *,
+    embed_module: nn.Module | None,
+    head: nn.Module | None,
+) -> str:
+    """Which accounting bucket one parameter belongs to (checked in this order)."""
+    if embed_module is not None and param is getattr(embed_module, "weight", None):
+        return "embed"
+    if head is not None and param is getattr(head, "weight", None):
+        return "lm_head"
+    if "visual" in name:
+        return "vision"
     import bitsandbytes as bnb
 
-    total = embed = lm_head = quantized = nonquant = vision = 0
+    if isinstance(module, bnb.nn.Linear4bit):
+        return "quantized"
+    return "nonquant"
+
+
+def model_parameter_meta(model: PreTrainedModel, cfg: Config) -> FinetuneMeta:
+    """Exact parameter counts for the VRAM estimator + teaching output."""
+    import bitsandbytes as bnb
+    import torch
+
+    total = 0
     lora_units = 0.0
+    buckets = {"embed": 0, "lm_head": 0, "vision": 0, "quantized": 0, "nonquant": 0}
     embed_module = model.get_input_embeddings()
     head = getattr(model, "lm_head", None)
     for name, module in model.named_modules():
         for param in module.parameters(recurse=False):
             n = _logical_numel(param)
             total += n
-            if embed_module is not None and param is getattr(embed_module, "weight", None):
-                embed += n
-            elif head is not None and param is getattr(head, "weight", None):
-                lm_head += n
-            elif "visual" in name:
-                vision += n  # dropped right after load; counted for completeness
-            elif isinstance(module, bnb.nn.Linear4bit):
-                quantized += n
-            else:
-                nonquant += n
+            buckets[_classify_param(param, module, name, embed_module=embed_module, head=head)] += n
         if (
             "visual" not in name
-            and isinstance(module, (bnb.nn.Linear4bit, torch_nn_linear()))
+            and isinstance(module, (bnb.nn.Linear4bit, torch.nn.Linear))
             and _match_target(name, cfg.lora.target_modules)
         ):
             lora_units += module.in_features + module.out_features
@@ -408,40 +444,16 @@ def model_parameter_meta(model, cfg: Config) -> dict[str, Any]:
     return {
         "name": cfg.model.name,
         "total_params": float(total),
-        "embed_params": float(embed),
-        "lm_head_params": float(lm_head),
-        "quantized_params": float(quantized),
-        "nonquant_16bit_params": float(nonquant),
-        "vision_params": float(vision),
+        "embed_params": float(buckets["embed"]),
+        "lm_head_params": float(buckets["lm_head"]),
+        "quantized_params": float(buckets["quantized"]),
+        "nonquant_16bit_params": float(buckets["nonquant"]),
+        "vision_params": float(buckets["vision"]),  # dropped after load; counted for completeness
         "lora_units": float(lora_units),
         "hidden_size": int(getattr(text_cfg, "hidden_size", 0) or 0),
         "n_layers": int(getattr(text_cfg, "num_hidden_layers", 0) or 0),
         "vocab_size": int(getattr(text_cfg, "vocab_size", 0) or 0),
     }
-
-
-def torch_nn_linear():
-    import torch
-
-    return torch.nn.Linear
-
-
-def torch_fp16():
-    import torch
-
-    return torch.float16
-
-
-def torch_bf16():
-    import torch
-
-    return torch.bfloat16
-
-
-def torch_uint8():
-    import torch
-
-    return torch.uint8
 
 
 # ---------------------------------------------------------------------------
@@ -463,7 +475,6 @@ def load_model_for_training(cfg: Config, *, local_rank: int = 0, attn: str | Non
     kwargs: dict[str, Any] = {
         "dtype": compute_dtype(cfg),
         "device_map": {"": f"cuda:{local_rank}"},
-        "low_cpu_mem_usage": True,
         "trust_remote_code": cfg.model.trust_remote_code,
     }
     attn_impl = attn or ("sdpa" if cfg.model.attn == "auto" else cfg.model.attn)
@@ -486,7 +497,7 @@ def load_model_for_training(cfg: Config, *, local_rank: int = 0, attn: str | Non
     return model
 
 
-def prepare_for_qlora(model, cfg: Config):
+def prepare_for_qlora(model: PreTrainedModel, cfg: Config):
     """Freeze + selective fp32 cast + gradient checkpointing (QLoRA recipe).
 
     Differences from ``peft.prepare_model_for_kbit_training``:
@@ -513,13 +524,17 @@ def prepare_for_qlora(model, cfg: Config):
                 param.data = param.data.to(torch.float32)
 
     if cfg.optim.gradient_checkpointing:
-        model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+        model.gradient_checkpointing_enable(
+            gradient_checkpointing_kwargs={"use_reentrant": False},
+            every_n_layers=cfg.optim.checkpoint_every_n_layers,
+            offload=cfg.optim.activation_offloading,
+        )
     if hasattr(model, "enable_input_require_grads"):
         model.enable_input_require_grads()
     return model
 
 
-def attach_lora(model, cfg: Config):
+def attach_lora(model: PreTrainedModel, cfg: Config):
     """Attach LoRA adapters per config; returns the PeftModel."""
     from peft import LoraConfig, get_peft_model
 
@@ -539,11 +554,11 @@ def attach_lora(model, cfg: Config):
     return get_peft_model(model, lora)
 
 
-def parameter_report(model) -> dict[str, Any]:
+def parameter_report(model: PreTrainedModel) -> dict[str, Any]:
     """Total vs trainable parameters + a per-suffix breakdown for teaching."""
     from collections import Counter
 
-    total = sum(p.numel() for p in model.parameters())
+    total = sum(_logical_numel(p) for p in model.parameters())  # logical count (NF4 packs 2/byte)
     trainable = 0
     by_suffix: Counter[str] = Counter()
     for name, param in model.named_parameters():
@@ -565,43 +580,23 @@ def parameter_report(model) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def merge_run(run_dir: str | Path, *, out_dir: str | Path | None = None, console=None) -> Path:
-    """Fold the adapter into the base, dequantize NF4 → bf16, save.
-
-    A 27B model needs ~55 GB of bf16 memory: host RAM if it fits, otherwise
-    the model is sharded across the available GPUs (``device_map="balanced"``).
-    """
-    import json as _json
-
-    import torch
-    from rich.console import Console
-    from rich.panel import Panel
-
-    from .hardware import host_memory
-
-    console = console or Console()
-    run_dir = Path(run_dir)
-    cfg = Config.from_dict(_json.loads((run_dir / "config.resolved.json").read_text()))
-    adapter_dir = run_dir / "adapter"
-    if not adapter_dir.exists():
-        raise SystemExit(f"No adapter found at {adapter_dir}")
-    out = Path(out_dir) if out_dir else run_dir / "merged"
-    out.mkdir(parents=True, exist_ok=True)
-
-    model_bytes = _estimate_model_bytes(cfg)
-    ram = host_memory()
+def _choose_merge_device(model_bytes: int, ram: dict[str, Any], console: Console) -> Any:
+    """CPU when host RAM fits the model twice over, else shard across GPUs."""
     if ram.get("available_gib", 0) * 2**30 > model_bytes * 2.2:
-        device_map: Any = {"": "cpu"}
         console.print(
             f"[dim]merging on CPU ({human_bytes(model_bytes)} model, {ram['available_gib']:.0f} GiB RAM free)[/dim]"
         )
-    else:
-        device_map = "balanced"
-        console.print(
-            f"[dim]merging sharded across GPUs (model ≈ {human_bytes(model_bytes)}, "
-            f"host RAM free {ram['available_gib']:.0f} GiB)[/dim]"
-        )
+        return {"": "cpu"}
+    console.print(
+        f"[dim]merging sharded across GPUs (model ≈ {human_bytes(model_bytes)}, "
+        f"host RAM free {ram['available_gib']:.0f} GiB)[/dim]"
+    )
+    return "balanced"
 
+
+def _fold_adapter(cfg: Config, adapter_dir: Path, device_map: Any, console: Console) -> Any:
+    """Load the prepared 4-bit base, fold the LoRA adapter, dequantize to bf16."""
+    import torch
     from peft import PeftModel
 
     console.print("[dim]loading prepared 4-bit checkpoint…[/dim]")
@@ -610,7 +605,6 @@ def merge_run(run_dir: str | Path, *, out_dir: str | Path | None = None, console
         cfg.model.prepared_dir,
         dtype=compute_dtype(cfg),
         device_map=device_map,
-        low_cpu_mem_usage=True,
     )
     console.print("[dim]folding LoRA weights into the quantized model…[/dim]")
     model = PeftModel.from_pretrained(model, str(adapter_dir))
@@ -619,12 +613,37 @@ def merge_run(run_dir: str | Path, *, out_dir: str | Path | None = None, console
     console.print("[dim]dequantizing NF4 → bf16…[/dim]")
     model = _dequantize_linear4bit(model, dtype=torch.bfloat16)
     model.config.use_cache = True
+    return model
+
+
+def merge_run(run_dir: str | Path, *, out_dir: str | Path | None = None, console: Console | None = None) -> Path:
+    """Fold the adapter into the base, dequantize NF4 → bf16, save.
+
+    A 27B model needs ~55 GB of bf16 memory: host RAM if it fits, otherwise
+    the model is sharded across the available GPUs (``device_map="balanced"``).
+    """
+    from rich.console import Console
+    from rich.panel import Panel
+
+    from .hardware import host_memory
+
+    console = console or Console()
+    run_dir = Path(run_dir)
+    cfg = Config.from_dict(json.loads((run_dir / "config.resolved.json").read_text()))
+    adapter_dir = run_dir / "adapter"
+    if not adapter_dir.exists():
+        raise SystemExit(f"No adapter found at {adapter_dir}")
+    out = Path(out_dir) if out_dir else run_dir / "merged"
+    out.mkdir(parents=True, exist_ok=True)
+
+    device_map = _choose_merge_device(_estimate_model_bytes(cfg), host_memory(), console)
+    model = _fold_adapter(cfg, adapter_dir, device_map, console)
 
     console.print(f"[dim]saving bf16 model to {out} …[/dim]")
     # `save_original_format=False`: transformers would otherwise try to revert
     # the bnb load conversion (re-packing bf16 weights into NF4), which is not
     # implemented — the weights are plain bf16 and are saved as such.
-    model.save_pretrained(out, safe_serialization=True, max_shard_size="4GB", save_original_format=False)
+    model.save_pretrained(out, max_shard_size="4GB", save_original_format=False)
     load_tokenizer(cfg).save_pretrained(out)
 
     size = sum(f.stat().st_size for f in out.rglob("*") if f.is_file())
@@ -643,11 +662,9 @@ def merge_run(run_dir: str | Path, *, out_dir: str | Path | None = None, console
 
 def _estimate_model_bytes(cfg: Config) -> int:
     """Rough bf16 size of the merged model — drives the CPU-vs-GPU choice."""
-    import json as _json
-
     base = Path(cfg.model.prepared_dir)
     try:
-        total_params = _json.loads((base / "finetune_meta.json").read_text()).get("total_params")
+        total_params = json.loads((base / "finetune_meta.json").read_text()).get("total_params")
         if total_params:
             return int(total_params) * 2  # bf16 bytes per parameter
     except Exception:
@@ -655,7 +672,7 @@ def _estimate_model_bytes(cfg: Config) -> int:
     try:
         index = base / "model.safetensors.index.json"
         if index.exists():
-            return int(_json.loads(index.read_text())["metadata"].get("total_size", 0)) * 2
+            return int(json.loads(index.read_text())["metadata"].get("total_size", 0)) * 2
         nf4_bytes = sum(f.stat().st_size for f in base.glob("*.safetensors"))
         if nf4_bytes:
             return nf4_bytes * 2
@@ -664,7 +681,7 @@ def _estimate_model_bytes(cfg: Config) -> int:
     return 60 * 10**9
 
 
-def _dequantize_linear4bit(model, *, dtype):
+def _dequantize_linear4bit(model: PreTrainedModel, *, dtype: torch.dtype):
     """Replace every Linear4bit module with a plain Linear holding bf16 weights."""
     import bitsandbytes as bnb
     import torch
@@ -673,10 +690,13 @@ def _dequantize_linear4bit(model, *, dtype):
         if not isinstance(module, bnb.nn.Linear4bit):
             continue
         weight = module.weight
-        dequant = bnb.functional.dequantize_4bit(weight.data, weight.quant_state).to(dtype)
-        new = torch.nn.Linear(module.in_features, module.out_features, bias=module.bias is not None)
+        dequant = bnb.functional.dequantize_4bit(  # pyright: ignore[reportAttributeAccessIssue]  # runtime API
+            weight.data,
+            weight.quant_state,  # pyright: ignore[reportAttributeAccessIssue]  # set by Params4bit
+        ).to(dtype)
+        new = torch.nn.Linear(module.in_features, module.out_features, bias=module.bias is not None)  # pyright: ignore[reportUnnecessaryComparison]
         new.weight = torch.nn.Parameter(dequant, requires_grad=False)
-        if module.bias is not None:
+        if module.bias is not None:  # pyright: ignore[reportUnnecessaryComparison]  # biasless Linears
             new.bias = torch.nn.Parameter(module.bias.data.to(dtype), requires_grad=False)
         new = new.to(device=dequant.device)
         parent = model
@@ -688,9 +708,10 @@ def _dequantize_linear4bit(model, *, dtype):
     # still claims 4-bit would re-quantize on reload and confuse GGUF
     # converters) and the consumed load-time conversion record (its reverse —
     # re-packing to NF4 — is not implemented, so keeping it breaks saving).
-    model.config.__dict__.pop("quantization_config", None)
+    with contextlib.suppress(AttributeError):
+        delattr(model.config, "quantization_config")
     with contextlib.suppress(Exception):
-        model._weight_conversions = None
+        model._weight_conversions = None  # pyright: ignore[reportArgumentType]  # dynamic attr
     import gc
 
     gc.collect()

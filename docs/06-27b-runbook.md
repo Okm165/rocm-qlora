@@ -1,4 +1,4 @@
-# 27B runbook — Qwen3.8-27B on a ShareGPT dataset
+# 06 · 27B runbook — Qwen3.8-27B on a ShareGPT dataset
 
 Everything is already configured in `configs/qwen3.8-27b.toml`. This page is
 the operator's view: what to run, what to expect, what to watch, and what to
@@ -31,9 +31,9 @@ uv run rocm-qlora chat --run .outputs/runs/<timestamp>-qwen3.8-27b
 
 | | value |
 |---|---|
-| steps | `examples ÷ effective batch` per epoch × 3 epochs (effective batch = 2 × 2 accum × GPUs — it scales with the GPU count) |
-| wall time | ~30–60 min total (compute-bound; the dashboard ETA row is ground truth) |
-| VRAM | ~21–22 GB of 24 per GPU (weights 17.3 GB; rest is LoRA + activations + context) |
+| steps | `examples ÷ effective batch` per epoch × 3 epochs (effective batch = 1 × 4 accum × GPUs — it scales with the GPU count) |
+| wall time | ~75–90 min total (measured ~18–21 s/step × 252 steps + 3 evals; the dashboard ETA row is ground truth) |
+| VRAM | ~21–24 GB of 24 per GPU (step 1 ≈ 21.1 GB; peaks ~24 — weights 17.3 GB, rest is LoRA + activations + context) |
 | eval | the 5% holdout at each epoch end (~2–3 min each) |
 | artifacts | `charts/` refresh every 10 steps; `metrics.jsonl` has one record per step |
 
@@ -45,8 +45,8 @@ uv run rocm-qlora chat --run .outputs/runs/<timestamp>-qwen3.8-27b
   as `warn` events; a *sustained* rise is worth a look.
 * **eval loss** — falling or flat = healthy; a clear rise = overfitting
   (fewer epochs, more dropout — `configs/qwen3.8-27b.toml` comments say where).
-* **VRAM per GPU** — should sit flat around 21–22 GB. A slow climb means
-  allocator fragmentation; resuming from the last checkpoint resets it.
+* **VRAM per GPU** — starts ~21 GB and sawtooths toward ~24 GB (2026-10-23
+  batch-1 run); a sustained climb means fragmentation — resuming resets it.
 * **health line** — temps < 80 °C, no warning events, loss trend not "rising".
 
 ## The guards (why the run aborts instead of rotting)
@@ -65,8 +65,9 @@ failures, see `docs/05-troubleshooting.md`:
 When one fires, the run exits with a loud error, an `error` event in `metrics.jsonl`, and
 the run exits — nothing silent, nothing saved that looks healthy.
 
-**Resume after an abort** (checkpoints are written every epoch, including
-optimizer/scheduler state):
+**Resume after an abort** (checkpoints carry optimizer/scheduler state; the
+27B config writes one every 42 steps — half an epoch — so a crash costs at
+most ~11 min):
 
 ```bash
 uv run rocm-qlora train --config configs/qwen3.8-27b.toml \
@@ -123,8 +124,8 @@ toy run forced fully to math (`--set model.attn=eager`) completed 92/92 steps
 clean.
 
 **What this means for a run**: the guard aborts cleanly (validated — it fired
-at step 3 of a dry run), and `--resume` continues from the last epoch
-checkpoint (validated on the toy). But with this rate, a full 3-epoch run
+at step 3 of a dry run), and `--resume` continues from the last checkpoint
+(validated on the toy). But with this rate, a full 3-epoch run
 will likely need several resumes — before committing to that, spend one
 small job on the root cause:
 
@@ -140,6 +141,10 @@ ROCM_QLORA_DETECT_ANOMALY=1 ROCM_QLORA_GRAD_CHECK=1 \
 ## If something goes wrong
 
 * `docs/05-troubleshooting.md` — every failure seen so far, with its fix.
+* A **GPU reset** (`MES failed to respond` in the kernel log; all ranks die
+  with SIGABRT) is a firmware/hardware event, not a code bug — diagnosis,
+  mitigations and the firmware check are in docs/05 ("GPU reset: MES failed
+  to respond"). Mid-epoch checkpoints make it survivable.
 * The run dir is self-contained: `metrics.jsonl` (source of truth),
   `logs/rank-*.log`, `charts/`, `report.md`, `env_fingerprint.json`,
   `config.resolved.toml`.

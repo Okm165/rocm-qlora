@@ -5,12 +5,13 @@
 # "(measured)" come from `rocm-qlora data` / `doctor`.
 #
 # Memory story (per GPU, DDP across the GPUs):
-#   NF4 weights (after `prepare` surgery)  ~17.3 GB  (measured: 19.1 GB used at bs=1)
+#   NF4 weights (after `prepare` surgery)  ~17.3 GB  (exact: finetune_meta.json)
 #   LoRA + 8-bit Adam (r=16, all-linear)   ~0.7 GB
-#   activations @ 1536 tokens, batch 2     ~2.5 GB  (gradient checkpointing)
+#   activations @ 1536 tokens, batch 1     ~1.3 GB  (est.; gradient checkpointing)
 #   HIP context + fragmentation            ~1 GB
 #   ------------------------------------------------------------------
-#   total ≈ 21.5 GB of 24 GB  →  fits with ~2.5 GB headroom.
+#   measured at batch 2: 25.5–25.75 GB peaks → OOM at the margin (docs/05).
+#   batch 1 × accum 4 restores the headroom — verify on the first run.
 # =============================================================================
 
 [run]
@@ -42,7 +43,7 @@ requantize_modules = ["in_proj_qkv"]
 [data]
 path = ".data/raw/dataset.json"
 eval_fraction = 0.05   # a small holdout; enough to see the trend
-max_length = 1536      # ≈p97 of the token distribution; see `rocm-qlora data`
+max_length = 1536      # ≈p99 of the token distribution (p99=1469, p100=1980); see `rocm-qlora data`
 packing = false        # correctness first: see the packing explainer
 assistant_only_loss = true
 dataset_num_proc = 8
@@ -63,18 +64,23 @@ target_modules = [
 [optim]
 lr = 1.0e-4            # conservative end of the 1e-4…2e-4 QLoRA range
 epochs = 3
-# Micro-batch 2 × accum 2 × GPUs = effective batch (same optimization
-# dynamics as batch 1 × accum 4, but ~2× better arithmetic intensity: at
-# batch 1 the 17 GB of frozen weights are streamed per micro-step mostly for
-# nothing; batch 2 halves the weight-streaming overhead per token).
-per_device_batch_size = 2
-grad_accum = 2         # effective batch = 2 × 2 × GPU count (12 on a 3-GPU run)
+# Micro-batch 1 × accum 4: same effective batch as 2 × 2 (12 on 3 GPUs) at
+# ~half the activation memory. At batch 2 the 2026-10-23 runs peaked at
+# 25.5/25.75 GB on 1536-token batches and OOMed at the margin.
+per_device_batch_size = 1
+grad_accum = 4         # effective batch = 1 × 4 × GPU count (12 on a 3-GPU run)
 max_grad_norm = 0.3    # QLoRA paper value
 weight_decay = 0.01
 optimizer = "adamw_8bit"   # 8-bit optimizer states (ROCm-supported)
 scheduler = "cosine"
 warmup_ratio = 0.03
 gradient_checkpointing = true
+# Activation offloading: hold checkpointed activations in pinned host RAM
+# (frees device memory; costs a D2H+H2D copy per layer per step).
+activation_offloading = false
+# Selective checkpointing: checkpoint every Nth layer (1 = all layers). >1
+# trades memory back for speed when full checkpointing frees more than needed.
+checkpoint_every_n_layers = 1
 loss_type = "nll"          # standard NLL; TRL's fused kernel chunks it internally
 
 [eval]
@@ -86,12 +92,32 @@ eval_packing = false
 chart_snapshot_steps = 10   # live dashboard.png/loss.png refresh cadence
 gpu_sample_seconds = 5.0
 keep_epoch_checkpoints = true
-metrics_every_step = true
+# Mid-epoch full checkpoint (84 steps/epoch → every ~half epoch ≈ 11 min):
+# a GPU reset or crash loses at most ~11 min instead of a whole epoch.
+# Resume with: rocm-qlora train --config … --resume .outputs/runs/<run>
+checkpoint_every_n_steps = 42
 
 [env]
+# Allocator: GC threshold only. `expandable_segments:True` was tried on
+# 2026-10-23 (same seed/batch — identical tokens_seen) and silently corrupted
+# the numerics on this stack (torch 2.13+rocm7.1/gfx1100): step-1 loss
+# 1.43 → 3.36 with NaN gradients. Reverted. Headroom is bought with
+# batch 1 × accum 4 instead (see [optim]); GC threshold stays for hygiene.
 hip_alloc_conf = "garbage_collection_threshold:0.8"
 aotriton = "auto"       # doctor's SDPA verdict decides the env flag
 omp_num_threads = 8     # a handful per rank; avoids host oversubscription
+
+[env.extra]
+# Removes a documented trigger of the KFD-eviction → MES REMOVE_QUEUE failure
+# class on gfx11 (ROCm issue #6386 — the failure that mode1-reset a GPU here on
+# 2026-10-23): without SVM the runtime no longer routes host page-table
+# invalidation through KFD queue eviction. Measured cost ~0.1%; outputs
+# unchanged. See docs/05-troubleshooting.md ("GPU reset / MES failure").
+HSA_USE_SVM = "0"
+# Health-analysis verbosity for the package logger (INFO default). DEBUG keeps
+# the same output today but future diagnostics will land at DEBUG level.
+# For HF/TRL internals in the rank logs, launch with ROCM_QLORA_HF_LOG_LEVEL=info.
+ROCM_QLORA_LOG_LEVEL = "DEBUG"
 
 [dist]
 mode = "auto"           # DDP across every GPU that fits

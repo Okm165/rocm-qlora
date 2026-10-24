@@ -18,20 +18,17 @@ which keeps unit tests fast (stub tokenizer, no downloads).
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, cast
 
 from .utils import percentile
 
+if TYPE_CHECKING:
+    from datasets import Dataset
+    from transformers import PreTrainedTokenizerBase
+
 VALID_ROLES = {"system", "user", "assistant", "tool"}
-
-
-class ChatTokenizer(Protocol):
-    def apply_chat_template(
-        self, messages: Sequence[dict[str, str]], *, tokenize: bool = False, **kwargs: Any
-    ) -> Any: ...
 
 
 # ---------------------------------------------------------------------------
@@ -54,6 +51,7 @@ class DatasetStats:
     think_complete: int  # ...with a matching closing tag
 
     def char_percentiles(self, which: str = "assistant") -> dict[str, float]:
+        """Character-length percentiles of assistant (or user) turns."""
         values = sorted(self.assistant_chars if which == "assistant" else self.user_chars)
         return {f"p{q}": percentile(values, q) for q in (50, 90, 95, 99, 100)}
 
@@ -61,14 +59,7 @@ class DatasetStats:
 def load_sharegpt(path: str | Path, messages_field: str = "messages") -> tuple[list[dict[str, Any]], DatasetStats]:
     """Load + validate a ShareGPT-style JSON file."""
     path = Path(path)
-    if not path.exists():
-        raise DatasetError(f"Dataset not found: {path}\nIf the raw file was moved, update data.path in the config.")
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise DatasetError(f"{path} is not valid JSON: {exc}") from exc
-    if not isinstance(raw, list) or not raw:
-        raise DatasetError(f"{path}: expected a non-empty JSON list of examples")
+    raw = _read_json_list(path)
 
     examples: list[dict[str, Any]] = []
     role_counts: dict[str, int] = {}
@@ -78,21 +69,10 @@ def load_sharegpt(path: str | Path, messages_field: str = "messages") -> tuple[l
     think_blocks = think_complete = 0
 
     for i, item in enumerate(raw):
-        if not isinstance(item, dict) or messages_field not in item:
-            raise DatasetError(f"{path}: example {i} has no '{messages_field}' key")
-        messages = item[messages_field]
-        if not isinstance(messages, list) or len(messages) < 2:
-            raise DatasetError(f"{path}: example {i}: '{messages_field}' must have >= 2 turns")
+        messages = _validated_messages(path, i, item, messages_field)
         roles_here: set[str] = set()
-        for j, msg in enumerate(messages):
-            role = msg.get("role")
-            content = msg.get("content")
-            if role not in VALID_ROLES:
-                raise DatasetError(
-                    f"{path}: example {i}, turn {j}: invalid role {role!r} (expected one of {sorted(VALID_ROLES)})"
-                )
-            if not isinstance(content, str) or not content.strip():
-                raise DatasetError(f"{path}: example {i}, turn {j}: empty content")
+        for msg in messages:
+            role, content = msg["role"], msg["content"]
             role_counts[role] = role_counts.get(role, 0) + 1
             roles_here.add(role)
             if role == "assistant":
@@ -120,6 +100,38 @@ def load_sharegpt(path: str | Path, messages_field: str = "messages") -> tuple[l
     return examples, stats
 
 
+def _read_json_list(path: Path) -> list[Any]:
+    """Read `path` as JSON, raising DatasetError for a missing file or non-list."""
+    if not path.exists():
+        raise DatasetError(f"Dataset not found: {path}\nIf the raw file was moved, update data.path in the config.")
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise DatasetError(f"{path} is not valid JSON: {exc}") from exc
+    if not isinstance(raw, list) or not raw:
+        raise DatasetError(f"{path}: expected a non-empty JSON list of examples")
+    return raw
+
+
+def _validated_messages(path: Path, i: int, item: Any, messages_field: str) -> list[dict[str, Any]]:
+    """Validate example `i` and every turn; returns the type-checked turns."""
+    if not isinstance(item, dict) or messages_field not in item:
+        raise DatasetError(f"{path}: example {i} has no '{messages_field}' key")
+    messages = item[messages_field]
+    if not isinstance(messages, list) or len(messages) < 2:
+        raise DatasetError(f"{path}: example {i}: '{messages_field}' must have >= 2 turns")
+    for j, msg in enumerate(messages):
+        role = msg.get("role")
+        content = msg.get("content")
+        if role not in VALID_ROLES:
+            raise DatasetError(
+                f"{path}: example {i}, turn {j}: invalid role {role!r} (expected one of {sorted(VALID_ROLES)})"
+            )
+        if not isinstance(content, str) or not content.strip():
+            raise DatasetError(f"{path}: example {i}, turn {j}: empty content")
+    return messages
+
+
 # ---------------------------------------------------------------------------
 # Token-level profiling
 # ---------------------------------------------------------------------------
@@ -135,9 +147,11 @@ class TokenProfile:
 
     @property
     def truncation_pct(self) -> float:
+        """Percentage of examples truncated at max_length."""
         return 100.0 * self.n_truncated / max(1, self.n_total)
 
     def percentiles(self) -> dict[str, float]:
+        """Token-length percentiles (p50/p90/p95/p99/p100)."""
         return {f"p{q}": percentile(self.lengths, q) for q in (50, 90, 95, 99, 100)}
 
     def coverage_at(self, cap: int) -> float:
@@ -148,7 +162,7 @@ class TokenProfile:
 
 
 def profile_tokens(
-    tokenizer: ChatTokenizer,
+    tokenizer: PreTrainedTokenizerBase,
     examples: list[dict[str, Any]],
     *,
     messages_field: str = "messages",
@@ -165,7 +179,7 @@ def profile_tokens(
     lengths: list[int] = []
     for item in examples:
         try:
-            ids = tokenizer.apply_chat_template(
+            ids: Any = tokenizer.apply_chat_template(  # dynamic union; normalized just below
                 item[messages_field], tokenize=True, add_generation_prompt=False, **(template_kwargs or {})
             )
             # transformers v5 may return a BatchEncoding/dict, a tensor, or a list.
@@ -192,7 +206,7 @@ def profile_tokens(
 
 
 def render_preview(
-    tokenizer: ChatTokenizer,
+    tokenizer: PreTrainedTokenizerBase,
     example: dict[str, Any],
     *,
     messages_field: str = "messages",
@@ -201,9 +215,12 @@ def render_preview(
 ) -> str:
     """Render one example with the real chat template (for teaching output)."""
     try:
-        text = tokenizer.apply_chat_template(
-            example[messages_field], tokenize=False, add_generation_prompt=False, **(template_kwargs or {})
-        )
+        text = cast(
+            "str",
+            tokenizer.apply_chat_template(
+                example[messages_field], tokenize=False, add_generation_prompt=False, **(template_kwargs or {})
+            ),
+        )  # tokenize=False ⟹ str
     except Exception as exc:  # pragma: no cover - depends on tokenizer quirks
         return f"<chat template failed: {exc}>"
     text = text.replace("<|im_start|>", "⟨im_start⟩").replace("<|im_end|>", "⟨im_end|⟩")
@@ -224,21 +241,10 @@ def to_hf_dataset(examples: list[dict[str, Any]], messages_field: str = "message
     return Dataset.from_list([{messages_field: item[messages_field]} for item in examples])
 
 
-def split_dataset(ds, *, eval_fraction: float, seed: int):
+def split_dataset(ds: Dataset, *, eval_fraction: float, seed: int):
     """Train/eval split with a fixed seed. Returns DatasetDict."""
     if eval_fraction <= 0:
         from datasets import DatasetDict
 
         return DatasetDict({"train": ds})
     return ds.train_test_split(test_size=eval_fraction, seed=seed, shuffle=True)
-
-
-def split_by_index(n: int, *, eval_fraction: float, seed: int) -> tuple[list[int], list[int]]:
-    """Deterministic index split — used by the data profiler before HF exists."""
-    import random
-
-    idx = list(range(n))
-    rng = random.Random(seed)
-    rng.shuffle(idx)
-    n_eval = round(n * eval_fraction)
-    return idx[n_eval:], idx[:n_eval]

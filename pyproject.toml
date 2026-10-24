@@ -42,6 +42,8 @@ dependencies = [
     "datasets>=5.1,<6",
     # accelerate: device placement + distributed launch plumbing
     "accelerate>=1.15,<2",
+    # huggingface-hub: imported directly (token/cache paths in the CLI)
+    "huggingface-hub>=2.2,<3",
     # --- Observability (the "explain everything" layer) ---------------------
     "rich>=14",          # terminal dashboards, panels, tables
     "matplotlib>=3.10",  # charts written to .outputs/runs/<id>/charts/
@@ -64,11 +66,31 @@ dev = [
     # codespell = typo checker. The Rust `typos` tool needs a cargo toolchain;
     # codespell gives the same service with zero system dependencies.
     "codespell>=2.4",
+    # basedpyright = the type checker. Gate: `uv run basedpyright` must report
+    # 0 errors (warnings are strict-mode noise from untyped third-party libs).
+    "basedpyright>=1.40",
+    "pytest-cov>=7.1.0",
 ]
 
 # -----------------------------------------------------------------------------
-# Code quality (ruff + codespell; run via `uv run ruff check`, etc.)
+# Code quality (ruff + codespell + basedpyright; run via `uv run ruff check`, etc.)
 # -----------------------------------------------------------------------------
+[tool.basedpyright]
+include = ["src/rocm_qlora"]
+# Errors are the gate; the warning flood is strict-mode noise from untyped
+# third-party libs (transformers/trl/bitsandbytes ship no precise stubs).
+reportAny = "none"
+reportExplicitAny = "none"
+reportUnknownMemberType = "none"
+reportUnknownArgumentType = "none"
+reportUnknownVariableType = "none"
+reportMissingTypeStubs = "none"
+# Idiomatic patterns we keep on purpose:
+reportUnusedCallResult = "none"          # parser.add_argument(...), plt.* calls
+reportImplicitStringConcatenation = "none"  # deliberate multi-line f-strings in panels
+reportUnknownLambdaType = "none"         # lambdas passed into untyped lib APIs
+reportPrivateImportUsage = "none"        # bnb.nn.Linear4bit / trl.SFTConfig are canonical at runtime
+
 [tool.ruff]
 target-version = "py312"
 line-length = 120
@@ -125,9 +147,19 @@ triton-rocm = { index = "pytorch-rocm" }
 # the torch pin do not break resolution.
 pytorch-triton-rocm = { index = "pytorch-rocm" }
 
+[tool.coverage.run]
+source = ["src/rocm_qlora"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+# torch.jit.script_method deprecation is emitted 14x by torch's own
+# torch/utils/mkldnn.py (reached via bitsandbytes -> torch.compile at import);
+# keep the suite summary clean without hiding anything actionable.
+# Message-specific: only torch's own `torch.jit.script_method` deprecation is
+# hidden (emitted from torch/jit/_script.py via the mkldnn path); a module
+# filter does not match because the warning's stacklevel points elsewhere.
+filterwarnings = ["ignore:.*torch.jit.script_method.*is deprecated.*:DeprecationWarning"]
 markers = [
     "gpu: tests that require a working ROCm GPU (skipped by default)",
 ]

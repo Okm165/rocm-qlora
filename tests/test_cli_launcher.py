@@ -1,0 +1,102 @@
+"""CLI parser + launcher policy tests (pure logic, no GPU, no model)."""
+
+from __future__ import annotations
+
+import json
+
+from rocm_qlora.cli import _resolve_resume_checkpoint, build_parser
+from rocm_qlora.config import Config
+from rocm_qlora.launcher import build_worker_env, load_doctor_verdict, make_run_dir
+
+
+def test_parser_accepts_every_command():
+    parser = build_parser()
+    for argv in (
+        ["doctor"],
+        ["data"],
+        ["prepare"],
+        ["report", "--run", "x"],
+        ["merge", "--run", "x"],
+        ["chat", "--run", "x"],
+        ["train", "--config", "c.toml", "--gpus", "0,1", "--run-name", "renamed", "--seed", "7", "--dry-run"],
+    ):
+        assert parser.parse_args(argv) is not None
+
+
+def test_load_config_applies_cli_overrides(tmp_path):
+    from rocm_qlora.cli import _load_config
+
+    cfg_file = tmp_path / "c.toml"
+    cfg_file.write_text('[run]\nname = "x"\n')
+    args = build_parser().parse_args(
+        ["train", "--config", str(cfg_file), "--gpus", "1,2", "--run-name", "renamed", "--seed", "7"]
+    )
+    cfg = _load_config(args)
+    assert cfg.dist.gpus == [1, 2]
+    assert cfg.run.name == "renamed" and cfg.run.seed == 7
+
+
+def test_resolve_resume_checkpoint(tmp_path):
+    run = tmp_path / "run"
+    (run / "adapter" / "checkpoint-42").mkdir(parents=True)
+    latest = run / "adapter" / "checkpoint-126"
+    latest.mkdir()
+    assert _resolve_resume_checkpoint(str(run)) == latest  # highest step wins
+
+    (latest / "trainer_state.json").write_text("{}")
+    assert _resolve_resume_checkpoint(str(latest)) == latest  # a checkpoint dir is itself
+
+    assert _resolve_resume_checkpoint(str(tmp_path / "missing")) is None
+    assert _resolve_resume_checkpoint(str(tmp_path)) is None
+
+
+def test_make_run_dir_layout(tmp_path):
+    cfg = Config.from_dict({"run": {"output_root": str(tmp_path), "name": "unit"}})
+    run = make_run_dir(cfg, dry_run=True)
+    assert run.name.endswith("-unit-dryrun")
+    assert (run / "logs").is_dir() and (run / "charts").is_dir()
+
+
+def test_build_worker_env_policy():
+    cfg = Config.from_dict({})
+    env = build_worker_env(cfg, [0, 2])
+    assert env["HIP_VISIBLE_DEVICES"] == "0,2" and env["CUDA_VISIBLE_DEVICES"] == "0,2"
+    assert env["TOKENIZERS_PARALLELISM"] == "false"
+    # The stable transport defaults (documented in the function).
+    assert env["NCCL_P2P_DISABLE"] == "1" and env["HSA_ENABLE_IPC_MODE_LEGACY"] == "0"
+    assert env["PYTHONHASHSEED"] == str(cfg.run.seed)
+
+    # [env.extra] wins over every default; aotriton=off removes the flag.
+    cfg2 = Config.from_dict({"env": {"extra": {"NCCL_P2P_DISABLE": "0"}, "aotriton": "off"}})
+    env2 = build_worker_env(cfg2, [1])
+    assert env2["NCCL_P2P_DISABLE"] == "0"
+    assert "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL" not in env2
+
+
+def test_doctor_verdict_readers(tmp_path, monkeypatch):
+    from rocm_qlora import launcher
+
+    verdict_file = tmp_path / "doctor-latest.json"
+    monkeypatch.setattr(launcher, "DOCTOR_VERDICT", verdict_file)
+    assert load_doctor_verdict() is None  # missing file → None, no raise
+
+    verdict_file.write_text(
+        json.dumps(
+            {
+                "created": "2026-10-23_0935",
+                "sdpa": {
+                    "verdict": "aotriton_on",
+                    "attn_implementation": "sdpa",
+                    "backends": {"flash_on": {"ok": True}, "efficient_on": {"ok": False, "error": "no kernel"}},
+                },
+            }
+        )
+    )
+    cfg = Config.from_dict({})
+    assert launcher.resolve_attn_impl(cfg) == "sdpa"
+    assert launcher.resolve_aotriton(cfg) is True
+
+    # config wins over the verdict
+    cfg2 = Config.from_dict({"model": {"attn": "eager"}, "env": {"aotriton": "off"}})
+    assert launcher.resolve_attn_impl(cfg2) == "eager"
+    assert launcher.resolve_aotriton(cfg2) is False

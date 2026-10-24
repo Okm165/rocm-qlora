@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from rich.console import Console
 from rich.markdown import Markdown
@@ -24,10 +24,15 @@ from rich.prompt import Prompt
 
 from .config import Config
 
+if TYPE_CHECKING:
+    from transformers import GenerationConfig, PreTrainedModel, PreTrainedTokenizerBase
+
 DEFAULT_TEMPLATE_KWARGS: dict[str, Any] = {"enable_thinking": True}
 
 
-def _load(run_dir: Path | None, base_override: str | None, adapter_override: str | None, console: Console):
+def _load(
+    run_dir: Path | None, base_override: str | None, adapter_override: str | None, console: Console
+) -> tuple[Any, PreTrainedTokenizerBase]:
     import torch
     from peft import PeftModel
     from transformers import AutoTokenizer
@@ -57,7 +62,6 @@ def _load(run_dir: Path | None, base_override: str | None, adapter_override: str
         str(base_dir),
         dtype=compute_dtype(cfg) if cfg else torch.bfloat16,
         device_map={"": "cuda:0"},
-        low_cpu_mem_usage=True,
         attn_implementation=attn,
     )
     if adapter_dir and Path(adapter_dir).exists():
@@ -75,6 +79,90 @@ def _split_thinking(text: str) -> tuple[str | None, str]:
     return None, text
 
 
+def _print_banner(console: Console) -> None:
+    """One-time command cheat-sheet panel."""
+    console.print(
+        Panel(
+            "Type a question. Commands: [bold]/think on|off[/bold] · [bold]/temp X[/bold] · "
+            "[bold]/max N[/bold] · [bold]/reset[/bold] · [bold]/exit[/bold]",
+            title="[bold]rocm-qlora chat[/bold]",
+            border_style="cyan",
+        )
+    )
+
+
+def _apply_command(
+    user: str, gen: GenerationConfig, *, think: bool, history: list[dict[str, str]], console: Console
+) -> tuple[bool, bool]:
+    """Handle a /command in place; returns ``(consumed, think)``."""
+    if user == "/reset":
+        history.clear()
+        console.print("[dim]history cleared[/dim]")
+        return True, think
+    if user.startswith("/think"):
+        think = user.split()[-1].lower() not in {"off", "false", "0"}
+        console.print(f"[dim]thinking = {think}[/dim]")
+        return True, think
+    if user.startswith("/temp"):
+        try:
+            value = float(user.split()[-1])
+            gen.temperature = max(value, 1e-5)
+            gen.do_sample = value > 0
+            console.print(f"[dim]temperature = {gen.temperature}[/dim]")
+        except ValueError:
+            console.print("[red]usage: /temp 0.7[/red]")
+        return True, think
+    if user.startswith("/max"):
+        try:
+            gen.max_new_tokens = int(user.split()[-1])
+            console.print(f"[dim]max_new_tokens = {gen.max_new_tokens}[/dim]")
+        except ValueError:
+            console.print("[red]usage: /max 512[/red]")
+        return True, think
+    return False, think
+
+
+def _build_prompt(tokenizer: PreTrainedTokenizerBase, history: list[dict[str, str]], think: bool) -> str:
+    """Chat-template the history, tolerating templates without thinking kwargs."""
+    template_kwargs: dict[str, Any] = {"enable_thinking": think}
+    try:
+        rendered = tokenizer.apply_chat_template(history, tokenize=False, add_generation_prompt=True, **template_kwargs)
+    except TypeError:
+        rendered = tokenizer.apply_chat_template(history, tokenize=False, add_generation_prompt=True)
+    return cast("str", rendered)  # tokenize=False ⟹ str
+
+
+def _generate_reply(
+    model: PreTrainedModel,
+    tokenizer: PreTrainedTokenizerBase,
+    prompt: str,
+    gen: GenerationConfig,
+) -> tuple[str, int, float]:
+    """One sampled generation; returns (text, new_tokens, seconds)."""
+    import torch
+
+    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+    t0 = time.perf_counter()
+    generate: Any = model.generate  # GenerationMixin lives on the concrete model (stubs don't link it)
+    with torch.inference_mode():
+        out = generate(**inputs, generation_config=gen)
+    dt = time.perf_counter() - t0
+    new_tokens = out.shape[1] - inputs["input_ids"].shape[1]
+    text = cast("str", tokenizer.decode(out[0][inputs["input_ids"].shape[1] :], skip_special_tokens=True))
+    return text, new_tokens, dt
+
+
+def _render_reply(console: Console, text: str, new_tokens: int, dt: float) -> None:
+    """Thinking panel (when present) + Markdown answer + timing footer."""
+    reasoning, answer = _split_thinking(text)
+    if reasoning:
+        console.print(Panel(reasoning, title="[dim]thinking[/dim]", border_style="grey37", padding=(0, 1)))
+    console.print(
+        Panel(Markdown(answer or "(empty)"), title="[bold green]assistant[/bold green]", border_style="green")
+    )
+    console.print(f"[dim]{new_tokens} tokens · {new_tokens / dt:.1f} tok/s · {dt:.1f}s[/dim]")
+
+
 def run_chat(
     *,
     run_dir: str | None = None,
@@ -86,21 +174,23 @@ def run_chat(
     top_k: int = 20,
     console: Console | None = None,
 ) -> None:
-    import torch
-
+    """Interactive loop: prompt → templated chat → sampled reply, with /commands."""
     console = console or Console()
+    from transformers import GenerationConfig
+
     model, tokenizer = _load(Path(run_dir) if run_dir else None, base, adapter, console)
+    gen = GenerationConfig(
+        max_new_tokens=max_new_tokens,
+        temperature=max(temperature, 1e-5),
+        do_sample=temperature > 0,
+        top_p=top_p,
+        top_k=top_k,
+        repetition_penalty=1.05,
+        pad_token_id=tokenizer.pad_token_id,
+    )
     think = True
     history: list[dict[str, str]] = []
-
-    console.print(
-        Panel(
-            "Type a question. Commands: [bold]/think on|off[/bold] · [bold]/temp X[/bold] · "
-            "[bold]/max N[/bold] · [bold]/reset[/bold] · [bold]/exit[/bold]",
-            title="[bold]rocm-qlora chat[/bold]",
-            border_style="cyan",
-        )
-    )
+    _print_banner(console)
 
     while True:
         try:
@@ -112,60 +202,12 @@ def run_chat(
             continue
         if user in {"/exit", "/quit"}:
             break
-        if user == "/reset":
-            history.clear()
-            console.print("[dim]history cleared[/dim]")
-            continue
-        if user.startswith("/think"):
-            think = user.split()[-1].lower() not in {"off", "false", "0"}
-            console.print(f"[dim]thinking = {think}[/dim]")
-            continue
-        if user.startswith("/temp"):
-            try:
-                temperature = float(user.split()[-1])
-                console.print(f"[dim]temperature = {temperature}[/dim]")
-            except ValueError:
-                console.print("[red]usage: /temp 0.7[/red]")
-            continue
-        if user.startswith("/max"):
-            try:
-                max_new_tokens = int(user.split()[-1])
-                console.print(f"[dim]max_new_tokens = {max_new_tokens}[/dim]")
-            except ValueError:
-                console.print("[red]usage: /max 512[/red]")
+        consumed, think = _apply_command(user, gen, think=think, history=history, console=console)
+        if consumed:
             continue
 
         history.append({"role": "user", "content": user})
-        template_kwargs = {"enable_thinking": think} if think is not None else {}
-        try:
-            prompt = tokenizer.apply_chat_template(
-                history, tokenize=False, add_generation_prompt=True, **template_kwargs
-            )
-        except TypeError:
-            prompt = tokenizer.apply_chat_template(history, tokenize=False, add_generation_prompt=True)
-        inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-
-        t0 = time.perf_counter()
-        with torch.inference_mode():
-            out = model.generate(
-                **inputs,
-                max_new_tokens=max_new_tokens,
-                do_sample=temperature > 0,
-                temperature=max(temperature, 1e-5),
-                top_p=top_p,
-                top_k=top_k,
-                repetition_penalty=1.05,
-                pad_token_id=tokenizer.pad_token_id,
-            )
-        dt = time.perf_counter() - t0
-        new_tokens = out.shape[1] - inputs["input_ids"].shape[1]
-        text = tokenizer.decode(out[0][inputs["input_ids"].shape[1] :], skip_special_tokens=True)
-
-        reasoning, answer = _split_thinking(text)
-        if reasoning:
-            console.print(Panel(reasoning, title="[dim]thinking[/dim]", border_style="grey37", padding=(0, 1)))
-        console.print(
-            Panel(Markdown(answer or "(empty)"), title="[bold green]assistant[/bold green]", border_style="green")
-        )
-        console.print(f"[dim]{new_tokens} tokens · {new_tokens / dt:.1f} tok/s · {dt:.1f}s[/dim]")
+        prompt = _build_prompt(tokenizer, history, think)
+        text, new_tokens, dt = _generate_reply(cast("PreTrainedModel", model), tokenizer, prompt, gen)
+        _render_reply(console, text, new_tokens, dt)
         history.append({"role": "assistant", "content": text})

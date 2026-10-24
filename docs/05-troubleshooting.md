@@ -8,6 +8,8 @@ gfx1100 / ROCm 7.1 — not generic advice.
 ```
 <run>/logs/rank-0.log      the full story (tracebacks, warnings)
 <run>/metrics.jsonl        the numeric story (events have type="event")
+                           schema: the MetricsRecord TypedDicts in monitor.py
+                           (train / eval / epoch_end / event / run_end)
 .context/doctor-latest.md  machine state at run start
 ```
 
@@ -71,8 +73,8 @@ saved that looks healthy.
 
 **What to do**:
 
-1. Resume from the last good epoch checkpoint — optimizer/scheduler state is
-   included (`save_only_model=False`):
+1. Resume from the last good checkpoint (27B config: every 42 steps;
+   optimizer/scheduler state included — `save_only_model=False`):
 
    ```bash
    uv run rocm-qlora train --config <cfg> --resume .outputs/runs/<run-dir>
@@ -98,7 +100,7 @@ attention backward, not the DeltaNet layers. Plain allreduce is bit-exact on
 both transports at the 27B's gradient sizes
 (`scripts/poc_p2p_allreduce.py`), so the cause is model-side numerics, not
 communication. Until it is root-caused, the operational answer is: guards
-(already active), `--resume` from the last epoch checkpoint, and the
+(already active), `--resume` from the last checkpoint, and the
 automatic backend guard — the launcher disables SDPA backends the doctor
 probe flagged, so on this machine the mem-efficient backward is never
 dispatched to (padded batches run math attention; causal unmasked ones stay
@@ -133,10 +135,20 @@ In order of effectiveness:
 
 1. `--set data.max_length=1280` (or 1024) — activation memory is linear in it.
 2. `--set optim.optimizer=adamw_8bit` (default already) or `adafactor`.
-3. Confirm `prepare` ran (weights ~19 GB); an un-prepared model needs ~25 GB.
+3. Confirm `prepare` ran (weights ~17.3 GB); an un-prepared model needs ~25 GB.
 4. Stop other VRAM consumers: `rocm-smi --showpids`. An inference server
    holding most of the VRAM will block training entirely — the preflight
    lists exactly who holds what.
+5. **First choice on this box (2026-10-23): `per_device_batch_size = 1` with
+   `grad_accum = 4`** — same effective batch, ~half the activation memory.
+   At batch 2 × 1536 the measured peaks were 25.5/25.75 GB and the run OOMed
+   at step 25 with 8 near-misses before that.
+
+**Do not enable `expandable_segments`.** It was tried on 2026-10-23 and
+silently corrupted numerics on this stack (torch 2.13+rocm7.1/gfx1100):
+identical seed/batch/tokens_seen, but step-1 loss 1.43 → 3.36 and grad_norm
+NaN. If you ever see a *different* loss on the same data/seed after touching
+allocator config, suspect corruption, not the data.
 
 ## Training never starts / hangs before step 1
 
@@ -149,13 +161,66 @@ In order of effectiveness:
 
 ## Slow steps
 
-Baseline expectation: a few seconds/step for 27B QLoRA at batch 2 × 1536
-tokens across the GPUs; the toy is sub-second. If steps slow down mid-run:
+Baseline expectation: a few seconds/step for 27B QLoRA at batch 1 × 1536
+tokens across the GPUs (batch 2 peaked at 25.5–25.75 GB and OOMed); the toy
+is sub-second. If steps slow down mid-run:
 
 * check `gpu_health.png` for thermal throttling,
 * check `vram.png` for a leak (monotonic climb),
 * `torch_empty_cache_steps=50` is already set; fragmentation otherwise is
   rare with `garbage_collection_threshold:0.8`.
+
+## GPU reset: "MES failed to respond" → mode1 reset → all ranks die (SIGABRT)
+
+Seen 2026-10-23 on the 27B run (step 4, RX 7900 XTX / gfx1100). Signature,
+in order:
+
+1. training stalls mid-step (GPUs spin at 100%; no new `metrics.jsonl` lines),
+2. `HW Exception by GPU node-N … reason :GPU Hang` on the console,
+3. kernel log: `MES failed to respond to msg=REMOVE_QUEUE` → `MES might be in
+   unrecoverable state` → `Failed to evict queue` → `GPU reset begin!. Source: 3`
+   → `MODE1 reset` → `VRAM is lost due to GPU reset!`,
+4. the process aborts (SIGABRT, exit 134) — all ranks die with it.
+
+What it is: a firmware-level wedge of the GPU's MES (queue scheduler). The
+driver can no longer tear the hung queues down and mode1-resets the card;
+VRAM is lost, so every process using that card dies. It is **not** our code,
+not RCCL, and not the NaN issue above.
+
+Why this machine was vulnerable (measured on this box):
+
+* the installed `gc_11_0_0_mes_2.bin` firmware blob is byte-identical to the
+  revision AMD reverted upstream on 2026-09-18 ("causes instability",
+  freedesktop work-item 5711) — `linux-firmware-20260916` predates the revert;
+* the card's PCIe link (root port `40:03.1`) emits a chronic storm of
+  *corrected* replay-timeout errors (`[12] Timeout`, Data Link Layer) under
+  GPU load — a link-quality anomaly, plausible trigger/aggravator;
+* the same failure class has a documented KFD trigger: an SVM invalidation /
+  memory-pressure event can push KFD into queue eviction while queues are
+  busy, and MES fails `REMOVE_QUEUE` (ROCm issue #6386).
+
+Mitigations (in place):
+
+* `HSA_USE_SVM=0` in `[env.extra]` of `configs/qwen3.8-27b.toml` — removes
+  the documented eviction trigger; ~0.1% measured cost, outputs unchanged;
+* mid-epoch checkpoints (`logging.checkpoint_every_n_steps = 42`) — a reset
+  now loses ≤ ~11 min; resume with `--resume`;
+* keep VRAM pressure low (see "OOM on the 27B" above) — memory pressure is
+  what feeds the eviction path.
+
+Fix at the source (operator action): install `linux-firmware` newer than the
+2026-09-18 reverts (`sudo dnf update linux-firmware`, then reboot) so the
+restored MES blob is loaded. Check which blob is installed:
+
+```bash
+xz -dc /lib/firmware/amdgpu/gc_11_0_0_mes_2.bin.xz | sha256sum
+# reverted/known-bad: 6e1926d197d9e5f17830c1bba661ac170e2c9e7aba1da56ef26c6f6978b3b79e
+# restored/good:      90352e532f3202fa2bc08a88389d47e6627bf2cdcf02080370c22f8aaa198824
+```
+
+If it recurs: capture the GPU coredump before it is consumed —
+`sudo cat /sys/class/drm/cardN/device/devcoredump/data > gpu-coredump.bin`
+(the file disappears on its own within minutes).
 
 ## The run "succeeded" but the model is bad
 
@@ -176,3 +241,7 @@ uv run rocm-qlora doctor              # full probe → .context/doctor-latest.js
 <run>/config.resolved.toml            # exact config (overrides applied)
 <run>/logs/rank-0.log                 # first ERROR line
 ```
+
+For deeper health analysis: `ROCM_QLORA_LOG_LEVEL=DEBUG` (package file-log
+verbosity) and `ROCM_QLORA_HF_LOG_LEVEL=info` (HF/TRL internals into the rank
+logs).

@@ -57,3 +57,29 @@ def test_snapshot_roundtrip_toml(tmp_path):
     cfg2 = Config.from_toml(tmp_path / "c.toml")
     assert cfg2.data.max_length == 2048
     assert cfg2.run.name == "x"
+
+
+def test_checkpoint_every_n_steps_default_and_validation():
+    assert Config.from_dict({}).logging.checkpoint_every_n_steps == 0
+    with pytest.raises(ConfigError, match="checkpoint_every_n_steps"):
+        Config.from_dict({"logging": {"checkpoint_every_n_steps": -1}})
+
+
+@pytest.mark.parametrize(
+    ("mutate", "needle"),
+    [
+        (lambda c: setattr(c.run, "seed", -1), "run.seed"),
+        (lambda c: setattr(c.model, "dtype", "float64"), "model.dtype"),
+        (lambda c: setattr(c.data, "truncation_mode", "keep_end"), "truncation_mode"),
+        (lambda c: setattr(c.optim, "optimizer", "paged_adamw_8bit"), "paged optimizers"),
+        (lambda c: setattr(c.quantization, "requantize_modules", ["lm_head"]), "lm_head"),
+        (lambda c: setattr(c.dist, "gpus", []), "dist.gpus"),
+        (lambda c: setattr(c.optim, "checkpoint_every_n_layers", 0), "checkpoint_every_n_layers"),
+        (lambda c: setattr(c.optim, "checkpoint_every_n_layers", 9), "checkpoint_every_n_layers"),
+    ],
+)
+def test_validate_reports_each_section(mutate, needle):
+    cfg = Config.from_dict({})
+    assert cfg.validate() == []
+    mutate(cfg)
+    assert any(needle in e for e in cfg.validate())

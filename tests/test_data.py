@@ -11,7 +11,8 @@ from rocm_qlora.data import (
     load_sharegpt,
     profile_tokens,
     render_preview,
-    split_by_index,
+    split_dataset,
+    to_hf_dataset,
 )
 
 
@@ -85,9 +86,19 @@ def test_render_preview_uses_template():
     assert "<|user|>" in text and "<|assistant|>" in text
 
 
-def test_split_is_deterministic_and_disjoint():
-    train1, eval1 = split_by_index(100, eval_fraction=0.1, seed=42)
-    train2, eval2 = split_by_index(100, eval_fraction=0.1, seed=42)
-    assert train1 == train2 and eval1 == eval2
-    assert set(train1).isdisjoint(eval1)
-    assert len(eval1) == 10
+def test_to_hf_dataset_and_split_are_seeded():
+    examples = [
+        {
+            "messages": [
+                {"role": "user", "content": f"q{i}"},
+                {"role": "assistant", "content": f"a{i}"},
+            ]
+        }
+        for i in range(20)
+    ]
+    ds = to_hf_dataset(examples, "messages")
+    assert len(ds) == 20
+    split_a = split_dataset(ds, eval_fraction=0.2, seed=42)
+    split_b = split_dataset(ds, eval_fraction=0.2, seed=42)
+    assert len(split_a["train"]) == 16 and len(split_a["test"]) == 4
+    assert split_a["train"]["messages"] == split_b["train"]["messages"]  # seeded → deterministic

@@ -21,11 +21,12 @@ generated from it.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import final
 
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
-from rich.text import Text
+from rich.table import Table
 
 
 @dataclass(frozen=True)
@@ -406,7 +407,7 @@ EXPLAINERS: dict[str, Explainer] = {
                 "small models.\n\n"
                 "The catch: **VRAM does not add up across GPUs** — each GPU must fit the "
                 "whole model + its activations. (Sharding the model itself is what FSDP "
-                "does; `--dist fsdp` is available for that.)\n\n"
+                "does — not wired up in this project.)\n\n"
                 "RCCL runs over PCIe on Radeon cards (no NVLink). For LoRA-sized gradient "
                 "payloads this is rarely the bottleneck."
             ),
@@ -426,7 +427,8 @@ EXPLAINERS: dict[str, Explainer] = {
                 "(`adamw_8bit` quantizes them to ~1 byte each).\n"
                 "* **Activations**: the biggest lever is `max_length` × batch; gradient "
                 "checkpointing recomputes them instead of storing them (slower, much "
-                "smaller).\n"
+                "smaller), and `activation_offloading` parks the saved copies in pinned "
+                "host RAM.\n"
                 "* **Logits**: the output projection over a 248k vocabulary would "
                 "materialize a huge fp32 tensor; TRL's fused chunked head computes "
                 "the loss without ever building full logits.\n\n"
@@ -549,6 +551,15 @@ EXPLAINERS: dict[str, Explainer] = {
 _BORDER = {"core": "cyan", "advanced": "magenta"}
 
 
+def kv_table() -> Table:
+    """Two-column key/value table: dim right-aligned keys, plain values."""
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style="dim", justify="right")
+    table.add_column()
+    return table
+
+
+@final
 class ExplainerBook:
     """Per-run registry of already-shown explainers (dedupe + quiet mode)."""
 
@@ -558,6 +569,7 @@ class ExplainerBook:
         self.shown: set[str] = set()
 
     def show(self, key: str, *, force: bool = False) -> None:
+        """Print the explainer with this key (no-op when disabled or unknown)."""
         if not self.enabled or (key in self.shown and not force):
             return
         explainer = EXPLAINERS.get(key)
@@ -574,6 +586,7 @@ class ExplainerBook:
 
 
 def render_explainer(explainer: Explainer) -> Panel:
+    """One explainer panel with its links and tags."""
     body = explainer.body
     if explainer.links:
         links = "\n".join(f"- {link}" for link in explainer.links)
@@ -585,22 +598,3 @@ def render_explainer(explainer: Explainer) -> Panel:
         border_style=_BORDER.get(explainer.level, "cyan"),
         padding=(0, 2),
     )
-
-
-def banner(console: Console, title: str, subtitle: str = "", *, style: str = "bold cyan") -> None:
-    """Section banner used to structure long terminal output."""
-    console.rule(Text(title, style=style))
-    if subtitle:
-        console.print(f"[dim]{subtitle}[/dim]")
-
-
-def key_value_panel(console: Console, title: str, pairs: dict[str, str], *, style: str = "blue") -> None:
-    """Compact 'settings' panel — used for resolved run configuration."""
-    from rich.table import Table
-
-    table = Table.grid(padding=(0, 2))
-    table.add_column(style="dim", justify="right")
-    table.add_column()
-    for k, v in pairs.items():
-        table.add_row(k, v)
-    console.print(Panel(table, title=title, border_style=style, padding=(0, 1)))

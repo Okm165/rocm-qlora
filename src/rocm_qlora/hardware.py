@@ -25,7 +25,7 @@ import time
 from dataclasses import dataclass, field
 from importlib import metadata as importlib_metadata
 from pathlib import Path
-from typing import Any
+from typing import Any, NotRequired, TypedDict
 
 # ---------------------------------------------------------------------------
 # rocm-smi parsing
@@ -172,6 +172,7 @@ def host_memory() -> dict[str, float]:
 
 
 def cpu_info() -> dict[str, Any]:
+    """CPU model + thread count from /proc/cpuinfo."""
     info: dict[str, Any] = {"cores": os.cpu_count()}
     try:
         import psutil
@@ -191,6 +192,7 @@ def cpu_info() -> dict[str, Any]:
 
 
 def kernel_version() -> str:
+    """Running kernel release string."""
     try:
         import platform
 
@@ -291,15 +293,45 @@ class ModelGeometry:
     source: str = "unknown"
     notes: list[str] = field(default_factory=list)
 
-    @property
-    def trainable_lora_params(self) -> float:
-        # r * (in+out) per target linear, summed over all layers.
-        return self.lora_units * 0.0  # placeholder, filled by caller with r
+
+class QuantizationMeta(TypedDict):
+    """The ``quantization`` section of finetune_meta.json."""
+
+    quant_type: str
+    double_quant: bool
+    quant_storage: str
+    compute_dtype: str
 
 
-def geometry_from_finetune_meta(meta_path: Path, *, lora_r: int) -> ModelGeometry | None:
+class FinetuneMeta(TypedDict):
+    """`finetune_meta.json` in a prepared checkpoint: what `prepare` writes,
+    what the VRAM estimator reads.
+
+    The accounting keys are always written; the provenance extras may be
+    missing in older checkpoints (readers stay tolerant via ``.get``).
+    """
+
+    name: str
+    total_params: float
+    embed_params: float
+    lm_head_params: float
+    quantized_params: float
+    nonquant_16bit_params: float
+    vision_params: float
+    lora_units: float
+    hidden_size: int
+    n_layers: int
+    vocab_size: int
+    source: NotRequired[str]
+    requantized: NotRequired[list[str]]
+    created: NotRequired[str]
+    quantization: NotRequired[QuantizationMeta]
+
+
+def geometry_from_finetune_meta(meta_path: Path) -> ModelGeometry | None:
+    """Geometry from the prepared checkpoint's finetune_meta.json."""
     try:
-        meta = json.loads(meta_path.read_text())
+        meta: FinetuneMeta = json.loads(meta_path.read_text())
     except Exception:
         return None
     geom = ModelGeometry(
@@ -320,7 +352,7 @@ def geometry_from_finetune_meta(meta_path: Path, *, lora_r: int) -> ModelGeometr
     return geom
 
 
-def geometry_from_hf_config(config_path: Path, *, lora_r: int) -> ModelGeometry | None:
+def geometry_from_hf_config(config_path: Path) -> ModelGeometry | None:
     """Heuristic geometry from a HF config.json (text config preferred)."""
     try:
         cfg = json.loads(config_path.read_text())
@@ -338,53 +370,16 @@ def geometry_from_hf_config(config_path: Path, *, lora_r: int) -> ModelGeometry 
     n_linear = sum(1 for t in layer_types if "linear" in t)
     n_full = layers - n_linear
 
-    # MLP per layer (gate+up+down)
-    mlp_per_layer = 3 * hidden * inter
-    # Full attention per layer: q (hidden->heads*head_dim*2 for gated Qwen3.5),
-    # k/v (hidden->kv_heads*head_dim), o (heads*head_dim->hidden)
-    heads = tc.get("num_attention_heads", 0)
-    kv_heads = tc.get("num_key_value_heads", heads)
-    head_dim = tc.get("head_dim", hidden // max(heads, 1))
-    q_out = heads * head_dim * 2 if tc.get("attention_bias") is not None or True else heads * head_dim
-    # Qwen3.5-style: q_proj outputs 2x (query + gate). Fall back gracefully:
-    q_out = heads * head_dim * 2
-    attn_per_layer = hidden * q_out + 2 * hidden * (kv_heads * head_dim) + (heads * head_dim) * hidden
-    # Linear attention (Gated DeltaNet) per layer:
-    # in_proj_qkv: hidden -> 2*k_dim + v_dim; in_proj_z: hidden -> v_dim;
-    # in_proj_a/b: hidden -> num_v_heads; out_proj: v_dim -> hidden
-    lk_heads = tc.get("linear_num_key_heads", 0)
-    lv_heads = tc.get("linear_num_value_heads", 0)
-    lk_dim = tc.get("linear_key_head_dim", 0)
-    lv_dim = tc.get("linear_value_head_dim", 0)
-    if lk_heads and lv_heads and lk_dim and lv_dim:
-        k_dim, v_dim = lk_heads * lk_dim, lv_heads * lv_dim
-        linear_per_layer = (
-            hidden * (2 * k_dim + v_dim)  # in_proj_qkv
-            + hidden * v_dim  # in_proj_z
-            + hidden * lv_heads  # in_proj_a
-            + hidden * lv_heads  # in_proj_b
-            + v_dim * hidden  # out_proj
-        )
-        lora_units_linear = (hidden + 2 * k_dim + v_dim) + (hidden + v_dim) + (hidden + lv_heads) * 2 + (v_dim + hidden)
-    else:
-        linear_per_layer = 0
-        lora_units_linear = 0
-    lora_units_attn = (hidden + q_out) + 2 * (hidden + kv_heads * head_dim) + (heads * head_dim + hidden)
+    mlp_per_layer = 3 * hidden * inter  # gate+up+down
+    attn_per_layer, lora_units_attn = _attn_layer_sizes(tc, hidden)
+    linear_per_layer, lora_units_linear, nonquant_linear = _linear_attn_layer_sizes(tc, hidden)
     lora_units_mlp = (hidden + inter) * 2 + (inter + hidden)
 
-    vision = 0.0
-    if "vision_config" in cfg and not cfg.get("language_model_only", False):
-        vc = cfg["vision_config"]
-        v_hidden = vc.get("hidden_size", 0)
-        v_depth = vc.get("depth", 0)
-        if v_hidden and v_depth:
-            vision = v_depth * 4 * v_hidden * v_hidden * 4 / 1e9  # rough: attn+mlp 4x
-
+    vision_b = _vision_params_b(cfg)
     embed = vocab * hidden
     lm_head = 0.0 if tied else vocab * hidden
     core = n_full * (attn_per_layer + mlp_per_layer) + n_linear * (linear_per_layer + mlp_per_layer)
-    total = embed + lm_head + core + vision * 1e9
-    # Default skip list of typical upstream 4-bit checkpoints: in_proj_qkv.
+    total = embed + lm_head + core + vision_b * 1e9
     notes = ["geometry from config.json (heuristic)"]
     return ModelGeometry(
         name=str(cfg.get("_name_or_path", "unknown")),
@@ -392,12 +387,60 @@ def geometry_from_hf_config(config_path: Path, *, lora_r: int) -> ModelGeometry 
         embed_params=embed,
         lm_head_params=lm_head,
         quantized_params=core * 0.9,  # most Linears quantized
-        nonquant_16bit_params=core * 0.1 + n_linear * hidden * (2 * (lk_heads * lk_dim) + lv_heads * lv_dim) * 0.9,
-        vision_params=vision * 1e9,
+        nonquant_16bit_params=core * 0.1 + n_linear * nonquant_linear,
+        vision_params=vision_b * 1e9,
         lora_units=(n_full * (lora_units_attn + lora_units_mlp) + n_linear * (lora_units_linear + lora_units_mlp)),
         source="hf_config",
         notes=notes,
     )
+
+
+def _attn_layer_sizes(tc: dict[str, Any], hidden: int) -> tuple[float, float]:
+    """Per-layer attention params (q/k/v/o; Qwen3.5-style gated q_proj) and LoRA units."""
+    heads = tc.get("num_attention_heads", 0)
+    kv_heads = tc.get("num_key_value_heads", heads)
+    head_dim = tc.get("head_dim", hidden // max(heads, 1))
+    q_out = heads * head_dim * 2  # q_proj outputs query + gate
+    per_layer = hidden * q_out + 2 * hidden * (kv_heads * head_dim) + (heads * head_dim) * hidden
+    lora_units = (hidden + q_out) + 2 * (hidden + kv_heads * head_dim) + (heads * head_dim + hidden)
+    return per_layer, lora_units
+
+
+def _linear_attn_layer_sizes(tc: dict[str, Any], hidden: int) -> tuple[float, float, float]:
+    """Gated DeltaNet per-layer params, LoRA units, and unquantized (16-bit) share.
+
+    in_proj_qkv: hidden -> 2*k_dim + v_dim; in_proj_z: hidden -> v_dim;
+    in_proj_a/b: hidden -> num_v_heads; out_proj: v_dim -> hidden.
+    """
+    lk_heads = tc.get("linear_num_key_heads", 0)
+    lv_heads = tc.get("linear_num_value_heads", 0)
+    lk_dim = tc.get("linear_key_head_dim", 0)
+    lv_dim = tc.get("linear_value_head_dim", 0)
+    if not (lk_heads and lv_heads and lk_dim and lv_dim):
+        return 0.0, 0.0, 0.0
+    k_dim, v_dim = lk_heads * lk_dim, lv_heads * lv_dim
+    per_layer = (
+        hidden * (2 * k_dim + v_dim)  # in_proj_qkv
+        + hidden * v_dim  # in_proj_z
+        + hidden * lv_heads  # in_proj_a
+        + hidden * lv_heads  # in_proj_b
+        + v_dim * hidden  # out_proj
+    )
+    lora_units = (hidden + 2 * k_dim + v_dim) + (hidden + v_dim) + (hidden + lv_heads) * 2 + (v_dim + hidden)
+    nonquant_per_layer = hidden * (2 * (lk_heads * lk_dim) + lv_heads * lv_dim) * 0.9
+    return per_layer, lora_units, nonquant_per_layer
+
+
+def _vision_params_b(cfg: dict[str, Any]) -> float:
+    """Rough vision-tower params in billions (attn+mlp ~4x expansion)."""
+    if "vision_config" not in cfg or cfg.get("language_model_only", False):
+        return 0.0
+    vc = cfg["vision_config"]
+    v_hidden = vc.get("hidden_size", 0)
+    v_depth = vc.get("depth", 0)
+    if not (v_hidden and v_depth):
+        return 0.0
+    return v_depth * 4 * v_hidden * v_hidden * 4 / 1e9
 
 
 @dataclass
@@ -412,6 +455,7 @@ class VramEstimate:
     notes: list[str] = field(default_factory=list)
 
     def breakdown(self) -> dict[str, float]:
+        """Human-readable per-component VRAM breakdown lines."""
         return {
             "weights": self.weights_gb,
             "lora + optimizer": self.lora_states_gb,
@@ -420,6 +464,48 @@ class VramEstimate:
             "CUDA/HIP context + misc": self.overhead_gb,
             "TOTAL": self.total_gb,
         }
+
+
+def _weights_gb(geom: ModelGeometry, *, compute_dtype_bytes: float) -> float:
+    """NF4 weights (~0.55 B/param) + the 16-bit parts (embeddings/head/vision)."""
+    return (
+        geom.quantized_params * 0.55
+        + geom.nonquant_16bit_params * compute_dtype_bytes
+        + geom.embed_params * compute_dtype_bytes
+        + geom.lm_head_params * compute_dtype_bytes
+        + geom.vision_params * compute_dtype_bytes
+    ) / 1e9
+
+
+def _lora_states_gb(
+    geom: ModelGeometry, *, lora_r: int, optimizer: str, compute_dtype_bytes: float
+) -> tuple[float, float]:
+    """LoRA weights + grads + optimizer moments; returns (GB, trainable_params)."""
+    trainable = geom.lora_units * lora_r
+    lora_weights = trainable * compute_dtype_bytes
+    lora_grads = trainable * compute_dtype_bytes
+    if optimizer == "adamw_8bit":
+        opt_bytes = 2 * trainable * 1.0  # two 8-bit moments (+ blockwise scales ~)
+        opt_bytes *= 1.1
+    elif optimizer == "adafactor":
+        opt_bytes = trainable * 4 * 0.5  # factored second moments
+    else:
+        opt_bytes = trainable * 4 * 2  # two fp32 moments
+    return (lora_weights + lora_grads + opt_bytes) / 1e9, trainable
+
+
+def _activations_gb(geom: ModelGeometry, *, max_length: int, batch_size: int, grad_checkpointing: bool) -> float:
+    """Stored activations (layer inputs only under checkpointing) + transient peaks.
+
+    Stored activations scale with layers × batch × seq × hidden; gradient
+    checkpointing recomputes them, keeping only layer inputs (~25%).
+    """
+    hidden = geom.hidden_size or 4096
+    n_layers = geom.n_layers or max(1, int(geom.total_params / 4.3e8))
+    per_layer_mb = batch_size * max_length * hidden * 2 / 1e6
+    stored = n_layers * per_layer_mb * (0.25 if grad_checkpointing else 1.0)
+    transient = per_layer_mb * 2.5  # recompute / MLP / attention peaks
+    return (stored + transient) / 1024
 
 
 def estimate_training_vram(
@@ -439,46 +525,17 @@ def estimate_training_vram(
     meant to be *directionally right and explainable*, while the dashboard
     reports the real numbers from the allocator during training.
     """
-    gb = 1e9
-    # --- weights -----------------------------------------------------------
-    # NF4 + double quant ≈ 0.55 bytes/param; non-quantized 16-bit = 2 B/param.
-    weights = (
-        geom.quantized_params * 0.55
-        + geom.nonquant_16bit_params * compute_dtype_bytes
-        + geom.embed_params * compute_dtype_bytes
-        + geom.lm_head_params * compute_dtype_bytes
-        + geom.vision_params * compute_dtype_bytes
-    ) / gb
-
-    # --- LoRA + optimizer ----------------------------------------------------
-    trainable = geom.lora_units * lora_r
-    lora_weights = trainable * compute_dtype_bytes
-    lora_grads = trainable * compute_dtype_bytes
-    if optimizer == "adamw_8bit":
-        opt_bytes = 2 * trainable * 1.0  # two 8-bit moments (+ blockwise scales ~)
-        opt_bytes *= 1.1
-    elif optimizer == "adafactor":
-        opt_bytes = trainable * 4 * 0.5  # factored second moments
-    else:
-        opt_bytes = trainable * 4 * 2  # two fp32 moments
-    lora_states = (lora_weights + lora_grads + opt_bytes) / gb
-
-    # --- activations ---------------------------------------------------------
-    # Stored activations scale with layers × batch × seq × hidden; gradient
-    # checkpointing recomputes them, keeping only layer inputs (~25%).
-    hidden = geom.hidden_size or 4096
-    n_layers = geom.n_layers or max(1, int(geom.total_params / 4.3e8))
-    per_layer_mb = batch_size * max_length * hidden * 2 / 1e6
-    stored = n_layers * per_layer_mb * (0.25 if grad_checkpointing else 1.0)
-    transient = per_layer_mb * 2.5  # recompute / MLP / attention peaks
-    activations = (stored + transient) / 1024
-
-    # --- logits --------------------------------------------------------------
+    weights = _weights_gb(geom, compute_dtype_bytes=compute_dtype_bytes)
+    lora_states, trainable = _lora_states_gb(
+        geom, lora_r=lora_r, optimizer=optimizer, compute_dtype_bytes=compute_dtype_bytes
+    )
+    activations = _activations_gb(
+        geom, max_length=max_length, batch_size=batch_size, grad_checkpointing=grad_checkpointing
+    )
     # TRL 1.16 computes every SFT loss through a fused, chunked LM head, so
     # full fp32 logits are never materialized — `nll` and `dft` alike.
     logits = 0.0
-
-    overhead = 1.0  # HIP context, RCCL buffers, allocator fragmentation, fragmentation margin
+    overhead = 1.0  # HIP context, RCCL buffers, allocator fragmentation margin
     total = weights + lora_states + activations + logits + overhead
     return VramEstimate(
         weights_gb=weights,
@@ -536,8 +593,7 @@ def select_gpus(needed_gb: float, *, requested: str | list[int] = "auto", safety
         # Prefer using all fitting GPUs — data-parallel throughput is free.
         return GpuPlan(gpus=fitting, free_gb=free, needed_gb=need, warnings=warnings)
 
-    # Nothing fits: report the best candidates and the holders.
-    sorted(free, key=lambda g: -free[g])[:1]
+    # Nothing fits: report every GPU and the processes holding it.
     holders = gpu_processes()
     for g in free:
         who = ", ".join(f"{p['name']}(pid {p['pid']})" for p in holders if str(g) in str(p["gpus"]))
@@ -549,8 +605,7 @@ def select_gpus(needed_gb: float, *, requested: str | list[int] = "auto", safety
         f"No GPU has {need:.1f} GB free VRAM (need = estimate {needed_gb:.1f} GB × "
         f"safety {safety_factor:.2f}).\n" + "\n".join(warnings) + "\n"
         "Options: free VRAM (stop other GPU processes), lower data.max_length or "
-        "optim.per_device_batch_size, use fewer/other GPUs via dist.gpus, or use "
-        "dist.mode = 'fsdp' to shard the model across GPUs."
+        "optim.per_device_batch_size, or use fewer/other GPUs via dist.gpus."
     )
 
 
@@ -590,7 +645,85 @@ print(json.dumps(result))
 """
 
 
-def probe_sdpa(python_exe: str | None = None, timeout: float = 300.0) -> dict[str, Any]:
+def _sdpa_probe_env(env_mode: str) -> dict[str, Any]:
+    """Probe environment for one AOTriton mode ("on"/"off")."""
+    env = dict(os.environ)
+    env.setdefault("PYTORCH_HIP_ALLOC_CONF", "garbage_collection_threshold:0.8")
+    if env_mode == "on":
+        env["TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL"] = "1"
+    else:
+        env.pop("TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL", None)
+    return env
+
+
+def _run_sdpa_probe(python_exe: str, backend: str, env: dict[str, Any], timeout: float) -> SdpaBackendResult:
+    """Run one backend in a fresh process; returns its JSON result or an error."""
+    try:
+        proc = subprocess.run(
+            [python_exe, "-c", _SDPA_PROBE, backend],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=env,
+        )
+        line = [ln for ln in proc.stdout.splitlines() if ln.startswith("{")]
+        if line:
+            return json.loads(line[-1])
+        return {"ok": False, "error": (proc.stderr.strip().splitlines() or ["no output"])[-1]}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": "timeout"}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def _sdpa_verdict(backends: dict[str, Any]) -> tuple[str, str]:
+    """(verdict, attn_implementation) from the per-backend probe results."""
+    flash_on = backends.get("flash_on", {}).get("ok", False)
+    flash_off = backends.get("flash_off", {}).get("ok", False)
+    eff_on = backends.get("efficient_on", {}).get("ok", False)
+    math_ok = backends.get("math_on", {}).get("ok", False) or backends.get("math_off", {}).get("ok", False)
+
+    if flash_on or eff_on:
+        return "aotriton_on", "sdpa"
+    if flash_off:
+        return "aotriton_off", "sdpa"
+    if math_ok:
+        return "math_only", "eager"
+    return "all_failed", "eager"
+
+
+class SdpaBackendResult(TypedDict, total=False):
+    """One backend's probe outcome (parsed from the subprocess JSON)."""
+
+    ok: bool
+    error: str
+
+
+class SdpaProbe(TypedDict):
+    """`probe_sdpa`'s result — the ``sdpa`` section of doctor-latest.json."""
+
+    verdict: str
+    attn_implementation: str
+    backends: dict[str, SdpaBackendResult]
+
+
+class HipIpcProbe(TypedDict, total=False):
+    """`probe_hip_ipc`'s result — the ``hip_ipc`` section of doctor-latest.json."""
+
+    ipc_ok: bool
+    error: str
+
+
+class MatmulBench(TypedDict):
+    """`matmul_benchmark`'s result — the ``bench`` section of doctor-latest.json."""
+
+    dtype: str
+    size: int
+    seconds: float
+    tflops: float
+
+
+def probe_sdpa(python_exe: str | None = None, timeout: float = 300.0) -> SdpaProbe:
     """Empirically test SDPA backends on THIS machine.
 
     Runs each backend in a fresh process (deferred launch errors on RDNA3
@@ -599,58 +732,14 @@ def probe_sdpa(python_exe: str | None = None, timeout: float = 300.0) -> dict[st
     gfx1100 wheels) and OFF, and reports what actually launches.
     """
     python_exe = python_exe or sys.executable
-    results: dict[str, Any] = {"backends": {}, "verdict": "unknown", "attn_implementation": "sdpa"}
+    results: SdpaProbe = {"backends": {}, "verdict": "unknown", "attn_implementation": "sdpa"}
 
     for env_mode in ("on", "off"):
-        env = dict(os.environ)
-        env.setdefault("PYTORCH_HIP_ALLOC_CONF", "garbage_collection_threshold:0.8")
-        if env_mode == "on":
-            env["TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL"] = "1"
-        else:
-            env.pop("TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL", None)
+        env = _sdpa_probe_env(env_mode)
         for backend in ("flash", "efficient", "math"):
-            key = f"{backend}_{env_mode}"
-            try:
-                proc = subprocess.run(
-                    [python_exe, "-c", _SDPA_PROBE, backend],
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout,
-                    env=env,
-                )
-                line = [ln for ln in proc.stdout.splitlines() if ln.startswith("{")]
-                results["backends"][key] = (
-                    json.loads(line[-1])
-                    if line
-                    else {
-                        "ok": False,
-                        "error": (proc.stderr.strip().splitlines() or ["no output"])[-1],
-                    }
-                )
-            except subprocess.TimeoutExpired:
-                results["backends"][key] = {"ok": False, "error": "timeout"}
-            except Exception as exc:
-                results["backends"][key] = {"ok": False, "error": str(exc)}
+            results["backends"][f"{backend}_{env_mode}"] = _run_sdpa_probe(python_exe, backend, env, timeout)
 
-    flash_on = results["backends"].get("flash_on", {}).get("ok", False)
-    flash_off = results["backends"].get("flash_off", {}).get("ok", False)
-    eff_on = results["backends"].get("efficient_on", {}).get("ok", False)
-    math_ok = results["backends"].get("math_on", {}).get("ok", False) or results["backends"].get("math_off", {}).get(
-        "ok", False
-    )
-
-    if flash_on or eff_on:
-        results["verdict"] = "aotriton_on"
-        results["attn_implementation"] = "sdpa"
-    elif flash_off:
-        results["verdict"] = "aotriton_off"
-        results["attn_implementation"] = "sdpa"
-    elif math_ok:
-        results["verdict"] = "math_only"
-        results["attn_implementation"] = "eager"
-    else:
-        results["verdict"] = "all_failed"
-        results["attn_implementation"] = "eager"
+    results["verdict"], results["attn_implementation"] = _sdpa_verdict(results["backends"])
     return results
 
 
@@ -682,7 +771,7 @@ print(json.dumps({
 """
 
 
-def probe_hip_ipc(python_exe: str | None = None, timeout: float = 120.0) -> dict[str, Any]:
+def probe_hip_ipc(python_exe: str | None = None, timeout: float = 120.0) -> HipIpcProbe:
     """Can HIP export IPC memory handles in this environment?
 
     RCCL's P2P transport needs `hipIpcGetMemHandle`. The ROCm 7.1 runtime
@@ -720,9 +809,7 @@ def probe_hip_ipc(python_exe: str | None = None, timeout: float = 120.0) -> dict
         return {"ipc_ok": False, "error": str(exc)}
 
 
-def matmul_benchmark(
-    dtype_name: str = "bfloat16", size: int = 8192, iters: int = 20, warmup: int = 5
-) -> dict[str, Any]:
+def matmul_benchmark(dtype_name: str = "bfloat16", size: int = 8192, iters: int = 20, warmup: int = 5) -> MatmulBench:
     """bf16/fp16 matmul TFLOPS on GPU 0 — a quick sanity check of the stack."""
     import torch
 
@@ -731,11 +818,11 @@ def matmul_benchmark(
     a = torch.randn(size, size, device=device, dtype=dtype)
     b = torch.randn(size, size, device=device, dtype=dtype)
     for _ in range(warmup):
-        a @ b
+        a @ b  # pyright: ignore[reportUnusedExpression]  # exercising the matmul
     torch.cuda.synchronize()
     t0 = time.perf_counter()
     for _ in range(iters):
-        a @ b
+        a @ b  # pyright: ignore[reportUnusedExpression]  # exercising the matmul
     torch.cuda.synchronize()
     dt = (time.perf_counter() - t0) / iters
     tflops = 2 * size**3 / dt / 1e12
@@ -743,6 +830,7 @@ def matmul_benchmark(
 
 
 def disk_free_gb(path: str | Path) -> float:
+    """Free space (GiB) on the filesystem holding `path`."""
     import shutil
 
     try:

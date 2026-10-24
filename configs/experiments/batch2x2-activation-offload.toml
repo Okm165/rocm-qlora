@@ -1,0 +1,14 @@
+# Experiment: batch 2 × accum 2 (same effective batch as the production
+# 1 × 4) with activation offloading. The 2026-10-23 batch-2 attempts peaked at
+# 25.5/25.75 GB on 1536-token batches and OOMed at the margin; offloading holds
+# the checkpointed activations in pinned host RAM instead of device memory.
+#
+#   uv run rocm-qlora train --config configs/experiments/batch2x2-activation-offload.toml
+#
+# Compare against the production run with:
+#   uv run rocm-qlora report --run <this run dir>
+
+[optim]
+per_device_batch_size = 2
+grad_accum = 2
+activation_offloading = true

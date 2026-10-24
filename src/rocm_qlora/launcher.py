@@ -30,9 +30,10 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, TypedDict
 
 from .config import Config
-from .hardware import gpu_processes, gpu_snapshot, select_gpus
+from .hardware import HipIpcProbe, MatmulBench, SdpaProbe, gpu_processes, gpu_snapshot, select_gpus
 from .utils import read_json, timestamp_slug
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -44,7 +45,33 @@ DOCTOR_VERDICT = REPO_ROOT / ".context" / "doctor-latest.json"
 # ---------------------------------------------------------------------------
 
 
-def load_doctor_verdict() -> dict | None:
+class BnbSmoke(TypedDict, total=False):
+    """`doctor`'s bitsandbytes smoke — the ``bnb_smoke`` section of the verdict."""
+
+    ok: bool
+    error: str
+    decode_nan: bool
+    max_err_seq1: float  # numeric diagnostics (write-only; for humans reading the JSON)
+    max_err_seq4: float
+
+
+class DoctorVerdict(TypedDict, total=False):
+    """`.context/doctor-latest.json`: what `doctor` writes, what the launcher reads.
+
+    ``total=False``: ``doctor --fast`` skips probes, so every section is optional.
+    """
+
+    created: str
+    host: dict[str, Any]
+    packages: dict[str, str]
+    sdpa: SdpaProbe
+    bnb_smoke: BnbSmoke
+    hip_ipc: HipIpcProbe
+    bench: MatmulBench
+
+
+def load_doctor_verdict() -> DoctorVerdict | None:
+    """Read .context/doctor-latest.json (None when missing/invalid)."""
     try:
         return read_json(DOCTOR_VERDICT)
     except Exception:
@@ -56,8 +83,9 @@ def resolve_attn_impl(cfg: Config) -> str:
     if cfg.model.attn != "auto":
         return cfg.model.attn
     verdict = load_doctor_verdict()
-    if verdict and verdict.get("sdpa", {}).get("attn_implementation"):
-        return verdict["sdpa"]["attn_implementation"]
+    sdpa = verdict.get("sdpa") if verdict else None
+    if sdpa and sdpa.get("attn_implementation"):
+        return sdpa["attn_implementation"]
     return "sdpa"
 
 
@@ -68,8 +96,9 @@ def resolve_aotriton(cfg: Config) -> bool:
     if cfg.env.aotriton == "off":
         return False
     verdict = load_doctor_verdict()
-    if verdict and verdict.get("sdpa", {}).get("verdict"):
-        return verdict["sdpa"]["verdict"] == "aotriton_on"
+    sdpa = verdict.get("sdpa") if verdict else None
+    if sdpa and sdpa.get("verdict"):
+        return sdpa["verdict"] == "aotriton_on"
     return True  # recommended default on gfx1100; harmless elsewhere
 
 
@@ -87,7 +116,8 @@ def apply_sdpa_verdict() -> list[str]:
     verdict = load_doctor_verdict()
     if not verdict:
         return []
-    backends = verdict.get("sdpa", {}).get("backends", {})
+    sdpa = verdict.get("sdpa")
+    backends = sdpa.get("backends", {}) if sdpa else {}
     mode = "on" if os.environ.get("TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL") == "1" else "off"
     import torch
 
@@ -107,6 +137,7 @@ def apply_sdpa_verdict() -> list[str]:
 
 
 def build_worker_env(cfg: Config, gpu_ids: list[int]) -> dict[str, str]:
+    """Full worker environment: device visibility, allocator, RCCL, seeds."""
     env = dict(os.environ)
     visible = ",".join(str(g) for g in gpu_ids)
     # Both are honoured (HIP runtime reads HIP_VISIBLE_DEVICES; torch.cuda
@@ -139,6 +170,14 @@ def build_worker_env(cfg: Config, gpu_ids: list[int]) -> dict[str, str]:
     env.setdefault("NCCL_P2P_DISABLE", "1")
     env.setdefault("NCCL_IB_DISABLE", "1")  # sensible default on machines without InfiniBand
     env.setdefault("NCCL_DEBUG", "WARN")
+    # The torch-wheel libdrm looks for the ASIC-ID table only under
+    # /opt/amdgpu/share/libdrm; when that path is absent it prints
+    # "(null): No such file or directory" per GPU to stderr at HIP init.
+    # Point it at the system table (cuts the flood from ~30 lines to a few).
+    env.setdefault("AMDGPU_ASIC_ID_TABLE_PATHS", "/usr/share/libdrm")
+    # Hash randomization must be fixed before the interpreter starts to make
+    # dict/set iteration order reproducible across the workers.
+    env.setdefault("PYTHONHASHSEED", str(cfg.run.seed))
     if cfg.env.hip_alloc_conf:
         env["PYTORCH_HIP_ALLOC_CONF"] = cfg.env.hip_alloc_conf
     if resolve_aotriton(cfg):
@@ -155,6 +194,7 @@ def build_worker_env(cfg: Config, gpu_ids: list[int]) -> dict[str, str]:
 
 
 def make_run_dir(cfg: Config, *, dry_run: bool = False) -> Path:
+    """Create <output_root>/runs/<timestamp>-<name>/ with logs + charts."""
     root = Path(cfg.run.output_root) / "runs"
     slug = timestamp_slug()
     name = f"{slug}-{cfg.run.name}" + ("-dryrun" if dry_run else "")
@@ -233,8 +273,6 @@ def preflight_gpus(cfg: Config, needed_gb: float) -> Preflight:
         if who:
             warnings.append(f"GPU {g} is currently shared with: {', '.join(who)}")
 
-    if mode == "fsdp" and len(plan.gpus) < 2:
-        warnings.append("dist.mode='fsdp' with a single GPU behaves like single-device training")
     return Preflight(gpu_ids=plan.gpus, free_gb=plan.free_gb, warnings=warnings)
 
 

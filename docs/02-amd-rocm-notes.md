@@ -78,8 +78,10 @@ NCCL_P2P_DISABLE = "0"
 
 `HSA_FORCE_FINE_GRAIN_PCIE=1` adds nothing here (25.8 vs 26.0 GB/s). Do **not**
 add `iommu=pt` (translated IOMMU works; one upstream report shows `iommu=pt`
-corrupting peer IPC). `rocm-qlora doctor` probes `hipIpcGetMemHandle` on
-every run so transport regressions are caught immediately.
+corrupting peer IPC). RCCL logs a "Missing iommu=pt" warning — expected here;
+our P2P is verified without it, so revisit only if P2P failures appear.
+`rocm-qlora doctor` probes `hipIpcGetMemHandle` on every run so transport
+regressions are caught immediately.
 
 ## bitsandbytes 4-bit: 0.50.2 is good on ROCm
 
@@ -113,7 +115,7 @@ memory-frugal. The decision is evidence-based, not conservatism:
 
 The honest trade: the pure-torch fallback is slower on the 48 linear-attention
 layers, so the run is compute-bound — keep the micro-batch as large as VRAM
-allows (the 27B config uses batch 2) to maximize arithmetic intensity. That is
+allows (the 27B config uses batch 1 × accum 4 after the 2026-10-23 OOMs) to maximize arithmetic intensity. That is
 the price of correctness on RDNA3 today. To experiment anyway:
 `uv add flash-linear-attention`, run with a *warm* Triton cache, and validate
 against the fallback numerically (same weights, same batch → compare losses)
@@ -121,10 +123,10 @@ before trusting a long run.
 
 ## Allocator
 
-`PYTORCH_HIP_ALLOC_CONF=garbage_collection_threshold:0.8` is set by default.
-`expandable_segments:True` has a contested record on RDNA3 (page faults in
-some reports) — leave it off unless fighting fragmentation, and then
-test carefully.
+`PYTORCH_HIP_ALLOC_CONF=garbage_collection_threshold:0.8` is set by default —
+GC threshold only. Do **not** enable `expandable_segments:True`: tried on
+2026-10-23, it silently corrupted numerics (identical seed/batch, step-1 loss
+1.43 → 3.36, NaN grads; docs/05). Headroom is bought with batch size instead.
 
 ## The 24 GB budget for a 27B model
 
@@ -138,9 +140,9 @@ The math that makes 27B QLoRA fit on 24 GB cards (per GPU, DDP). The
 | lm_head (bf16) | ~2.5 | stays 16-bit — TRL's fused loss slices the raw weight; upcasting to fp32 costs +2.5 GB for nothing |
 | vision tower | ~0.2 | dropped right after load (freed) |
 | LoRA r=16 all-linear + 8-bit Adam | ~0.7 | ~117 M trainable (0.4 %) |
-| activations @1536 tok, batch 2, grad-ckpt | ~2 | recomputed, not stored |
+| activations @1536 tok, batch 1, grad-ckpt | ~1.3 | recomputed, not stored |
 | context / fragmentation / RCCL | ~1 | HIP context + transport buffers |
-| **total** | **~21.5 of 24** | measured: 19.1 GB GPU usage at batch 1, step 1 |
+| **total** | **~21 of 24** | measured 21.1 GB at batch 1, step 1 (2026-10-23 run) |
 
 The single most important number: **requantizing `in_proj_qkv` saves ~5 GB**
 per GPU (upstream checkpoints keep it in 16-bit). That's `prepare`'s job.
@@ -151,6 +153,7 @@ per GPU (upstream checkpoints keep it in 16-bit). That's `prepare`'s job.
 |---|---|---|
 | `HIP_VISIBLE_DEVICES` / `CUDA_VISIBLE_DEVICES` | selected ids | pin the GPU set |
 | `HSA_ENABLE_IPC_MODE_LEGACY` | `0` | dma-buf IPC → RCCL P2P works (~26 GB/s vs ~5.2) |
+| `HSA_USE_SVM` | `0` (27B config) | removes the KFD-eviction → MES reset trigger (docs/05) |
 | `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL` | `1` | enables AOTriton flash kernels |
 | `PYTORCH_HIP_ALLOC_CONF` | `garbage_collection_threshold:0.8` | fragmentation control |
 | `OMP_NUM_THREADS` | 8 per rank | plenty for dataloading; avoids host oversubscription |
