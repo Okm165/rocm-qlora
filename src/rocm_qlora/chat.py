@@ -12,7 +12,6 @@ Commands inside the loop:  /think on|off · /temp <x> · /max <n> · /reset · /
 
 from __future__ import annotations
 
-import json
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -38,7 +37,7 @@ def _load(
     cfg: Config | None = None
     if run_dir is not None:
         try:
-            cfg = Config.from_dict(json.loads((Path(run_dir) / "config.resolved.json").read_text()))
+            cfg = Config.from_toml(Path(run_dir) / "config.resolved.toml")
         except Exception:
             cfg = None
 

@@ -20,7 +20,7 @@ from typing import Annotated, Any, ClassVar, Literal
 import tomli_w
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from .utils import write_json, write_text
+from .utils import write_text
 
 
 class ConfigError(Exception):
@@ -40,8 +40,6 @@ class RunConfig(_Section):
     seed: Annotated[int, Field(ge=0)] = 42
     #: Root directory for run outputs (runs land in <root>/runs/<ts>-<name>).
     output_root: str = ".outputs"
-    #: Show the inline explainer panels while commands run.
-    explainers: bool = True
     #: Live dashboard refresh rate.
     console_refresh_per_second: Annotated[float, Field(gt=0)] = 4.0
 
@@ -248,7 +246,6 @@ class Config(_Section):
     def snapshot(self, run_dir: str | Path) -> None:
         """Write resolved config into the run directory (TOML + JSON)."""
         run_dir = Path(run_dir)
-        write_json(run_dir / "config.resolved.json", self.to_dict())
         write_text(run_dir / "config.resolved.toml", tomli_w.dumps(self.to_dict()))
 
     # -- loading ------------------------------------------------------------

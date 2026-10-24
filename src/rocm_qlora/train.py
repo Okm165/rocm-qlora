@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import json
 import logging
 import os
 import time
@@ -61,7 +60,7 @@ class WorkerArgs:
 def parse_args(argv: list[str] | None = None) -> WorkerArgs:
     """Worker CLI: --run-dir, --dry-run, --max-steps, --resume."""
     parser = argparse.ArgumentParser(description="rocm-qlora training worker")
-    parser.add_argument("--run-dir", required=True, help="Run directory containing config.resolved.json")
+    parser.add_argument("--run-dir", required=True, help="Run directory containing config.resolved.toml")
     parser.add_argument("--dry-run", action="store_true", help="3 steps, tiny slice, no eval")
     parser.add_argument("--max-steps", type=int, default=None, help="Override optimizer steps")
     parser.add_argument(
@@ -256,9 +255,6 @@ def _build_model(
 
     if ui is not None:  # ui exists exactly on rank 0
         ui.dashboard.update(phase="loading model")
-        ui.book.show("prepared_checkpoint")
-        ui.book.show("hybrid_attention")
-        ui.book.show("rocm_attention")
 
     attn, disabled = _resolve_attention(cfg, logger)
     from .model import attach_lora, load_model_for_training, parameter_report, prepare_for_qlora
@@ -350,7 +346,6 @@ def _build_trainer(
 
 
 def _train_and_save(
-    cfg: Config,
     run_dir: Path,
     args: WorkerArgs,
     trainer: SFTTrainer,
@@ -366,10 +361,6 @@ def _train_and_save(
     if ui is not None:  # ui exists exactly on rank 0
         ui.dashboard.update(phase="training")
         ui.dashboard.start()
-        ui.book.show("reading_loss")
-        if data.eval_ds is not None:
-            ui.book.show("eval")
-        ui.book.hint(f"charts refresh every {cfg.logging.chart_snapshot_steps} steps into {run_dir / 'charts'}")
 
     if args.resume:
         logger.info("resuming from checkpoint: %s", args.resume)
@@ -426,7 +417,7 @@ def main(argv: list[str] | None = None) -> None:
     """Worker entry: data → model → trainer → train → finalize (rank 0 owns the UI)."""
     args = parse_args(argv)
     run_dir = args.run_dir.resolve()
-    cfg = Config.from_dict(json.loads((run_dir / "config.resolved.json").read_text()))
+    cfg = Config.from_toml(run_dir / "config.resolved.toml")
 
     rank = int(os.environ.get("RANK", 0))
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
@@ -451,9 +442,7 @@ def main(argv: list[str] | None = None) -> None:
         trainer, metrics_callback = _build_trainer(
             cfg, run_dir, args, data=data, model=model, ui=ui, world_size=world_size, logger=logger
         )
-        adapter_dir = _train_and_save(
-            cfg, run_dir, args, trainer, data=data, ui=ui, world_size=world_size, logger=logger
-        )
+        adapter_dir = _train_and_save(run_dir, args, trainer, data=data, ui=ui, world_size=world_size, logger=logger)
 
         if ui is not None:  # ui exists exactly on rank 0
             _finalize_run(

@@ -10,7 +10,6 @@
 name = "qwen3.8-27b"
 seed = 42
 output_root = ".outputs"
-explainers = true
 console_refresh_per_second = 4.0
 
 [model]

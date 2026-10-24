@@ -13,10 +13,10 @@ The lifecycle of a fine-tune in this project:
         attach LoRA (all-linear / explicit target list)
         -> SFTTrainer
 
-Why prepare as a separate step? See the "prepared_checkpoint" explainer:
-loading 4-bit from a bf16 checkpoint stages the *entire* bf16 model in host
-RAM first (~2 bytes/param — ~55 GB for a 27B model, multiplied by the number
-of data-parallel processes). Preparing once removes that wall entirely.
+Why prepare as a separate step (docs/01 + docs/02): loading 4-bit from a
+bf16 checkpoint stages the *entire* bf16 model in host RAM first (~2
+bytes/param — ~55 GB for a 27B model, multiplied by the number of
+data-parallel processes). Preparing once removes that wall entirely.
 
 Merging a trained adapter back to bf16 lives in ``merge.py``.
 """

@@ -27,7 +27,6 @@ from rich.table import Table
 from . import __version__
 from .config import Config, ConfigError
 from .doctor import cmd_doctor
-from .explain import ExplainerBook
 from .utils import fmt_int, human_bytes, human_duration, timestamp_slug, write_json
 
 if TYPE_CHECKING:
@@ -57,8 +56,6 @@ def _load_config(args: argparse.Namespace) -> Config:
         overrides["run.name"] = args.run_name
     if getattr(args, "seed", None) is not None:
         overrides["run.seed"] = args.seed
-    if getattr(args, "quiet", False):
-        overrides["run.explainers"] = False
     if getattr(args, "max_length", None):
         overrides["data.max_length"] = args.max_length
     for item in getattr(args, "set", None) or []:
@@ -245,8 +242,6 @@ def cmd_prepare(args: argparse.Namespace) -> int:
 
     cfg = _load_config(args)
     console.rule("[bold cyan]prepare checkpoint[/bold cyan]")
-    book = ExplainerBook(console, enabled=cfg.run.explainers)
-    book.show("prepared_checkpoint")
     console.print(
         f"source: [bold]{cfg.model.name}[/bold] → target: [bold]{cfg.model.prepared_dir}[/bold]\n"
         f"[dim]requantize: {cfg.quantization.requantize_modules} · vision: "
@@ -277,7 +272,7 @@ def _ensure_prepared(cfg: Config, args: argparse.Namespace) -> bool:
             f"The prepared checkpoint [bold]{prepared}[/bold] does not exist yet.\n\n"
             f"Run first:  [bold]uv run rocm-qlora prepare --config {args.config}[/bold]\n\n"
             "[dim]Why: quantizing once to NF4 avoids staging the full bf16 model in host RAM "
-            "in every data-parallel process (see the 'prepared checkpoint' explainer in the docs).[/dim]",
+            "in every data-parallel process (docs/02-amd-rocm-notes.md).[/dim]",
             title="[yellow]prepare required[/yellow]",
             border_style="yellow",
         )
@@ -336,13 +331,10 @@ def cmd_train(args: argparse.Namespace) -> int:
     from .launcher import launch_worker, make_run_dir, preflight_gpus, write_env_fingerprint
 
     cfg = _load_config(args)
-    book = ExplainerBook(console, enabled=cfg.run.explainers)
 
     console.rule(f"[bold cyan]train[/bold cyan] · {cfg.run.name}")
     if not _ensure_prepared(cfg, args):
         return 2
-
-    book.show("qlora")
 
     needed = _plan_vram(cfg)
     plan = preflight_gpus(cfg, needed)
@@ -431,7 +423,6 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument(
             "--set", action="append", metavar="KEY=VALUE", help="arbitrary config override, e.g. --set optim.lr=2e-4"
         )
-        p.add_argument("--quiet", action="store_true", help="disable explainer panels")
 
     p = sub.add_parser("doctor", help="environment + hardware report")
     p.add_argument("--fast", action="store_true", help="skip GPU probes (SDPA, bnb)")

@@ -10,20 +10,20 @@ A **thin, teaching-first wrapper** around the standard 2026 stack
 **AMD ROCm (gfx1100 / RDNA3, ROCm 7.1)**.
 
 The training loop, quantization, chat templates and loss masking are all
-handled by the libraries. This project adds exactly four things:
+handled by the libraries. This project adds exactly three things:
 
-1. **A short explainer set** — the handful of concepts that actually matter
-   here (QLoRA, the prepared checkpoint, ROCm attention, loss reading) shown
-   in the terminal *when they first matter*, with links into `docs/`.
-2. **A live instrument panel** — rich dashboard (loss/EMA/trend, LR, grad
+1. **A live instrument panel** — rich dashboard (loss/EMA/trend, LR, grad
    norm, tokens/s, ETA, per-GPU VRAM/temp/power) + `metrics.jsonl` +
    matplotlib charts regenerated *while training runs*.
-3. **AMD-specific correctness** — doctor-verified SDPA backends, RCCL
+2. **AMD-specific correctness** — doctor-verified SDPA backends, RCCL
    transport configuration, allocator settings, a pre-quantized-checkpoint
    `prepare` step that makes 27B QLoRA fit on 24 GB cards.
-4. **A clean output trail** — every run leaves a self-contained folder:
+3. **A clean output trail** — every run leaves a self-contained folder:
    config snapshot, environment fingerprint, per-step metrics, charts,
    per-epoch adapters, a Markdown report.
+
+The *teaching* is the `docs/` set below — static, read deliberately, nothing
+rendered into your terminal at runtime.
 
 ## Requirements
 
@@ -112,7 +112,7 @@ Rejected, with evidence:
 ├── metrics.jsonl      one JSON record per optimizer step (the single source of truth)
 ├── summary.json       headline numbers
 ├── report.md          auto-generated (numbers, per-epoch table, charts, events)
-├── config.resolved.toml / .json
+├── config.resolved.toml
 └── env_fingerprint.json
 ```
 
@@ -158,7 +158,6 @@ src/rocm_qlora/
   sft.py                config → SFTConfig mapping (checkpoint cadence, warmup)
   train.py              the training worker (one process per GPU)
   panels.py             rank-0 terminal panels (dataset · model · wrap-up)
-  explain.py            contextual explainer panels (deduplicated per run)
   doctor.py             environment + hardware report (.context artifacts)
   chat.py               interactive sanity check
 docs/                   01-qlora-explained · 02-amd-rocm-notes · 03-hyperparameters · 04-reading-the-plots · 05-troubleshooting · 06-27b-runbook

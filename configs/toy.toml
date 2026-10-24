@@ -10,7 +10,6 @@
 name = "toy-qwen3.5-0.8b"
 seed = 42
 output_root = ".outputs"
-explainers = true
 
 [model]
 name = "Qwen/Qwen3.5-0.8B"

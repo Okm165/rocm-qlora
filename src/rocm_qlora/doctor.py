@@ -15,7 +15,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from . import __version__
-from .explain import kv_table
+from .panels import kv_table
 from .utils import human_bytes, timestamp_slug, write_json
 
 if TYPE_CHECKING:
@@ -173,9 +173,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     verdict["host"] = {"ram": mem, "cpu": cpu}
     verdict["packages"] = versions
     write_json(context_dir / "doctor-latest.json", verdict)
-    md = _doctor_markdown(verdict, runtime, gpus)
-    (context_dir / "doctor-latest.md").write_text(md)
-    console.print(f"[dim]saved: {context_dir / 'doctor-latest.json'} · {context_dir / 'doctor-latest.md'}[/dim]")
+    console.print(f"[dim]saved: {context_dir / 'doctor-latest.json'}[/dim]")
     console.print(
         "[dim]hint: the train launcher reads the SDPA verdict from doctor-latest.json to pick "
         "attention settings automatically.[/dim]"
@@ -222,20 +220,3 @@ def _doctor_bnb_smoke() -> BnbSmoke:
         return result
     except Exception as exc:
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
-
-
-def _doctor_markdown(verdict: DoctorVerdict, runtime: TorchRuntime, gpus: list[GpuInfo]) -> str:
-    """Render the doctor verdict as the `.context/doctor-latest.md` artifact."""
-    lines = [f"# Doctor report — {verdict.get('created', '')}", ""]
-    lines.append(f"- torch: {runtime.get('torch', '?')} · HIP: {runtime.get('hip', '?')}")
-    lines.append(f"- devices: {runtime.get('device_count', 0)}")
-    lines.extend(f"- GPU {g.index}: {g.mem_total_gb:.0f} GB total, {g.mem_free_gb:.1f} GB free" for g in gpus)
-    if "sdpa" in verdict:
-        lines.append(
-            f"- SDPA verdict: **{verdict['sdpa']['verdict']}** (attn={verdict['sdpa']['attn_implementation']})"
-        )
-    if "bnb_smoke" in verdict:
-        lines.append(f"- bnb smoke: {verdict['bnb_smoke']}")
-    if "bench" in verdict:
-        lines.append(f"- bf16 matmul: {verdict['bench']['tflops']:.1f} TFLOPS")
-    return "\n".join(lines) + "\n"

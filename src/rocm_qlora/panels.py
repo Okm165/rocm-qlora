@@ -1,8 +1,8 @@
-"""Rank-0 terminal presentation: the panel set printed while a run progresses.
+"""Terminal presentation: the shared key/value table + the rank-0 run panels.
 
-Everything here runs on rank 0 only (other ranks log to their own files); the
-training pipeline in ``train.py`` imports these for its phases, but nothing
-here touches training itself.
+Pure status output (dataset, model, wrap-up) — no teaching text, no
+knowledge: that lives in docs/. The rank-0 parts run on rank 0 only; other
+ranks log to their own files.
 """
 
 from __future__ import annotations
@@ -11,9 +11,10 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
+from rich.table import Table
+
 from .config import Config
 from .dashboard import RichDashboard
-from .explain import ExplainerBook, kv_table
 from .monitor import GpuSampler, MetricsWriter
 from .utils import fmt_int, human_duration
 
@@ -27,8 +28,16 @@ if TYPE_CHECKING:
     from .monitor import RunSummary
 
 
+def kv_table() -> Table:
+    """Two-column key/value table: dim right-aligned keys, plain values."""
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style="dim", justify="right")
+    table.add_column()
+    return table
+
+
 def rank0_ui(cfg: Config, run_dir: Path, world_size: int, *, enabled: bool) -> Rank0UI | None:
-    """Console, explainer book, GPU sampler, metrics writer, live dashboard.
+    """Console, GPU sampler, metrics writer, live dashboard.
 
     Rank 0 only; non-zero ranks get `None` and log to their own rank file
     instead (`setup_logging`).
@@ -38,11 +47,9 @@ def rank0_ui(cfg: Config, run_dir: Path, world_size: int, *, enabled: bool) -> R
     from rich.console import Console
 
     from .dashboard import RichDashboard
-    from .explain import ExplainerBook
     from .monitor import GpuSampler, MetricsWriter
 
     console = Console()
-    book = ExplainerBook(console, enabled=cfg.run.explainers)
     sampler = GpuSampler(cfg.logging.gpu_sample_seconds)
     writer = MetricsWriter(run_dir / "metrics.jsonl")
     dashboard = RichDashboard(console, refresh_per_second=cfg.run.console_refresh_per_second)
@@ -50,14 +57,13 @@ def rank0_ui(cfg: Config, run_dir: Path, world_size: int, *, enabled: bool) -> R
     dashboard.state.model = cfg.model.name.split("/")[-1]
     dashboard.state.world_size = world_size
     dashboard.update(phase="loading data")
-    return Rank0UI(console, book, sampler, writer, dashboard)
+    return Rank0UI(console, sampler, writer, dashboard)
 
 
 class Rank0UI(NamedTuple):
     """The rank-0 terminal stack (``None`` on every other rank)."""
 
     console: Console
-    book: ExplainerBook
     sampler: GpuSampler
     writer: MetricsWriter
     dashboard: RichDashboard

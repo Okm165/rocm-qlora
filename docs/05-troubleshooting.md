@@ -10,7 +10,7 @@ gfx1100 / ROCm 7.1 — not generic advice.
 <run>/metrics.jsonl        the numeric story (events have type="event")
                            schema: the MetricsRecord TypedDicts in monitor.py
                            (train / eval / epoch_end / event / run_end)
-.context/doctor-latest.md  machine state at run start
+.context/doctor-latest.json  machine state at run start
 ```
 
 ---

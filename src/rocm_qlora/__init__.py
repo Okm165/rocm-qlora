@@ -12,11 +12,10 @@ Package layout (each module explains itself — see module docstrings):
     launcher.py   GPU selection + worker environment + torchrun orchestration
     sft.py        project config -> trl.SFTConfig mapping
     train.py      the training worker: phases + orchestration
-    panels.py     rank-0 terminal presentation (dataset/model/wrap-up panels)
+    panels.py     rank-0 terminal panels (dataset/model/wrap-up)
     monitor.py    metrics JSONL, health guards, summaries (headless-safe)
     dashboard.py  the live rich terminal dashboard (rank 0 only)
     plots.py      every matplotlib chart + the Markdown run report
-    explain.py    contextual explainer panels (deduplicated per run)
     doctor.py     environment + hardware report (.context artifacts)
     chat.py       interactive sanity-check chat against a trained adapter
     utils.py      small shared helpers (formatting, timing, seeds)

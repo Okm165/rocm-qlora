@@ -1,8 +1,5 @@
 # 01 · QLoRA explained (for this exact project)
 
-> Companion reading: the in-terminal explainer panels (shown unless `--quiet`)
-> condense this document at the moments they matter.
-
 ## The three ideas
 
 **1. NF4 quantization.** The frozen base model's Linear weights are stored in

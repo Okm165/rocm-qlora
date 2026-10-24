@@ -72,7 +72,7 @@ def merge_run(run_dir: str | Path, *, out_dir: str | Path | None = None, console
 
     console = console or Console()
     run_dir = Path(run_dir)
-    cfg = Config.from_dict(json.loads((run_dir / "config.resolved.json").read_text()))
+    cfg = Config.from_toml(run_dir / "config.resolved.toml")
     adapter_dir = run_dir / "adapter"
     if not adapter_dir.exists():
         raise SystemExit(f"No adapter found at {adapter_dir}")

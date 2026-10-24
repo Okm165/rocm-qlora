@@ -14,6 +14,7 @@ from __future__ import annotations
 import contextlib
 import json
 import math
+import tomllib
 from collections.abc import Generator, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -563,13 +564,20 @@ def render_charts(
     return written
 
 
+def _read_config(run_dir: Path) -> dict[str, Any]:
+    """Tolerant read of the run's config snapshot (old or partial runs)."""
+    try:
+        with open(run_dir / "config.resolved.toml", "rb") as fh:
+            return tomllib.load(fh)
+    except Exception:
+        return {}
+
+
 def replot(run_dir: str | Path) -> list[Path]:
     """Regenerate every chart from metrics.jsonl (post-hoc / crashed runs)."""
     run_dir = Path(run_dir)
     records = read_metrics(run_dir)
-    cfg = {}
-    with contextlib.suppress(Exception):
-        cfg = read_json(run_dir / "config.resolved.json")
+    cfg = _read_config(run_dir)
     meta: ChartMeta = {
         "run_name": run_dir.name,
         "model": str(cfg.get("model", {}).get("name", "")).split("/")[-1],
@@ -591,9 +599,7 @@ def write_report(run_dir: str | Path) -> Path:
         summary = RunSummary.from_dict(read_json(run_dir / "summary.json"))
     except Exception:
         summary = summarize(records)
-    cfg: dict[str, Any] = {}
-    with contextlib.suppress(Exception):
-        cfg = read_json(run_dir / "config.resolved.json")
+    cfg = _read_config(run_dir)
 
     lines = [
         f"# Run report — {run_dir.name}\n",
