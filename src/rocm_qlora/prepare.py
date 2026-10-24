@@ -125,9 +125,13 @@ def prepare_checkpoint(cfg: Config, *, force: bool = False, log: Callable[[str],
     _write_quantization_config(model, cfg)
 
     log(f"Saving prepared checkpoint to {out_dir} …")
+    # Load the tokenizer *before* the directory exists (from the hub source):
+    # load_tokenizer prefers the prepared directory, which is only complete
+    # after this save.
+    tokenizer = load_tokenizer(cfg)
     out_dir.mkdir(parents=True, exist_ok=True)
     _save_prepared(model, out_dir)
-    load_tokenizer(cfg).save_pretrained(out_dir)
+    tokenizer.save_pretrained(out_dir)
 
     meta = _prepare_meta(model, cfg, requantized)
     write_json(meta_path, meta)
