@@ -181,7 +181,7 @@ src/rocm_qlora/
   doctor.py             environment + hardware report (.context artifacts)
   chat.py               interactive sanity check
   utils.py              formatting / timing / JSON helpers
-docs/                   01-qlora-explained · 02-amd-rocm-notes · 03-hyperparameters · 04-reading-the-plots · 05-troubleshooting · 06-27b-runbook
+docs/                   01-qlora · 02-amd-rocm-notes · 03-hyperparameters · 04-reading-the-plots · 05-troubleshooting · 06-27b-runbook
 scripts/                 poc_p2p_allreduce.py (RCCL transport POC) · poc_deltanet_backward.py (27B NaN hunt)
 tests/                   unit + smoke tests (stub tokenizers, synthetic metrics — no GPU)
 ```

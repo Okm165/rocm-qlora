@@ -1,4 +1,4 @@
-# 01 · QLoRA explained (for this exact project)
+# 01 · QLoRA (for this exact project)
 
 ## The three ideas
 
