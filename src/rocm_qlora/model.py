@@ -433,8 +433,8 @@ def load_model_for_training(cfg: Config, *, local_rank: int = 0, attn: str | Non
     model.config.use_cache = False
 
     # --- drop the (unused) vision tower -------------------------------------
-    # Text-only training never touches it; dropping it frees ~0.7 GiB per GPU
-    # and shrinks the initial DDP parameter broadcast.
+    # Text-only training never touches it; dropping it frees the quantized
+    # tower (~0.25 GiB) before DDP walks the parameters.
     if hasattr(model, "model") and getattr(model.model, "visual", None) is not None:
         model.model.visual = None
         import gc

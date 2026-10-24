@@ -683,7 +683,7 @@ def _events_table(events: Sequence[EventRecord]) -> list[str]:
 
 
 def _continue_section(run_dir: Path) -> list[str]:
-    """Artifact paths + the follow-up commands (chat, merge, GGUF export)."""
+    """Artifact paths + the follow-up commands (chat, merge)."""
     return [
         "## Where everything is\n",
         f"- metrics (JSONL): `{run_dir / 'metrics.jsonl'}`",
@@ -696,13 +696,6 @@ def _continue_section(run_dir: Path) -> list[str]:
         "## Continue from here\n",
         "```bash",
         f"uv run rocm-qlora chat --run {run_dir}     # talk to the adapter",
-        f"uv run rocm-qlora merge --run {run_dir}    # merge to bf16",
-        "```",
-        "",
-        "### Export to llama.cpp (GGUF)\n",
-        "```bash",
-        f"uv run rocm-qlora merge --run {run_dir}",
-        "python llama.cpp/convert_hf_to_gguf.py <merged-dir> --outfile model-f16.gguf --outtype f16",
-        "llama-quantize model-f16.gguf model-Q4_K_M.gguf Q4_K_M",
+        f"uv run rocm-qlora merge --run {run_dir}    # merge to bf16 (GGUF export: docs/06 step 6)",
         "```",
     ]

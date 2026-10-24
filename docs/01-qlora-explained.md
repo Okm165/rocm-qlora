@@ -36,7 +36,7 @@ prepare (once)
 train (each run)
   prepared checkpoint → 4-bit load onto this rank's GPU      [transformers+bnb]
   selective fp32 cast (norms yes, embeddings no) + freeze    [model.py]
-  LoRA attach (all-linear, minus vision and lm_head)         [peft]
+  LoRA attach (all text-side linears; vision dropped, lm_head excluded) [peft]
   TRL SFTTrainer:
     chat template renders user→assistant turns               [transformers]
     assistant-only loss mask ({% generation %} markers)      [trl]

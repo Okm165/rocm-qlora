@@ -1,9 +1,10 @@
 # =============================================================================
-# Toy config · Qwen3.5-0.8B — rehearse the whole pipeline in ~2 minutes
+# Toy config · Qwen3.5-0.8B — rehearse the whole pipeline on tiny weights
 # =============================================================================
 # Same architecture generation as Qwen3.8-27B (qwen3_5, hybrid DeltaNet +
-# full attention), same code path, tiny weights. Use it to validate that
-# training/plots/reports work before committing to a 27B run.
+# full attention), same code path, tiny weights. The dry run (8 examples,
+# 3 steps) takes ~2 minutes; with a preceding `prepare` budget ~4 minutes
+# (README quickstart, docs/06).
 # =============================================================================
 
 [run]
@@ -21,7 +22,7 @@ dtype = "bfloat16"
 quant_type = "nf4"
 double_quant = true
 requantize_vision = true
-requantize_modules = ["in_proj_qkv"]   # lm_head stays 16-bit (TRL's fused loss slices it)
+requantize_modules = ["in_proj_qkv"]   # lm_head is never quantized (TRL's fused loss slices it)
 
 [data]
 path = ".data/raw/dataset.json"

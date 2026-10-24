@@ -118,7 +118,7 @@ OOMs — this table (plus the knobs in docs/05) is what to react with:
 | embeddings (bf16, untied) | ~2.5 | `embed_tokens` is not a Linear |
 | lm_head (bf16) | ~2.5 | stays 16-bit — TRL's fused loss slices the raw weight; upcasting to fp32 costs +2.5 GB for nothing |
 | vision tower | ~0.2 | dropped right after load (freed) |
-| LoRA r=16 all-linear + 8-bit Adam | ~0.7 | ~117 M trainable (0.4 %) |
+| LoRA r=16 (all text-side linears) + 8-bit Adam | ~0.7 | ~117 M trainable (0.4 %) |
 | activations @1536 tok, batch 1, grad-ckpt | ~1.3 | recomputed, not stored |
 | context / fragmentation / RCCL | ~1 | HIP context + transport buffers |
 | **total** | **~21 of 24** | measured 21.1 GB at batch 1, step 1 (2026-10-23 run) |
