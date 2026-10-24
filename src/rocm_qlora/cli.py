@@ -199,7 +199,7 @@ def cmd_prepare(args: argparse.Namespace) -> int:
 
 
 def _ensure_prepared(cfg: Config, args: argparse.Namespace) -> bool:
-    """Print the prepare-required panel when the NF4 checkpoint is missing."""
+    """Print the prepare-required message when the NF4 checkpoint is missing."""
     prepared = Path(cfg.model.prepared_dir)
     if (prepared / "config.json").exists():
         return True

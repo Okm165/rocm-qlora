@@ -4,7 +4,7 @@ This is the fastest way to answer "did it actually learn?" — load the base
 model in 4-bit + the adapter, and talk to it. Differences from the base
 model (style, reasoning structure, domain vocabulary) show up immediately.
 
-Rendering: thinking blocks (` thinking…</think>`) are shown in a dim panel,
+Rendering: thinking blocks (` thinking…</think>`) are shown as dim text,
 the final answer as Markdown — the same split the model was trained with.
 
 Commands inside the loop:  /think on|off · /temp <x> · /max <n> · /reset · /exit

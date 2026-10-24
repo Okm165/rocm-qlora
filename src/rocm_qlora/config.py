@@ -176,9 +176,9 @@ class EvalConfig(_Section):
 
 
 class LoggingConfig(_Section):
-    #: Regenerate the live charts (loss + dashboard) every N optimizer steps.
+    #: Regenerate the live charts (loss + overview) every N optimizer steps.
     chart_snapshot_steps: Annotated[int, Field(ge=1)] = 10
-    #: rocm-smi sampling period for the GPU health panel (seconds).
+    #: rocm-smi sampling period for the GPU health records (seconds).
     gpu_sample_seconds: Annotated[float, Field(ge=1.0)] = 5.0
     #: Keep older checkpoints instead of only the latest (save_total_limit=None).
     keep_epoch_checkpoints: bool = True

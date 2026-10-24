@@ -47,7 +47,7 @@ if TYPE_CHECKING:
 
 COLORS = {
     "bg": "#10141a",
-    "panel": "#161c24",
+    "axes": "#161c24",
     "fg": "#d7dee8",
     "dim": "#8b97a8",
     "grid": "#232b36",
@@ -68,7 +68,7 @@ def _apply_theme() -> None:
     plt.rcParams.update(
         {
             "figure.facecolor": COLORS["bg"],
-            "axes.facecolor": COLORS["panel"],
+            "axes.facecolor": COLORS["axes"],
             "savefig.facecolor": COLORS["bg"],
             "axes.edgecolor": COLORS["grid"],
             "axes.labelcolor": COLORS["fg"],
@@ -179,7 +179,7 @@ def _loss_curves(ax: Axes, train: Sequence[TrainRecord], *, labels: bool) -> tup
 
 
 def _eval_overlay(ax: Axes, eval_records: Sequence[EvalRecord], *, label: str | None = None) -> None:
-    """Dashed eval-loss overlay (shared by the loss chart and the dashboard chart)."""
+    """Dashed eval-loss overlay (shared by the loss chart and the overview chart)."""
     ev = [(r["step"], r["eval_loss"]) for r in eval_records]
     if ev:
         ax.plot([e[0] for e in ev], [e[1] for e in ev], "o--", color=COLORS["eval"], lw=1.6, ms=6, label=label)
@@ -221,14 +221,14 @@ def loss_curve(
 
 
 def _lr_series(ax: Axes, train: Sequence[TrainRecord], *, label: str | None = None) -> None:
-    """Learning-rate line (sci-notation y-axis), shared by the lr and dashboard charts."""
+    """Learning-rate line (sci-notation y-axis), shared by the lr and overview charts."""
     recs = [r for r in train if r.get("lr") is not None]
     ax.plot([r["step"] for r in recs], [as_float(r["lr"]) for r in recs], color=COLORS["lr"], lw=2.0, label=label)
     ax.ticklabel_format(axis="y", style="sci", scilimits=(-2, 2))
 
 
 def _tok_series(ax: Axes, train: Sequence[TrainRecord], *, label: str | None = None) -> None:
-    """Tokens/s line, shared by the throughput and dashboard charts."""
+    """Tokens/s line, shared by the throughput and overview charts."""
     recs = [r for r in train if r.get("tok_per_s")]
     ax.plot(
         [r["step"] for r in recs], [as_float(r["tok_per_s"]) for r in recs], color=COLORS["tok"], lw=1.8, label=label
@@ -236,7 +236,7 @@ def _tok_series(ax: Axes, train: Sequence[TrainRecord], *, label: str | None = N
 
 
 def _vram_series(ax: Axes, train: Sequence[TrainRecord]) -> None:
-    """Per-GPU VRAM lines, shared by the vram and dashboard charts."""
+    """Per-GPU VRAM lines, shared by the vram and overview charts."""
     for gi in range(len(train[-1]["gpu"])):
         total = (train[-1]["gpu"][gi] or {}).get("mem_total_gb")
         ax.plot(
@@ -388,7 +388,7 @@ def epoch_bars(records: Sequence[MetricsRecord], out_path: str | Path, *, meta: 
         _watermark(fig, meta)
 
 
-def _panel_loss(ax: Axes, train: Sequence[TrainRecord], eval_records: Sequence[EvalRecord]) -> None:
+def _loss_subplot(ax: Axes, train: Sequence[TrainRecord], eval_records: Sequence[EvalRecord]) -> None:
     """Loss quadrant: raw + EMA + eval markers."""
     if not train:
         _no_data(ax)
@@ -400,7 +400,7 @@ def _panel_loss(ax: Axes, train: Sequence[TrainRecord], eval_records: Sequence[E
     ax.set_xlabel("step")
 
 
-def _panel_lr(ax: Axes, train: Sequence[TrainRecord]) -> None:
+def _lr_subplot(ax: Axes, train: Sequence[TrainRecord]) -> None:
     """Learning-rate quadrant."""
     lr_recs = [r for r in train if r.get("lr") is not None]
     if not lr_recs:
@@ -410,7 +410,7 @@ def _panel_lr(ax: Axes, train: Sequence[TrainRecord]) -> None:
     ax.set_title("learning rate")
 
 
-def _panel_throughput(ax: Axes, train: Sequence[TrainRecord]) -> None:
+def _throughput_subplot(ax: Axes, train: Sequence[TrainRecord]) -> None:
     """Tokens/s quadrant."""
     tput = [r for r in train if r.get("tok_per_s")]
     if not tput:
@@ -421,7 +421,7 @@ def _panel_throughput(ax: Axes, train: Sequence[TrainRecord]) -> None:
     ax.set_xlabel("step")
 
 
-def _panel_vram(ax: Axes, train: Sequence[TrainRecord]) -> None:
+def _vram_subplot(ax: Axes, train: Sequence[TrainRecord]) -> None:
     """Per-GPU VRAM quadrant."""
     gpu_recs = [r for r in train if r.get("gpu")]
     if not gpu_recs:
@@ -433,7 +433,7 @@ def _panel_vram(ax: Axes, train: Sequence[TrainRecord]) -> None:
     ax.set_xlabel("step")
 
 
-def dashboard(
+def overview(
     records: Sequence[MetricsRecord],
     out_path: str | Path,
     *,
@@ -442,18 +442,18 @@ def dashboard(
 ) -> None:
     """2×2 live snapshot: loss, lr, throughput, VRAM."""
     with _chart(out_path, 2, 2, figsize=(13, 7)) as (fig, axes):
-        fig.suptitle(f"Run dashboard — {meta.get('run_name', '') if meta else ''}", fontsize=12, fontweight="bold")
+        fig.suptitle(f"Run overview — {meta.get('run_name', '') if meta else ''}", fontsize=12, fontweight="bold")
         train = select(records, "train")
 
-        _panel_loss(axes[0][0], train, eval_records)
-        _panel_lr(axes[0][1], train)
-        _panel_throughput(axes[1][0], train)
-        _panel_vram(axes[1][1], train)
+        _loss_subplot(axes[0][0], train, eval_records)
+        _lr_subplot(axes[0][1], train)
+        _throughput_subplot(axes[1][0], train)
+        _vram_subplot(axes[1][1], train)
 
         _watermark(fig, meta)
 
 
-def _length_hist_panel(ax: Axes, srt: Sequence[int], max_length: int) -> None:
+def _length_hist_subplot(ax: Axes, srt: Sequence[int], max_length: int) -> None:
     """Histogram of token lengths with p50/p90/p99 markers and the cap line."""
     n = len(srt)
     ax.hist(srt, bins=min(60, max(10, n // 5)), color=COLORS["loss_ema"], alpha=0.85, edgecolor=COLORS["bg"])
@@ -482,7 +482,7 @@ def _length_hist_panel(ax: Axes, srt: Sequence[int], max_length: int) -> None:
     ax.set_title("Token length distribution")
 
 
-def _coverage_panel(ax: Axes, srt: Sequence[int], max_length: int) -> None:
+def _coverage_subplot(ax: Axes, srt: Sequence[int], max_length: int) -> None:
     """Fraction of examples fitting under each candidate sequence cap."""
     n = len(srt)
     caps = list(range(128, int(max(srt[-1] * 1.1, 512)) + 128, max(64, int(srt[-1] / 60))))
@@ -513,8 +513,8 @@ def token_length_hist(
             _no_data(ax)
             return
         srt = sorted(lengths)
-        _length_hist_panel(ax, srt, max_length)
-        _coverage_panel(ax2, srt, max_length)
+        _length_hist_subplot(ax, srt, max_length)
+        _coverage_subplot(ax2, srt, max_length)
         _watermark(fig, meta)
 
 
@@ -538,7 +538,7 @@ def render_charts(
     evals = select(records, "eval")
     if live:
         specs = [
-            ("dashboard.png", lambda p: dashboard(records, p, meta=meta, eval_records=evals)),
+            ("overview.png", lambda p: overview(records, p, meta=meta, eval_records=evals)),
             ("loss.png", lambda p: loss_curve(records, p, meta=meta, eval_records=evals)),
         ]
     else:
@@ -550,7 +550,7 @@ def render_charts(
             ("vram.png", lambda p: vram(records, p, meta=meta)),
             ("gpu_health.png", lambda p: gpu_health(records, p, meta=meta)),
             ("epochs.png", lambda p: epoch_bars(records, p, meta=meta)),
-            ("dashboard.png", lambda p: dashboard(records, p, meta=meta, eval_records=evals)),
+            ("overview.png", lambda p: overview(records, p, meta=meta, eval_records=evals)),
         ]
     written: list[Path] = []
     for fname, fn in specs:

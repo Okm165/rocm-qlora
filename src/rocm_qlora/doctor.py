@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 console = Console()
 
 
-def _doctor_host_panel(mem: HostMemory, cpu: CpuInfo) -> None:
+def _doctor_host_table(mem: HostMemory, cpu: CpuInfo) -> None:
     """Host summary table (CPU/RAM/kernel/driver/disk)."""
     from .hardware import disk_free_gb, kernel_version, rocm_driver_version
 
@@ -157,7 +157,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
     mem = host_memory()
     cpu = cpu_info()
-    _doctor_host_panel(mem, cpu)
+    _doctor_host_table(mem, cpu)
 
     gpus = gpu_snapshot()
     _doctor_gpu_table(gpus)

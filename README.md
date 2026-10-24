@@ -130,7 +130,7 @@ Rejected, with evidence:
 
 ```
 .outputs/runs/<timestamp>-<name>/
-├── charts/            loss, lr, grad_norm, throughput, vram, gpu_health, epochs, dashboard (.png, live-updated)
+├── charts/            loss, lr, grad_norm, throughput, vram, gpu_health, epochs, overview (.png, live-updated)
 ├── logs/rank-*.log
 ├── adapter/           final LoRA adapter + checkpoints (27B: every 42 steps)
 ├── metrics.jsonl      per-step records + events (the single source of truth)

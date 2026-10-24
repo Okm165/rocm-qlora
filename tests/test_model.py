@@ -1,4 +1,4 @@
-"""Parameter accounting tests: the prepared-checkpoint meta and the model panel report."""
+"""Parameter accounting tests: the prepared-checkpoint meta and the model status report."""
 
 from __future__ import annotations
 

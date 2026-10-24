@@ -368,7 +368,7 @@ def _build_model(
     world_size: int,
     logger: logging.Logger,
 ) -> PreTrainedModel | PeftModel:
-    """Phase 2: attention verdict, QLoRA preparation, rank-0 model panel."""
+    """Phase 2: attention verdict, QLoRA preparation, rank-0 model lines."""
     import torch
 
     if ui is not None:  # ui exists exactly on rank 0
@@ -619,7 +619,7 @@ def _finalize_run(
 
 
 def _assemble_summary(adapter_dir: Path, records: list[MetricsRecord], *, start_time: float) -> RunSummary:
-    """End-of-run numbers for the wrap-up panel and the run_end record.
+    """End-of-run numbers for the wrap-up lines and the run_end record.
 
     Everything but the wall clock and the adapter path is derived from the
     metrics stream (see ``monitor.summarize``) — there is no second file to

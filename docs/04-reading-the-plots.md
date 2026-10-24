@@ -1,7 +1,7 @@
 # 04 · Reading the plots
 
 Every chart lives in `<run>/charts/` and is regenerated **while training
-runs** (dashboard + loss every `chart_snapshot_steps`; the full set at every
+runs** (overview + loss every `chart_snapshot_steps`; the full set at every
 epoch boundary and at the end). The per-step progress line shows the same numbers
 live. This doc is the decoder ring.
 
@@ -25,7 +25,7 @@ Interpretation table:
 | smooth descent, flattening tail | textbook | none |
 | descent then plateau mid-run | LR decay doing its job | none |
 | sawtooth up | LR too high / grad noise | ↓ lr, ↑ grad_accum |
-| flat from step 0 | no learning: template bug, LR too low, or adapters not attached | check the model panel, ↑ lr |
+| flat from step 0 | no learning: template bug, LR too low, or adapters not attached | check the model lines, ↑ lr |
 | sudden cliff down | a hard subset learned / schedule step | inspect per-epoch means |
 | slow climb at the end | overfitting or schedule ended early | watch the eval markers |
 
@@ -89,16 +89,16 @@ Train mean vs eval per epoch. The most useful derived quantity: the
 **eval delta** between consecutive epochs. Improving → keep going; flat →
 schedule is fine as-is; rising → stop earlier next time (or add data).
 
-## dashboard.png — the live 2×2 snapshot
+## overview.png — the live 2×2 snapshot
 
 Loss, LR, throughput, VRAM in one image — the "is it healthy at a glance"
-panel. It updates during training, viewable in an image viewer to
-watch it evolve.
+view. It updates during training, viewable in an image viewer to watch it
+evolve.
 
 ## token_lengths.png (data profile, `rocm-qlora data`)
 
 Histogram of chat-templated token lengths with p50/p90/p99 markers and the
-chosen `max_length`; the right panel shows coverage vs candidate caps. Set
+chosen `max_length`; the right subplot shows coverage vs candidate caps. Set
 the cap where the coverage curve saturates — for typical Q&A data, around
 1.5k tokens.
 

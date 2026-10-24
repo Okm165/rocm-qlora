@@ -78,7 +78,7 @@ per_device_batch_size = 2   # no-grad forwards are cheap; halves eval wall time
 eval_packing = false
 
 [logging]
-chart_snapshot_steps = 10   # live dashboard.png/loss.png refresh cadence
+chart_snapshot_steps = 10   # live overview.png/loss.png refresh cadence
 gpu_sample_seconds = 5.0
 keep_epoch_checkpoints = true
 # Mid-epoch full checkpoint (84 steps/epoch → every ~half epoch ≈ 11 min):

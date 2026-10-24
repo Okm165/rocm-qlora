@@ -243,7 +243,7 @@ class RunSummary:
     """End-of-run numbers, derived from the metrics stream.
 
     ``total_seconds`` and ``adapter_dir`` are the two facts the records do not
-    carry; the worker fills them live for the wrap-up panel.
+    carry; the worker fills them live for the wrap-up lines.
     """
 
     steps: int = 0

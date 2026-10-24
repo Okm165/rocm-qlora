@@ -153,12 +153,12 @@ def test_render_charts_and_report(tmp_path):
     (charts_dir / "stale-chart.png").write_bytes(b"old")  # a chart removed from the code
     written = render_charts(tmp_path, records=records, meta=meta, live=False)
     names = {p.name for p in written}
-    assert {"loss.png", "dashboard.png", "vram.png"} <= names
+    assert {"loss.png", "overview.png", "vram.png"} <= names
     assert not (charts_dir / "stale-chart.png").exists()  # the full pass owns the set
     assert all(p.exists() and p.stat().st_size > 1000 for p in written)
     # live subset is smaller and cheap
     live = render_charts(tmp_path, records=records, meta=meta, live=True)
-    assert {p.name for p in live} == {"dashboard.png", "loss.png"}
+    assert {p.name for p in live} == {"overview.png", "loss.png"}
     # the report derives from the stream alone — write it, then report
     writer = MetricsWriter(tmp_path / "metrics.jsonl")
     for r in records:
