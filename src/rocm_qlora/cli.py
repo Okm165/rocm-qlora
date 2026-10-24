@@ -126,8 +126,10 @@ def _print_token_table(cfg: Config, profile: TokenProfile, pcts: Percentiles) ->
 
 
 def _print_max_length_hint(cfg: Config, pcts: Percentiles) -> None:
-    """Suggest the next 128-token cap that still covers p99 (rounds up)."""
+    """Suggest the next 128-token cap that still covers p99 (rounds up), when it differs."""
     suggestion = -(-int(pcts.p99) // 128) * 128
+    if suggestion == cfg.data.max_length:
+        return  # the current cap already covers p99; nothing to react to
     console.print(
         f"[dim]hint: for ≥99% coverage set data.max_length ≈ [bold]{suggestion}[/bold] "
         f"(current: {cfg.data.max_length})[/dim]"
