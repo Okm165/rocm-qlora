@@ -3,72 +3,72 @@
 # =============================================================================
 # Same architecture generation as Qwen3.8-27B (qwen3_5, hybrid DeltaNet +
 # full attention), same code path, tiny weights. The dry run (8 examples,
-# 3 steps) takes ~2 minutes; with a preceding `prepare` budget ~4 minutes
-# (README quickstart, docs/06).
+# 3 steps) takes ~1.5 min; with the preceding prepare, ~2 min total
+# (README quickstart, docs/06). The reasoning behind each value: docs/03.
 # =============================================================================
 
 [run]
 name = "toy-qwen3.5-0.8b"
-seed = 42
-output_root = ".outputs"
+seed = 42                  # seeds python/numpy/torch + the dataset split
+output_root = ".outputs"   # runs land in <root>/runs/<timestamp>-<name>
 
 [model]
 name = "Qwen/Qwen3.5-0.8B"
-prepared_dir = ".data/models/qwen3.5-0.8b-nf4"
-attn = "auto"
-dtype = "bfloat16"
+prepared_dir = ".data/models/qwen3.5-0.8b-nf4"   # what `prepare` writes
+attn = "auto"              # doctor's SDPA verdict decides (docs/02)
+dtype = "bfloat16"         # compute dtype for the quantized matmuls
 
 [quantization]
-quant_type = "nf4"
-double_quant = true
-requantize_vision = true
+quant_type = "nf4"         # 4-bit normal float (measured 0.52 B/param, docs/02)
+double_quant = true        # quantize the quantization scales too (~1.1 GB at 27B)
+requantize_vision = true   # the vision tower is unused for text; it is freed after load
 requantize_modules = ["in_proj_qkv"]   # lm_head is never quantized (TRL's fused loss slices it)
 
 [data]
-path = ".data/raw/dataset.json"
-eval_fraction = 0.05
-max_length = 1024
-packing = false
-assistant_only_loss = true
-dataset_num_proc = 8
+path = ".data/raw/dataset.json"        # ShareGPT-style {messages: [...]} JSON
+eval_fraction = 0.05                   # holdout for the per-epoch eval
+max_length = 1024                      # toy sequences are short; measure yours: rocm-qlora data
+packing = false                        # the DeltaNet layers have no document-aware masking (docs/01)
+assistant_only_loss = true             # loss on assistant turns only
+dataset_num_proc = 8                   # host processes for tokenization
 
 [lora]
-r = 16
-alpha = 32
+r = 16                     # rank; capacity vs. overfitting lever (docs/03)
+alpha = 32                 # convention alpha = 2r, so the scaling is 2
 dropout = 0.05
-target_modules = [
+target_modules = [         # every text-side linear (matters more than rank, docs/03)
   "q_proj", "k_proj", "v_proj", "o_proj",
   "in_proj_qkv", "in_proj_z", "in_proj_a", "in_proj_b", "out_proj",
   "gate_proj", "up_proj", "down_proj",
 ]
 
 [optim]
-lr = 2.0e-4
+lr = 2.0e-4                # the tiny model tolerates more than the 27B's 1e-4
 epochs = 2
-per_device_batch_size = 4
+per_device_batch_size = 4  # the toy fits in VRAM; effective batch = 4 x 1 x GPUs
 grad_accum = 1
-max_grad_norm = 0.3
+max_grad_norm = 0.3        # gradient clipping
 weight_decay = 0.01
-optimizer = "adamw_torch"
+optimizer = "adamw_torch"  # tiny model — 8-bit optimizer states buy nothing here
 scheduler = "cosine"
-warmup_ratio = 0.05
+warmup_ratio = 0.05        # transformers v5 reads a float in [0,1) as the ratio
 gradient_checkpointing = true
 loss_type = "nll"
 
 [eval]
-per_epoch = true
-per_device_batch_size = 4
+per_epoch = true           # holdout eval at each epoch end
+per_device_batch_size = 4  # no-grad forwards are cheap
 eval_packing = false
 
 [logging]
-chart_snapshot_steps = 5
-gpu_sample_seconds = 5.0
+chart_snapshot_steps = 5   # live loss.png/overview.png refresh cadence (steps)
+gpu_sample_seconds = 5.0   # rocm-smi sampling period (background thread)
 
 [env]
-hip_alloc_conf = "garbage_collection_threshold:0.8"
-aotriton = "auto"
-omp_num_threads = 8
+hip_alloc_conf = "garbage_collection_threshold:0.8"   # never expandable_segments (docs/05)
+aotriton = "auto"          # doctor's SDPA verdict decides the env flag
+omp_num_threads = 8        # host threads per rank
 
 [dist]
-mode = "auto"
-gpus = "auto"
+mode = "auto"              # DDP when more than one GPU is selected
+gpus = "auto"              # every visible GPU; override with --gpus 0,1
