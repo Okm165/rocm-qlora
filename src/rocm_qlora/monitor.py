@@ -32,7 +32,7 @@ from transformers import TrainerCallback, TrainerControl, TrainerState, Training
 from .config import Config
 from .dashboard import RichDashboard
 from .hardware import GpuInfo, GpuMetric, gpu_snapshot
-from .utils import Stopwatch, as_float, linear_slope, now_iso, safe_div
+from .utils import as_float, linear_slope, now_iso, safe_div
 
 METRICS_FILENAME = "metrics.jsonl"
 
@@ -422,7 +422,7 @@ class MetricsCallback(TrainerCallback):
         self._chart_renderer = chart_renderer
 
         self.records: list[MetricsRecord] = []
-        self.stopwatch = Stopwatch()
+        self._t0 = time.monotonic()
         self._last_step_time: float | None = None
         self._step_times: list[float] = []
         self._last_tokens: int | None = None
@@ -486,9 +486,9 @@ class MetricsCallback(TrainerCallback):
     def on_train_begin(
         self, args: TrainingArguments, state: TrainerState, control: TrainerControl, **kwargs: Any
     ) -> None:
-        """Reset the stopwatch, record train_start, prime the dashboard."""
+        """Reset the elapsed clock, record train_start, prime the dashboard."""
         self.max_steps = state.max_steps
-        self.stopwatch = Stopwatch()
+        self._t0 = time.monotonic()
         if self.cfg.optim.warmup_ratio and state.max_steps:
             self.warmup_end_step = int(state.max_steps * self.cfg.optim.warmup_ratio)
         self._write(EventRecord(type="event", level="info", event="train_start", max_steps=state.max_steps))
@@ -541,7 +541,7 @@ class MetricsCallback(TrainerCallback):
             "tok_per_s": tok_per_s,
             "samples_per_s": (tok_per_s / self.cfg.data.max_length) if tok_per_s else None,
             "tokens_seen": tokens,
-            "elapsed_s": self.stopwatch.elapsed(),
+            "elapsed_s": time.monotonic() - self._t0,
             "eta_s": step_time_ema * remaining if step_time_ema is not None else None,
             "vram_peak_gb": vram_peak,
             "gpu": gpu_recs,
@@ -622,7 +622,7 @@ class MetricsCallback(TrainerCallback):
             samples_per_s=record["samples_per_s"],
             tokens_seen=record["tokens_seen"],
             total_tokens_estimate=self.total_tokens_estimate,
-            elapsed_s=self.stopwatch.elapsed(),
+            elapsed_s=time.monotonic() - self._t0,
             eta_s=record["eta_s"],
             gpus=gpu_recs,
             health=self._health_lines(),
@@ -672,7 +672,7 @@ class MetricsCallback(TrainerCallback):
             "step": state.global_step,
             "train_loss_mean": (sum(self._epoch_losses) / len(self._epoch_losses)) if self._epoch_losses else None,
             "eval_loss": recent_eval.get("eval_loss") if recent_eval else None,
-            "elapsed_s": self.stopwatch.elapsed(),
+            "elapsed_s": time.monotonic() - self._t0,
         }
         self._write(record)
         self._epoch_losses = []

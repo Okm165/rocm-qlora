@@ -28,23 +28,20 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 from .config import Config
-from .explain import kv_table
+from .panels import print_wrapup, rank0_ui, show_dataset_panel, show_model_panel
 from .sft import build_sft_config, ensure_training_chat_template
-from .utils import fmt_int, human_duration, seed_everything, write_json
+from .utils import seed_everything, write_json
 
 if TYPE_CHECKING:
     import torch
     from datasets import Dataset
     from peft import PeftModel
-    from rich.console import Console
     from transformers import PreTrainedModel, PreTrainedTokenizerBase
     from trl import SFTTrainer
 
     from .dashboard import RichDashboard
-    from .data import ChatMessage, DatasetStats, TokenProfile
-    from .explain import ExplainerBook
-    from .model import ParameterReport
-    from .monitor import GpuSampler, MetricsCallback, MetricsRecord, MetricsWriter, RunSummary
+    from .monitor import MetricsCallback, MetricsRecord, MetricsWriter, RunSummary
+    from .panels import Rank0UI
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -168,49 +165,8 @@ def _install_grad_finite_checks(model: torch.nn.Module, log: Callable[[str], Non
 
 
 # ---------------------------------------------------------------------------
-# Rank-0 terminal stack
-# ---------------------------------------------------------------------------
-
-
-def _rank0_ui(cfg: Config, run_dir: Path, world_size: int, *, enabled: bool) -> _Rank0UI | None:
-    """Console, explainer book, GPU sampler, metrics writer, live dashboard.
-
-    Rank 0 only; non-zero ranks get `None` and log to their own rank file
-    instead (`setup_logging`).
-    """
-    if not enabled:
-        return None
-    from rich.console import Console
-
-    from .dashboard import RichDashboard
-    from .explain import ExplainerBook
-    from .monitor import GpuSampler, MetricsWriter
-
-    console = Console()
-    book = ExplainerBook(console, enabled=cfg.run.explainers)
-    sampler = GpuSampler(cfg.logging.gpu_sample_seconds)
-    writer = MetricsWriter(run_dir / "metrics.jsonl")
-    dashboard = RichDashboard(console, refresh_per_second=cfg.run.console_refresh_per_second)
-    dashboard.state.run_name = run_dir.name
-    dashboard.state.model = cfg.model.name.split("/")[-1]
-    dashboard.state.world_size = world_size
-    dashboard.update(phase="loading data")
-    return _Rank0UI(console, book, sampler, writer, dashboard)
-
-
-# ---------------------------------------------------------------------------
 # Phase helpers
 # ---------------------------------------------------------------------------
-
-
-class _Rank0UI(NamedTuple):
-    """The rank-0 terminal stack (``None`` on every other rank)."""
-
-    console: Console
-    book: ExplainerBook
-    sampler: GpuSampler
-    writer: MetricsWriter
-    dashboard: RichDashboard
 
 
 class _TrainingData(NamedTuple):
@@ -224,7 +180,7 @@ class _TrainingData(NamedTuple):
     total_tokens_estimate: int
 
 
-def _load_training_data(cfg: Config, args: WorkerArgs, *, ui: _Rank0UI | None, logger: logging.Logger) -> _TrainingData:
+def _load_training_data(cfg: Config, args: WorkerArgs, *, ui: Rank0UI | None, logger: logging.Logger) -> _TrainingData:
     """Phase 1: tokenizer + chat template, dataset load/split/profile, rank-0 summary."""
     from .data import load_sharegpt, profile_tokens, split_dataset, to_hf_dataset
     from .model import load_tokenizer
@@ -249,56 +205,9 @@ def _load_training_data(cfg: Config, args: WorkerArgs, *, ui: _Rank0UI | None, l
     total_tokens_estimate = int(profile.total_tokens * (n_train / max(1, profile.n_total)))
 
     if ui is not None:  # ui exists exactly on rank 0
-        _show_dataset_panel(ui, cfg, stats, profile, n_train, eval_ds, examples, tokenizer, logger)
+        show_dataset_panel(ui, cfg, stats, profile, n_train, eval_ds, examples, tokenizer, logger)
 
     return _TrainingData(tokenizer, original_chat_template, train_ds, eval_ds, n_train, total_tokens_estimate)
-
-
-def _show_dataset_panel(
-    ui: _Rank0UI,
-    cfg: Config,
-    stats: DatasetStats,
-    profile: TokenProfile,
-    n_train: int,
-    eval_ds: Dataset | None,
-    examples: list[dict[str, list[ChatMessage]]],
-    tokenizer: PreTrainedTokenizerBase,
-    logger: logging.Logger,
-) -> None:
-    """Rank-0 dataset summary panel and first-example preview."""
-    from rich.panel import Panel
-
-    from .data import render_preview
-
-    console = ui.console
-    pcts = profile.percentiles()
-    table = kv_table()
-    table.add_row(
-        "examples", f"{stats.n_examples} (train {n_train}, eval {len(eval_ds) if eval_ds is not None else 0})"
-    )
-    table.add_row("turns", ", ".join(f"{k}: {v}" for k, v in stats.turns_per_example.items()))
-    table.add_row(
-        "tokens/example",
-        f"p50={pcts.p50:.0f} p90={pcts.p90:.0f} p95={pcts.p95:.0f} p99={pcts.p99:.0f} max={pcts.p100:.0f}",
-    )
-    table.add_row(
-        f"coverage @ max_length={cfg.data.max_length}",
-        f"{profile.coverage_at(cfg.data.max_length) * 100:.1f}% "
-        f"({profile.n_truncated} truncated, {profile.truncation_pct:.1f}%)",
-    )
-    table.add_row(
-        "reasoning traces",
-        f"{stats.think_blocks} assistant turns with  thinking ({stats.think_complete} complete)",
-    )
-    console.print(Panel(table, title="[bold]dataset[/bold]", border_style="cyan"))
-    console.print(
-        Panel(
-            render_preview(tokenizer, examples[0], messages_field=cfg.data.messages_field),
-            title="first example as the model sees it",
-            border_style="blue",
-        )
-    )
-    logger.info("dataset ready: %d train / %s eval", n_train, len(eval_ds) if eval_ds is not None else 0)
 
 
 def _resolve_attention(cfg: Config, logger: logging.Logger) -> tuple[str, list[str]]:
@@ -338,7 +247,7 @@ def _build_model(
     cfg: Config,
     local_rank: int,
     *,
-    ui: _Rank0UI | None,
+    ui: Rank0UI | None,
     world_size: int,
     logger: logging.Logger,
 ) -> PreTrainedModel | PeftModel:
@@ -367,43 +276,9 @@ def _build_model(
     torch.cuda.empty_cache()
 
     if ui is not None:  # ui exists exactly on rank 0
-        _show_model_panel(ui, attn, disabled, report, world_size=world_size)
+        show_model_panel(ui, attn, disabled, report, world_size=world_size)
     logger.info("model ready: %d trainable params", report["trainable"])
     return model
-
-
-def _show_model_panel(
-    ui: _Rank0UI, attn: str, disabled: list[str], report: ParameterReport, *, world_size: int
-) -> None:
-    """Rank-0 model summary panel and model_loaded event."""
-    from rich.panel import Panel
-
-    console = ui.console
-    table = kv_table()
-    table.add_row("total params", fmt_int(report["total"]))
-    table.add_row("trainable (LoRA)", f"{fmt_int(report['trainable'])}  ({report['pct']:.3f}%)")
-    breakdown = " · ".join(f"{k}: {fmt_int(v)}" for k, v in list(report["by_suffix"].items())[:8])
-    table.add_row("by module", breakdown)
-    attn_note = f"{attn}  (doctor-verified where available)"
-    if disabled:
-        attn_note = f"{attn}  ({', '.join(disabled)} off per doctor verdict)"
-    table.add_row("attention", attn_note)
-    console.print(Panel(table, title="[bold]model[/bold]", border_style="cyan"))
-    if ui.writer:
-        from .monitor import EventRecord
-
-        ui.writer.write(
-            EventRecord(
-                type="event",
-                level="info",
-                event="model_loaded",
-                total_params=report["total"],
-                trainable=report["trainable"],
-                attn=attn,
-                sdpa_disabled=disabled,
-                world_size=world_size,
-            )
-        )
 
 
 def _render_charts(*args: Any, **kwargs: Any) -> None:
@@ -413,9 +288,7 @@ def _render_charts(*args: Any, **kwargs: Any) -> None:
     render_charts(*args, **kwargs)
 
 
-def _make_callback(
-    cfg: Config, run_dir: Path, data: _TrainingData, *, ui: _Rank0UI, world_size: int
-) -> MetricsCallback:
+def _make_callback(cfg: Config, run_dir: Path, data: _TrainingData, *, ui: Rank0UI, world_size: int) -> MetricsCallback:
     """The rank-0 observability callback (charts render in a side thread)."""
     from .monitor import MetricsCallback
 
@@ -439,7 +312,7 @@ def _build_trainer(
     *,
     data: _TrainingData,
     model: PreTrainedModel | PeftModel,
-    ui: _Rank0UI | None,
+    ui: Rank0UI | None,
     world_size: int,
     logger: logging.Logger,
 ) -> tuple[SFTTrainer, MetricsCallback | None]:
@@ -483,7 +356,7 @@ def _train_and_save(
     trainer: SFTTrainer,
     *,
     data: _TrainingData,
-    ui: _Rank0UI | None,
+    ui: Rank0UI | None,
     world_size: int,
     logger: logging.Logger,
 ) -> Path:
@@ -570,7 +443,7 @@ def main(argv: list[str] | None = None) -> None:
     torch.cuda.set_device(local_rank)
 
     start_time = time.monotonic()
-    ui = _rank0_ui(cfg, run_dir, world_size, enabled=is_main)
+    ui = rank0_ui(cfg, run_dir, world_size, enabled=is_main)
 
     try:
         data = _load_training_data(cfg, args, ui=ui, logger=logger)
@@ -614,7 +487,7 @@ def _finalize_run(
     cfg: Config,
     run_dir: Path,
     adapter_dir: Path,
-    ui: _Rank0UI,
+    ui: Rank0UI,
     metrics_callback: MetricsCallback | None,
     *,
     start_time: float,
@@ -656,7 +529,7 @@ def _finalize_run(
     )
     write_report(run_dir)
 
-    _print_wrapup(ui.console, run_dir, summary, dry_run=dry_run)
+    print_wrapup(ui.console, run_dir, summary, dry_run=dry_run)
 
 
 def _write_summary(
@@ -688,57 +561,6 @@ def _write_summary(
     summary.dry_run = dry_run
     write_json(run_dir / "summary.json", summary.to_dict())
     return summary
-
-
-# ---------------------------------------------------------------------------
-# Wrap-up
-# ---------------------------------------------------------------------------
-
-
-def _short_path(path: Path) -> str:
-    """cwd-relative when possible — keeps wrap-up lines short and copy-pasteable."""
-    try:
-        return str(path.relative_to(Path.cwd()))
-    except ValueError:
-        return str(path)
-
-
-def _print_wrapup(console: Console, run_dir: Path, summary: RunSummary, *, dry_run: bool) -> None:
-    """Run-complete panel: headline numbers + next-step hints."""
-    from rich.panel import Panel
-
-    table = kv_table()
-    table.add_row("steps", fmt_int(summary.steps))
-    nan = float("nan")
-    table.add_row(
-        "loss",
-        f"{(summary.first_loss if summary.first_loss is not None else nan):.4f} → "
-        f"{(summary.last_loss if summary.last_loss is not None else nan):.4f} "
-        f"(best {(summary.best_loss if summary.best_loss is not None else nan):.4f} @ step {summary.best_step})",
-    )
-    if summary.last_eval_loss is not None:
-        table.add_row(
-            "eval loss",
-            f"{(summary.first_eval_loss if summary.first_eval_loss is not None else nan):.4f} → "
-            f"{summary.last_eval_loss:.4f} "
-            f"(best {(summary.best_eval_loss if summary.best_eval_loss is not None else nan):.4f})",
-        )
-    table.add_row("tokens seen", fmt_int(summary.tokens_seen))
-    table.add_row("wall time", human_duration(summary.total_seconds))
-    table.add_row(
-        "peak VRAM (max GPU)", f"{(summary.peak_vram_gb if summary.peak_vram_gb is not None else nan):.1f} GB"
-    )
-    table.add_row("adapter", _short_path(Path(summary.adapter_dir)))
-    table.add_row("charts", _short_path(run_dir / "charts"))
-    table.add_row("report", _short_path(run_dir / "report.md"))
-    console.print(Panel(table, title="[bold green]run complete[/bold green]", border_style="green"))
-    if dry_run:
-        console.print("[yellow]This was a dry run (3 steps). Launch without --dry-run for the real thing.[/yellow]")
-    short = _short_path(run_dir)
-    console.print("[dim]next:[/dim]")
-    console.print(f"  [bold]rocm-qlora chat   --run {short}[/bold]")
-    console.print(f"  [bold]rocm-qlora merge  --run {short}[/bold]")
-    console.print(f"  [bold]rocm-qlora report --run {short}[/bold]")
 
 
 if __name__ == "__main__":

@@ -5,7 +5,6 @@ from __future__ import annotations
 import math
 
 from rocm_qlora.utils import (
-    Stopwatch,
     as_float,
     fmt_eta,
     fmt_float,
@@ -78,8 +77,6 @@ def test_safe_div_and_as_float():
         raise AssertionError("as_float(None) must assert (callers filter Nones)")
 
 
-def test_stopwatch_and_timestamp_slug():
-    sw = Stopwatch()
-    assert sw.elapsed() >= 0
+def test_timestamp_slug():
     slug = timestamp_slug()
     assert len(slug) == 15 and slug[10] == "_"  # YYYY-MM-DD_HHMM

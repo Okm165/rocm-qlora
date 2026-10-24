@@ -10,11 +10,10 @@ import json
 import math
 import os
 import random
-import time
 from collections.abc import Callable, Iterable, Sequence
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, TextIO, final
+from typing import Any, TextIO
 
 # ---------------------------------------------------------------------------
 # Human-friendly formatting (used everywhere in the terminal UI)
@@ -85,17 +84,6 @@ def now_iso() -> str:
 def timestamp_slug() -> str:
     """Sortable run-directory slug, e.g. '2026-10-22_0137'."""
     return datetime.now().strftime("%Y-%m-%d_%H%M")
-
-
-@final
-class Stopwatch:
-    """Tiny monotonic stopwatch."""
-
-    def __init__(self) -> None:
-        self._t0 = time.monotonic()
-
-    def elapsed(self) -> float:
-        return time.monotonic() - self._t0
 
 
 # ---------------------------------------------------------------------------

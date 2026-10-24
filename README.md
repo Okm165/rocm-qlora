@@ -157,6 +157,7 @@ src/rocm_qlora/
   launcher.py           GPU choice, worker env, torchrun orchestration
   sft.py                config → SFTConfig mapping (checkpoint cadence, warmup)
   train.py              the training worker (one process per GPU)
+  panels.py             rank-0 terminal panels (dataset · model · wrap-up)
   explain.py            contextual explainer panels (deduplicated per run)
   doctor.py             environment + hardware report (.context artifacts)
   chat.py               interactive sanity check
