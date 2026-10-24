@@ -518,7 +518,7 @@ def _finalize_run(
     summary = _assemble_summary(adapter_dir, records, start_time=start_time)
     run_end: RunEndRecord = {
         "type": "run_end",
-        "total_seconds": summary.total_seconds,
+        "total_seconds": time.monotonic() - start_time,
         "dry_run": dry_run,
     }
     ui.writer.write(run_end)

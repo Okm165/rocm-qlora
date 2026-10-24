@@ -280,7 +280,7 @@ class RunSummary:
     first_eval_loss: float | None = None
     last_eval_loss: float | None = None
     best_eval_loss: float | None = None
-    total_seconds: float = 0.0
+    total_seconds: float | None = None  # None when the stream has no run_end record (crashed run)
     tokens_seen: int | None = None
     avg_tok_per_s: float | None = None
     peak_vram_gb: float | None = None
@@ -323,7 +323,9 @@ def summarize(records: Sequence[MetricsRecord]) -> RunSummary:
     run_ends = select(records, "run_end")
     if run_ends:
         s.dry_run = bool(run_ends[-1].get("dry_run", False))
-        s.total_seconds = float(run_ends[-1].get("total_seconds", 0.0))
+        total = run_ends[-1].get("total_seconds")
+        # Streams from older code may predate the field; the None branch is live.
+        s.total_seconds = float(total) if total is not None else None  # pyright: ignore[reportUnnecessaryComparison]
     return s
 
 
