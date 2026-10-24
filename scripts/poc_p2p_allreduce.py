@@ -45,11 +45,13 @@ SIZES = {
 
 def check(rank: int, world: int, dev: torch.device, n: int, iters: int) -> dict:
     """Allreduce `n` bf16 elements, verify exactness, measure bus bandwidth."""
-    # base: integers in [-48, 48] — exact in bf16.
-    base = torch.arange(n, dtype=torch.int32, device=dev) % 97 - 48
-    # rank r contributes (r+1)*base; the sum over ranks is (1+2+...+world)*base,
-    # and every partial sum stays a small even integer -> exact in bf16.
+    # rank r contributes (r+1)*base; the sum over ranks is (1+...+world)*base.
+    # bf16 represents every integer up to 2**8 = 256 exactly, so keep every
+    # partial sum inside that range: |sum| <= span * total_mult <= 256. That
+    # holds for any rank count (a fixed [-48, 48] would round at 5+ ranks).
     total_mult = world * (world + 1) // 2
+    span = max(1, 256 // total_mult)
+    base = torch.arange(n, dtype=torch.int32, device=dev) % (2 * span + 1) - span
     expected = (base * total_mult).to(torch.bfloat16)
     x = (base * (rank + 1)).to(torch.bfloat16)
 
