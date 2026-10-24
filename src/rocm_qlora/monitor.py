@@ -269,7 +269,7 @@ def summarize(records: Sequence[MetricsRecord]) -> RunSummary:
 
     if train:
         finite = [(r["step"], r["loss"]) for r in train]
-        s.steps = int(train[-1].get("step") or len(train))
+        s.steps = int(train[-1]["step"])
         if finite:
             s.first_loss, s.last_loss = finite[0][1], finite[-1][1]
             s.best_step, s.best_loss = min(finite, key=lambda t: t[1])
@@ -527,7 +527,7 @@ class MetricsCallback(TrainerCallback):
 
     def _track_step(self, now: float, logs: dict[str, Any], state: TrainerState) -> TrainRecord:
         """Assemble one train record from the tracker helpers."""
-        step_time_ema = self._track_step_timing(now)
+        step_time_avg = self._track_step_timing(now)
         tokens, tok_per_s = self._track_tokens(now, logs, state)
         loss, loss_ema = self._track_loss(logs)
         gpu_recs, vram_peak = self._track_vram(state.global_step)
@@ -542,7 +542,7 @@ class MetricsCallback(TrainerCallback):
             "grad_norm": logs.get("grad_norm"),
             "tok_per_s": tok_per_s,
             "tokens_seen": tokens,
-            "eta_s": step_time_ema * remaining if step_time_ema is not None else None,
+            "eta_s": step_time_avg * remaining if step_time_avg is not None else None,
             "vram_peak_gb": vram_peak,
             "gpu": gpu_recs,
         }
@@ -559,7 +559,8 @@ class MetricsCallback(TrainerCallback):
         self.console.print(f"[dim]eval (step {record['step']}): loss {fmt_float(record['eval_loss'])}[/dim]")
 
     def _track_step_timing(self, now: float) -> float | None:
-        step_dt = (now - self._last_step_time) if self._last_step_time else None
+        """Mean of the last 20 step times (drives the ETA)."""
+        step_dt = (now - self._last_step_time) if self._last_step_time is not None else None
         if step_dt and step_dt > 0:
             self._step_times.append(step_dt)
         self._last_step_time = now

@@ -349,11 +349,10 @@ def gpu_health(records: Sequence[MetricsRecord], out_path: str | Path, *, meta: 
             c = COLORS["gpus"][gi % len(COLORS["gpus"])]
             ax_t.plot(steps, _gpu_field(train, gi, "temp_edge_c"), color=c, lw=1.5, label=f"GPU {gi} edge °C")
             ax_p.plot(steps, _gpu_field(train, gi, "power_w"), color=c, lw=1.5, label=f"GPU {gi} W")
-        ax_t.axhline(85, color=COLORS["best"], ls="--", lw=1.0)
-        ax_t.axhline(95, color=COLORS["grad"], ls="--", lw=1.0)
+        ax_t.axhline(90, color=COLORS["grad"], ls="--", lw=1.0)
         ax_t.annotate(
-            "85 / 95 °C thresholds",
-            xy=(steps[0], 95),
+            "90 °C warning threshold",
+            xy=(steps[0], 90),
             xytext=(4, 4),
             textcoords="offset points",
             fontsize=8,

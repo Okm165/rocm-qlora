@@ -171,6 +171,7 @@ def run_chat(
     from transformers import GenerationConfig
 
     model, tokenizer = _load(Path(run_dir) if run_dir else None, base, adapter, console)
+    # temperature/top_p/top_k defaults are the Qwen3.8 model-card sampling values
     gen = GenerationConfig(
         max_new_tokens=max_new_tokens,
         temperature=max(temperature, 1e-5),
