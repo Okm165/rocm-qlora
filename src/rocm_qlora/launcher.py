@@ -276,7 +276,6 @@ class EnvFingerprint(TypedDict):
     host_memory: HostMemory
     cpu: CpuInfo
     kernel: str
-    amdgpu_driver: str
     packages: dict[str, str]
     torch_runtime: TorchRuntime
     env: dict[str, str | bool]
@@ -289,7 +288,6 @@ def write_env_fingerprint(run_dir: Path, cfg: Config, gpu_ids: list[int]) -> Non
         host_memory,
         kernel_version,
         package_versions,
-        rocm_driver_version,
         torch_runtime_info,
     )
 
@@ -309,7 +307,6 @@ def write_env_fingerprint(run_dir: Path, cfg: Config, gpu_ids: list[int]) -> Non
         "host_memory": host_memory(),
         "cpu": cpu_info(),
         "kernel": kernel_version(),
-        "amdgpu_driver": rocm_driver_version(),
         "packages": package_versions(),
         "torch_runtime": torch_runtime_info(),
         "env": {

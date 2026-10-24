@@ -234,14 +234,6 @@ def kernel_version() -> str:
         return "unknown"
 
 
-def rocm_driver_version() -> str:
-    """amdgpu kernel driver version via sysfs ('' if unavailable)."""
-    try:
-        return Path("/sys/module/amdgpu/version").read_text().strip()
-    except Exception:
-        return ""
-
-
 def package_versions() -> dict[str, str]:
     """Installed versions of the relevant packages (no heavy imports)."""
     names = [

@@ -26,7 +26,7 @@ console = Console()
 
 def _doctor_host_table(mem: HostMemory, cpu: CpuInfo) -> None:
     """Host summary table (CPU/RAM/kernel/driver/disk)."""
-    from .hardware import disk_free_gb, kernel_version, rocm_driver_version
+    from .hardware import disk_free_gb, kernel_version
 
     host = Table(title="host")
     host.add_column("property", style="dim")
@@ -34,7 +34,6 @@ def _doctor_host_table(mem: HostMemory, cpu: CpuInfo) -> None:
     host.add_row("CPU", f"{cpu.get('model', '?')} ({cpu.get('cores')} threads)")
     host.add_row("RAM", f"{mem['total_gib']:.0f} GiB total · {mem['available_gib']:.0f} GiB available")
     host.add_row("kernel", kernel_version())
-    host.add_row("amdgpu driver", rocm_driver_version() or "n/a")
     host.add_row("disk free", human_bytes(disk_free_gb(".") * 1e9))
     console.print(host)
 
