@@ -49,14 +49,16 @@ llama-quantize model-f16.gguf model-Q4_K_M.gguf Q4_K_M
 
 * **loss / EMA ↘** — expect ~1.3 → ~0.7–0.9 over 3 epochs on small Q&A data.
   The EMA is the honest signal; single-step wiggles are noise.
-* **grad norm** — typically 0.3–1.5. Transient spikes are clipped and logged
-  as `warn` events; a *sustained* rise is worth a look.
+* **grad norm** — typically 0.3–1.5. A transient spike (> 10× the recent
+  median) is clipped and logged as a `warn` event, at most once per 50 steps;
+  a *sustained* rise is worth a look.
 * **eval loss** — falling or flat = healthy; a clear rise = overfitting
   (fewer epochs, more dropout — `configs/qwen3.8-27b.toml` comments say where).
 * **VRAM per GPU** — starts ~21 GB and sawtooths toward ~24 GB (2026-10-23
   batch-1 run); a sustained climb means fragmentation — resuming resets it.
 * **warnings** — the console prints `!` lines when the loss EMA rises, a GPU
-  hits 90 °C, or VRAM grows over a run; none should appear on a healthy run.
+  hits 90 °C, or VRAM grows by > 1.5 GB since step 10; each family fires at
+  most once per 100 steps, and none should appear on a healthy run.
 
 ## The guards (why the run aborts instead of rotting)
 
