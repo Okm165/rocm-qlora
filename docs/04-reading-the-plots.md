@@ -2,7 +2,7 @@
 
 Every chart lives in `<run>/charts/` and is regenerated **while training
 runs** (dashboard + loss every `chart_snapshot_steps`; the full set at every
-epoch boundary and at the end). The terminal dashboard shows the same numbers
+epoch boundary and at the end). The per-step progress line shows the same numbers
 live. This doc is the decoder ring.
 
 ## loss.png — the primary signal
@@ -111,5 +111,5 @@ the cap where the coverage curve saturates — for typical Q&A data, around
   1536 tokens (small batches underutilize the GPU — expected for QLoRA)
 
 If the numbers fall inside those bands and the trend arrows agree, the run is
-healthy. The terminal dashboard's health panel summarizes exactly these
+healthy. The progress-line warnings summarize exactly these
 checks.

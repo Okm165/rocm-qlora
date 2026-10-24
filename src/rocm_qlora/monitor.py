@@ -1,4 +1,4 @@
-"""Observability: live dashboard, metrics JSONL, health checks, summaries.
+"""Observability: metrics JSONL, one-line progress, health checks, summaries.
 
 One module for "watch it learn" — it owns:
 
@@ -6,12 +6,12 @@ One module for "watch it learn" — it owns:
   (the single source of truth every chart and report reads from),
 * smoothing helpers (EMA, rolling median, trend arrow),
 * ``GpuSampler`` — a background thread sampling rocm-smi (never blocks training),
-* ``RichDashboard`` — the live terminal display (rank 0 only),
-* ``MetricsCallback`` — the TrainerCallback wiring it all into training,
+* ``MetricsCallback`` — the TrainerCallback wiring it all into training and
+  printing one progress line per logged step (rank 0),
 * ``summarize`` — the end-of-run numbers.
 
-DDP note: UI + JSONL are rank-0 only. Other ranks write warnings to their own
-log file (set up in ``train.py``).
+DDP note: console + JSONL are rank-0 only. Other ranks write warnings to their
+own log file (set up in ``train.py``).
 """
 
 from __future__ import annotations
@@ -30,9 +30,8 @@ from rich.console import Console
 from transformers import TrainerCallback, TrainerControl, TrainerState, TrainingArguments
 
 from .config import Config
-from .dashboard import RichDashboard
 from .hardware import GpuInfo, GpuMetric, gpu_snapshot
-from .utils import as_float, linear_slope, now_iso, safe_div
+from .utils import as_float, fmt_eta, fmt_float, fmt_int, linear_slope, now_iso
 
 METRICS_FILENAME = "metrics.jsonl"
 
@@ -390,7 +389,7 @@ def _gpu_records(gpus: Sequence[GpuInfo]) -> list[GpuMetric]:
 
 @final
 class MetricsCallback(TrainerCallback):
-    """Writes metrics.jsonl, drives the dashboard, charts and health checks."""
+    """Writes metrics.jsonl, prints progress lines, drives charts and health checks."""
 
     def __init__(
         self,
@@ -398,7 +397,6 @@ class MetricsCallback(TrainerCallback):
         run_dir: Path,
         *,
         console: Console,
-        dashboard: RichDashboard | None,
         sampler: GpuSampler,
         writer: MetricsWriter,
         total_tokens_estimate: int = 0,
@@ -408,7 +406,6 @@ class MetricsCallback(TrainerCallback):
         self.cfg = cfg
         self.run_dir = run_dir
         self.console = console
-        self.dashboard = dashboard
         self.sampler = sampler
         self.writer = writer
         self.total_tokens_estimate = total_tokens_estimate
@@ -426,6 +423,7 @@ class MetricsCallback(TrainerCallback):
         self._epoch_losses: list[float] = []
         self._epoch_index = 0
         self._warned_grad_spike_at = -(10**9)
+        self._warned_health_at = -(10**9)
         self._loss_series: list[float] = []
         self._gpu_mem_series: list[tuple[int, float]] = []
         self._snapshot_thread: threading.Thread | None = None
@@ -436,30 +434,47 @@ class MetricsCallback(TrainerCallback):
 
     # -- helpers -------------------------------------------------------------
 
-    def _health_lines(self) -> list[str]:
-        lines: list[str] = []
-        trend = trend_arrow(self._loss_series)
-        if trend == "↗ rising":
-            lines.append("[red]✗ loss EMA is rising — check LR / data quality[/red]")
-        elif self._loss_series:
-            lines.append("[green]✓ loss trend healthy[/green]")
+    def _print_health_warnings(self, record: TrainRecord) -> None:
+        """Rare, loud warnings — each family at most once per 100 steps."""
+        step = record["step"]
+        if step - self._warned_health_at < 100:
+            return
+        warnings: list[str] = []
+        if trend_arrow(self._loss_series) == "↗ rising":
+            warnings.append("loss EMA is rising — check LR / data quality")
         gpus = self.sampler.latest()
-        if gpus:
-            hottest = max(gpus, key=lambda g: g.temp_edge_c or 0)
-            if (hottest.temp_edge_c or 0) >= 90:
-                lines.append(f"[red]✗ GPU {hottest.index} at {hottest.temp_edge_c:.0f}°C — throttling risk[/red]")
-            else:
-                lines.append(
-                    f"[green]✓ temps OK[/green] [dim](hottest GPU {hottest.index}: {hottest.temp_edge_c:.0f}°C)[/dim]"
-                )
-            if max(safe_div(g.mem_used_gb, g.mem_total_gb, 0) for g in gpus) > 0.95:
-                lines.append("[yellow]! VRAM >95% — OOM risk on a longer batch[/yellow]")
+        hottest = max(gpus, key=lambda g: g.temp_edge_c or 0, default=None)
+        if hottest is not None and (hottest.temp_edge_c or 0) >= 90:
+            warnings.append(f"GPU {hottest.index} at {hottest.temp_edge_c:.0f}°C — throttling risk")
         if len(self._gpu_mem_series) > 20:
             step0, mem0 = next((s for s in self._gpu_mem_series if s[0] >= 10), self._gpu_mem_series[0])
             growth = self._gpu_mem_series[-1][1] - mem0
             if growth > 1.5:
-                lines.append(f"[yellow]! VRAM grew {growth:.1f} GB since step {step0} — possible leak[/yellow]")
-        return lines
+                warnings.append(f"VRAM grew {growth:.1f} GB since step {step0} — possible leak")
+        if warnings:
+            self._warned_health_at = step
+            for warning in warnings:
+                self.console.print(f"[yellow]! {warning}[/yellow]")
+
+    def _print_progress(self, record: TrainRecord) -> None:
+        """One compact status line per logged step (the live view, as text)."""
+        parts = [
+            f"step {record['step']}/{self.max_steps}",
+            f"loss {fmt_float(record['loss'])}",
+            f"EMA {fmt_float(record['loss_ema'])} {trend_arrow(self._loss_series)}",
+        ]
+        if record.get("lr") is not None:
+            parts.append(f"lr {record['lr']:.2e}")
+        if record.get("grad_norm") is not None:
+            parts.append(f"grad {fmt_float(record['grad_norm'], 2)}")
+        if record.get("tok_per_s"):
+            parts.append(f"{fmt_int(record['tok_per_s'])} tok/s")
+        if record.get("vram_peak_gb") is not None:
+            parts.append(f"VRAM {record['vram_peak_gb']:.1f} GB")
+        if record.get("eta_s") is not None:
+            parts.append(f"ETA {fmt_eta(record['eta_s'])}")
+        self.console.print("[dim]" + " · ".join(parts) + "[/dim]")
+        self._print_health_warnings(record)
 
     def _chart_meta(self) -> ChartMeta:
         return {
@@ -483,14 +498,12 @@ class MetricsCallback(TrainerCallback):
     def on_train_begin(
         self, args: TrainingArguments, state: TrainerState, control: TrainerControl, **kwargs: Any
     ) -> None:
-        """Reset the elapsed clock, record train_start, prime the dashboard."""
+        """Reset the elapsed clock and record train_start."""
         self.max_steps = state.max_steps
         self._t0 = time.monotonic()
         if self.cfg.optim.warmup_ratio and state.max_steps:
             self.warmup_end_step = int(state.max_steps * self.cfg.optim.warmup_ratio)
         self._write(EventRecord(type="event", level="info", event="train_start", max_steps=state.max_steps))
-        if self.dashboard:
-            self.dashboard.update(phase="training", max_steps=state.max_steps, total_epochs=self.cfg.optim.epochs)
 
     @override
     def on_log(
@@ -501,7 +514,7 @@ class MetricsCallback(TrainerCallback):
         logs: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
-        """Per-step hot path: write the metrics record, drive the dashboard."""
+        """Per-step hot path: write the metrics record, print the progress line."""
         logs = logs or {}
         if "eval_loss" in logs:
             self._record_eval(state, logs["eval_loss"])
@@ -509,18 +522,16 @@ class MetricsCallback(TrainerCallback):
         if "loss" not in logs:
             return
 
-        record, gpu_recs = self._track_step(time.monotonic(), logs, state)
+        record = self._track_step(time.monotonic(), logs, state)
         self._write(record)
         self._health_checks(record)
-
-        if self.dashboard:
-            self._update_dashboard(state, logs, record, gpu_recs=gpu_recs)
+        self._print_progress(record)
 
         if state.global_step - self._last_snapshot_step >= self.cfg.logging.chart_snapshot_steps:
             self._last_snapshot_step = state.global_step
             self._schedule_snapshot()
 
-    def _track_step(self, now: float, logs: dict[str, Any], state: TrainerState) -> tuple[TrainRecord, list[GpuMetric]]:
+    def _track_step(self, now: float, logs: dict[str, Any], state: TrainerState) -> TrainRecord:
         """Assemble one train record from the tracker helpers."""
         step_time_ema = self._track_step_timing(now)
         tokens, tok_per_s, token_dt = self._track_tokens(now, logs, state)
@@ -550,7 +561,7 @@ class MetricsCallback(TrainerCallback):
             "vram_peak_gb": vram_peak,
             "gpu": gpu_recs,
         }
-        return record, gpu_recs
+        return record
 
     def _record_eval(self, state: TrainerState, eval_loss: float) -> None:
         record: EvalRecord = {
@@ -560,8 +571,7 @@ class MetricsCallback(TrainerCallback):
             "eval_loss": float(eval_loss),
         }
         self._write(record)
-        if self.dashboard:
-            self.dashboard.update(eval_loss=record["eval_loss"])
+        self.console.print(f"[dim]eval (step {record['step']}): loss {fmt_float(record['eval_loss'])}[/dim]")
 
     def _track_step_timing(self, now: float) -> float | None:
         step_dt = (now - self._last_step_time) if self._last_step_time else None
@@ -609,36 +619,6 @@ class MetricsCallback(TrainerCallback):
         if vram_peak is not None:
             self._gpu_mem_series.append((step, vram_peak))
         return gpu_recs, vram_peak
-
-    def _update_dashboard(
-        self,
-        state: TrainerState,
-        logs: dict[str, Any],
-        record: TrainRecord,
-        *,
-        gpu_recs: list[GpuMetric],
-    ) -> None:
-        if self.dashboard is None:  # caller guards; this narrows the type
-            return
-        emas = [as_float(r["loss_ema"]) for r in select(self.records, "train") if r.get("loss_ema") is not None]
-        self.dashboard.update(
-            step=state.global_step,
-            epoch=float(state.epoch or 0),
-            loss=record["loss"],
-            loss_ema=record["loss_ema"],
-            best_loss=min(emas, default=None),
-            loss_trend=trend_arrow(emas),
-            lr=logs.get("learning_rate"),
-            grad_norm=logs.get("grad_norm"),
-            tok_per_s=record["tok_per_s"],
-            samples_per_s=record["samples_per_s"],
-            tokens_seen=record["tokens_seen"],
-            total_tokens_estimate=self.total_tokens_estimate,
-            elapsed_s=time.monotonic() - self._t0,
-            eta_s=record["eta_s"],
-            gpus=gpu_recs,
-            health=self._health_lines(),
-        )
 
     def _health_checks(self, record: TrainRecord) -> None:
         """Hard-stop on numerically broken training (see `health_violation`)."""

@@ -40,8 +40,6 @@ class RunConfig(_Section):
     seed: Annotated[int, Field(ge=0)] = 42
     #: Root directory for run outputs (runs land in <root>/runs/<ts>-<name>).
     output_root: str = ".outputs"
-    #: Live dashboard refresh rate.
-    console_refresh_per_second: Annotated[float, Field(gt=0)] = 4.0
 
 
 class ModelConfig(_Section):

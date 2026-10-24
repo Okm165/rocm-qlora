@@ -45,7 +45,7 @@ train (each run)
   DDP across the GPUs, SHM collectives                       [torchrun+rccl]
 ```
 
-Everything else in this repo is *observation*: dashboard, JSONL, charts,
+Everything else in this repo is *observation*: progress lines, JSONL, charts,
 health checks, report.
 
 ## The dataset (what to point `data.path` at)
@@ -71,7 +71,7 @@ health checks, report.
 | loss after 1 epoch | −0.1 to −0.4 from start | flat (LR too low / no learning) |
 | eval − train | ≤ 0.15 | rising eval gap (overfitting) |
 | grad norm | 0.1–2 with occasional spikes | sustained >10 (LR too high) |
-| tokens/s | see dashboard; stable | decaying (thermal throttle / leak) |
+| tokens/s | stable in the progress lines | decaying (thermal throttle / leak) |
 
 What not to expect: new knowledge injection. A few hundred examples
 steer style, format, vocabulary and reasoning structure; they do not teach

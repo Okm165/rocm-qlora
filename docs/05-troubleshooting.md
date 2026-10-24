@@ -33,6 +33,10 @@ back with `NCCL_P2P_DISABLE=1` in the config's `[env.extra]`. Do **not** add
 `iommu=pt` (translated IOMMU works; one upstream report shows `iommu=pt`
 corrupting peer IPC).
 
+**Ignore RCCL's `Missing "iommu=pt" from kernel command line` warning** at
+launch — it is printed unconditionally by this RCCL build and the advice is
+wrong for this stack (see above).
+
 ## "No available kernel" / attention crashes mid-run
 
 RDNA3 SDPA backends can fail in confusing ways — the error may surface at an

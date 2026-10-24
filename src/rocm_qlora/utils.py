@@ -1,7 +1,7 @@
 """Small shared helpers: formatting, timing, files, seeds.
 
 Everything here is dependency-light on purpose: these functions are used by
-the dashboard, the charts, the reports and the tests alike.
+the progress lines, the charts, the reports and the tests alike.
 """
 
 from __future__ import annotations

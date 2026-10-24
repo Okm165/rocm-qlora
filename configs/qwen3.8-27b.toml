@@ -10,7 +10,6 @@
 name = "qwen3.8-27b"
 seed = 42
 output_root = ".outputs"
-console_refresh_per_second = 4.0
 
 [model]
 # Pre-quantized NF4 source (unsloth's community 4-bit conversion of Qwen3.8-27B).

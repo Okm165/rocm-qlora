@@ -39,7 +39,6 @@ if TYPE_CHECKING:
     from transformers import PreTrainedModel, PreTrainedTokenizerBase
     from trl import SFTTrainer
 
-    from .dashboard import RichDashboard
     from .data import DatasetStats, TokenProfile
     from .model import ParameterReport
     from .monitor import GpuSampler, MetricsCallback, MetricsRecord, MetricsWriter, RunSummary
@@ -85,7 +84,7 @@ def setup_logging(run_dir: Path, rank: int) -> logging.Logger:
     log_file.parent.mkdir(parents=True, exist_ok=True)
     logger = logging.getLogger("rocm_qlora")
     # Health-analysis verbosity: INFO by default; ROCM_QLORA_LOG_LEVEL=DEBUG
-    # (or WARNING) adjusts the file logs without touching the dashboard.
+    # (or WARNING) adjusts the file logs without touching the console.
     level_name = os.environ.get("ROCM_QLORA_LOG_LEVEL", "INFO").upper()
     logger.setLevel(getattr(logging, level_name, logging.INFO))
     # torch 2.13 renamed `all_gather_into_tensor` -> `all_gather_single`; HF
@@ -171,16 +170,15 @@ def _install_grad_finite_checks(model: torch.nn.Module, log: Callable[[str], Non
 
 
 class Rank0UI(NamedTuple):
-    """The rank-0 terminal stack (``None`` on every other rank)."""
+    """The rank-0 stack (``None`` on every other rank)."""
 
     console: Console
     sampler: GpuSampler
     writer: MetricsWriter
-    dashboard: RichDashboard
 
 
 def _rank0_ui(cfg: Config, run_dir: Path, *, enabled: bool) -> Rank0UI | None:
-    """Console, GPU sampler, metrics writer, live dashboard (rank 0 only).
+    """Console, GPU sampler, metrics writer (rank 0 only).
 
     Non-zero ranks get ``None`` and log to their own rank file instead
     (``setup_logging``).
@@ -189,16 +187,12 @@ def _rank0_ui(cfg: Config, run_dir: Path, *, enabled: bool) -> Rank0UI | None:
         return None
     from rich.console import Console
 
-    from .dashboard import RichDashboard
     from .monitor import GpuSampler, MetricsWriter
 
     console = Console()
     sampler = GpuSampler(cfg.logging.gpu_sample_seconds)
     writer = MetricsWriter(run_dir / "metrics.jsonl")
-    dashboard = RichDashboard(console, refresh_per_second=cfg.run.console_refresh_per_second)
-    dashboard.state.run_name = run_dir.name
-    dashboard.update(phase="loading data")
-    return Rank0UI(console, sampler, writer, dashboard)
+    return Rank0UI(console, sampler, writer)
 
 
 def _short_path(path: Path) -> str:
@@ -378,7 +372,7 @@ def _build_model(
     import torch
 
     if ui is not None:  # ui exists exactly on rank 0
-        ui.dashboard.update(phase="loading model")
+        ui.console.print("[dim]loading model (4-bit)…[/dim]")
 
     attn, disabled = _resolve_attention(cfg, logger)
     from .model import attach_lora, load_model_for_training, parameter_report, prepare_for_qlora
@@ -416,7 +410,6 @@ def _make_callback(cfg: Config, run_dir: Path, data: _TrainingData, *, ui: Rank0
         cfg,
         run_dir,
         console=ui.console,
-        dashboard=ui.dashboard,
         sampler=ui.sampler,
         writer=ui.writer,
         total_tokens_estimate=data.total_tokens_estimate,
@@ -437,9 +430,6 @@ def _build_trainer(
     logger: logging.Logger,
 ) -> tuple[SFTTrainer, MetricsCallback | None]:
     """Phase 3: SFTConfig, observability callback, init-sync skip, SFTTrainer."""
-    if ui is not None:  # ui exists exactly on rank 0
-        ui.dashboard.update(phase="building trainer")
-
     sft_config = build_sft_config(
         cfg, run_dir, world_size=world_size, n_train=data.n_train, dry_run=args.dry_run, max_steps=args.max_steps
     )
@@ -479,19 +469,15 @@ def _train_and_save(
     world_size: int,
     logger: logging.Logger,
 ) -> Path:
-    """Phase 4: dashboard start, train (resumable), save adapter + inference template."""
+    """Phase 4: train (resumable), save adapter + inference template."""
     import torch
-
-    if ui is not None:  # ui exists exactly on rank 0
-        ui.dashboard.update(phase="training")
-        ui.dashboard.start()
 
     if args.resume:
         logger.info("resuming from checkpoint: %s", args.resume)
     trainer.train(resume_from_checkpoint=args.resume)
 
     if ui is not None:  # ui exists exactly on rank 0
-        ui.dashboard.update(phase="saving adapter", step=trainer.state.global_step)
+        ui.console.print("[dim]saving adapter…[/dim]")
     adapter_dir = run_dir / "adapter"
     trainer.save_model(str(adapter_dir))
     # Save the *inference* template with the adapter (the training template
@@ -506,13 +492,8 @@ def _train_and_save(
     return adapter_dir
 
 
-def _report_failure(
-    run_dir: Path, dashboard: RichDashboard | None, writer: MetricsWriter | None, error: Exception
-) -> None:
-    """Rank-0 abort path: stop the dashboard, record the abort event, print the panel."""
-    if dashboard:
-        with contextlib.suppress(Exception):
-            dashboard.stop()
+def _report_failure(run_dir: Path, writer: MetricsWriter | None, error: Exception) -> None:
+    """Rank-0 abort path: record the abort event, print the failure lines."""
     if writer:
         from .monitor import EventRecord
 
@@ -578,7 +559,7 @@ def main(argv: list[str] | None = None) -> None:
     except Exception as exc:
         logger.error("training failed: %s\n%s", exc, traceback.format_exc())
         if ui is not None:  # ui exists exactly on rank 0
-            _report_failure(run_dir, ui.dashboard, ui.writer, exc)
+            _report_failure(run_dir, ui.writer, exc)
         raise
     finally:
         if world_size > 1:
@@ -604,9 +585,6 @@ def _finalize_run(
 ) -> None:
     """Rank-0 end of run: run_end event, charts, report, wrap-up."""
     from .plots import render_charts, write_report
-
-    ui.dashboard.update(phase="finalizing")
-    ui.dashboard.stop()
 
     records = metrics_callback.records if metrics_callback else []
     summary = _assemble_summary(adapter_dir, records, start_time=start_time)

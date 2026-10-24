@@ -12,7 +12,6 @@ Package layout (each module explains itself — see module docstrings):
     sft.py        project config -> trl.SFTConfig mapping
     train.py      the training worker: phases + orchestration
     monitor.py    metrics JSONL, health guards, summaries (headless-safe)
-    dashboard.py  the live rich terminal dashboard (rank 0 only)
     plots.py      every matplotlib chart + the Markdown run report
     doctor.py     environment + hardware report (.context artifacts)
     chat.py       interactive sanity-check chat against a trained adapter

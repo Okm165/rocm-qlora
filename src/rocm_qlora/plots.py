@@ -179,7 +179,7 @@ def _loss_curves(ax: Axes, train: Sequence[TrainRecord], *, labels: bool) -> tup
 
 
 def _eval_overlay(ax: Axes, eval_records: Sequence[EvalRecord], *, label: str | None = None) -> None:
-    """Dashed eval-loss overlay (shared by the loss chart and the dashboard)."""
+    """Dashed eval-loss overlay (shared by the loss chart and the dashboard chart)."""
     ev = [(r["step"], r["eval_loss"]) for r in eval_records]
     if ev:
         ax.plot([e[0] for e in ev], [e[1] for e in ev], "o--", color=COLORS["eval"], lw=1.6, ms=6, label=label)
@@ -221,14 +221,14 @@ def loss_curve(
 
 
 def _lr_series(ax: Axes, train: Sequence[TrainRecord], *, label: str | None = None) -> None:
-    """Learning-rate line (sci-notation y-axis), shared by chart and dashboard."""
+    """Learning-rate line (sci-notation y-axis), shared by the lr and dashboard charts."""
     recs = [r for r in train if r.get("lr") is not None]
     ax.plot([r["step"] for r in recs], [as_float(r["lr"]) for r in recs], color=COLORS["lr"], lw=2.0, label=label)
     ax.ticklabel_format(axis="y", style="sci", scilimits=(-2, 2))
 
 
 def _tok_series(ax: Axes, train: Sequence[TrainRecord], *, label: str | None = None) -> None:
-    """Tokens/s line, shared by chart and dashboard."""
+    """Tokens/s line, shared by the throughput and dashboard charts."""
     recs = [r for r in train if r.get("tok_per_s")]
     ax.plot(
         [r["step"] for r in recs], [as_float(r["tok_per_s"]) for r in recs], color=COLORS["tok"], lw=1.8, label=label
@@ -236,7 +236,7 @@ def _tok_series(ax: Axes, train: Sequence[TrainRecord], *, label: str | None = N
 
 
 def _vram_series(ax: Axes, train: Sequence[TrainRecord]) -> None:
-    """Per-GPU VRAM lines, shared by chart and dashboard."""
+    """Per-GPU VRAM lines, shared by the vram and dashboard charts."""
     for gi in range(len(train[-1]["gpu"])):
         total = (train[-1]["gpu"][gi] or {}).get("mem_total_gb")
         ax.plot(
