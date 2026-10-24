@@ -338,7 +338,7 @@ def select_gpus(*, requested: str | list[int] = "auto") -> GpuPlan:
 
 
 def disk_free_gb(path: str | Path) -> float:
-    """Free space (GiB) on the filesystem holding `path`."""
+    """Free space in GB (1e9 bytes) on the filesystem holding `path`."""
     import shutil
 
     try:
