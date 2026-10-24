@@ -30,6 +30,8 @@ def human_bytes(n: float | int | None) -> str:
     if n is None:
         return "n/a"
     n = float(n)
+    if not math.isfinite(n):
+        return "n/a"  # a failed measurement is unknown, not "nan TB"
     for unit in ("B", "KB", "MB", "GB", "TB"):
         if abs(n) < 1000.0 or unit == "TB":
             return f"{n:.1f} {unit}" if unit != "B" else f"{int(n)} B"

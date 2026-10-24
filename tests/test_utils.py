@@ -22,6 +22,7 @@ def test_human_bytes_is_decimal():
     assert human_bytes(0) == "0 B"
     assert human_bytes(1536) == "1.5 KB"
     assert human_bytes(25_753_026_560) == "25.8 GB"  # the 24 GiB card as rocm-smi reports it
+    assert human_bytes(float("nan")) == "n/a" and human_bytes(float("inf")) == "n/a"
 
 
 def test_human_duration():

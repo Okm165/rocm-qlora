@@ -224,21 +224,23 @@ def _write_quantization_config(model: PreTrainedModel, cfg: Config) -> None:
     """Attach the load-time-authoritative bnb config.
 
     The stored config is authoritative at load time (it lists exactly which
-    modules are NOT quantized), so derive the skip list from *reality*:
-    every plain Linear that survived surgery, by its module suffix. The dict
-    comes from `BitsAndBytesConfig` itself, so a key this project misspells
-    fails here instead of being silently ignored at load time.
+    modules are NOT quantized), so derive the skip list from *reality*: every
+    plain Linear that survived surgery, by its **full** module path.
+
+    Full paths, not last components: transformers matches a skip entry as a
+    prefix *or* suffix, so a short entry like "qkv" (a 16-bit vision Linear)
+    would also skip the quantized ``linear_attn.in_proj_qkv``. The dict comes
+    from `BitsAndBytesConfig` itself, so a key this project misspells fails
+    here instead of being silently ignored at load time.
     """
     import bitsandbytes as bnb
     import torch
     from transformers import BitsAndBytesConfig
 
     remaining = sorted(
-        {
-            name.split(".")[-1]
-            for name, m in model.named_modules()
-            if isinstance(m, torch.nn.Linear) and not isinstance(m, bnb.nn.Linear4bit)
-        }
+        name
+        for name, m in model.named_modules()
+        if isinstance(m, torch.nn.Linear) and not isinstance(m, bnb.nn.Linear4bit)
     )
     model.config.quantization_config = BitsAndBytesConfig(
         load_in_4bit=True,

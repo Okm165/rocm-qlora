@@ -49,6 +49,36 @@ def test_prepare_meta_counts_tied_weights_once():
     assert "quantization" not in meta
 
 
+def test_skip_list_uses_full_paths_not_suffixes():
+    """A 16-bit vision `qkv` must not skip the quantized `in_proj_qkv` at load."""
+    from types import SimpleNamespace
+
+    import torch.nn as nn
+
+    from rocm_qlora.prepare import _write_quantization_config
+
+    class Fake(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.visual = nn.Module()
+            self.visual.qkv = nn.Linear(4, 4, bias=False)  # plain (16-bit) Linear
+            self.linear_attn = nn.Module()
+            self.linear_attn.in_proj_qkv = nn.Linear(4, 4, bias=False)  # plain here too
+            self.config = SimpleNamespace()
+
+    model = Fake()
+    _write_quantization_config(model, Config.from_dict({}))
+    skip = model.config.quantization_config["llm_int8_skip_modules"]
+    assert skip == ["linear_attn.in_proj_qkv", "visual.qkv"]
+
+    from transformers.quantizers.quantizers_utils import should_convert_module
+
+    # a wrapped name (PEFT prefixes it) still matches by suffix
+    assert should_convert_module("base_model.model.visual.qkv", skip) is False
+    # and nothing else is caught by a short suffix
+    assert should_convert_module("language_model.layers.0.linear_attn.in_proj_z", skip) is True
+
+
 def test_parameter_report_buckets_by_peft_module_name():
     """PEFT's `...q_proj.lora_A.weight` buckets under q_proj, not under lora_A."""
     model = _model()
