@@ -15,7 +15,6 @@ that wall. The runtime half (4-bit load, LoRA, accounting) is `model.py`.
 
 from __future__ import annotations
 
-import json
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -25,7 +24,7 @@ from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
 from .config import Config
 from .hardware import gpu_snapshot
 from .model import compute_dtype, load_tokenizer, logical_numel, quant_storage_dtype, resolve_model_class
-from .utils import now_iso, write_json
+from .utils import now_iso, read_json, write_json
 
 if TYPE_CHECKING:
     import torch.nn as nn
@@ -150,7 +149,7 @@ def _cached_prepare_result(out_dir: Path, meta_path: Path, *, force: bool) -> Pr
     """Return the cached result when a complete prepared dir exists (and not forced)."""
     if force or not out_dir.exists() or not (out_dir / "config.json").exists() or not meta_path.exists():
         return None
-    meta = json.loads(meta_path.read_text())
+    meta = read_json(meta_path)
     return PrepareResult(
         out_dir=out_dir,
         requantized=meta.get("requantized", []),

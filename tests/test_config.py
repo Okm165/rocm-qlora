@@ -84,3 +84,13 @@ def test_validate_reports_each_section(mutate, needle):
     with pytest.raises(ConfigError) as exc:
         Config.from_dict(cfg.model_dump())
     assert needle in str(exc.value)
+
+
+def test_from_toml_reports_missing_and_malformed_files(tmp_path):
+    """Both are user errors, so both come back as ConfigError (the CLI prints them)."""
+    with pytest.raises(ConfigError, match="cannot read config"):
+        Config.from_toml(tmp_path / "nope.toml")
+    broken = tmp_path / "broken.toml"
+    broken.write_text("[run\nname = 1\n")
+    with pytest.raises(ConfigError, match="not valid TOML"):
+        Config.from_toml(broken)

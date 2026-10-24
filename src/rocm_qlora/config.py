@@ -250,9 +250,14 @@ class Config(_Section):
 
     @classmethod
     def from_toml(cls, path: str | Path) -> Config:
-        """Load and validate a TOML config file."""
-        with open(path, "rb") as fh:
-            raw = tomllib.load(fh)
+        """Load and validate a TOML config file (I/O and syntax errors included)."""
+        try:
+            with open(path, "rb") as fh:
+                raw = tomllib.load(fh)
+        except OSError as exc:
+            raise ConfigError(f"cannot read config {path}: {exc}") from exc
+        except tomllib.TOMLDecodeError as exc:
+            raise ConfigError(f"{path} is not valid TOML: {exc}") from exc
         return cls.from_dict(raw)
 
     @classmethod

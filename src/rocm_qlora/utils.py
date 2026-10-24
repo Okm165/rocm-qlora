@@ -160,24 +160,23 @@ def linear_slope(values: Iterable[float | None]) -> float:
 
 
 def seed_everything(seed: int) -> None:
-    """Seed python/numpy/torch (torch imported lazily so this module stays
-    importable without the ML stack — e.g. in plotting-only tests).
+    """Seed python/numpy/torch.
+
+    torch is imported lazily: the import costs seconds and the plotting-only
+    paths (report, charts) never need it. numpy is a hard dependency, so its
+    seed is not optional — a swallowed import error would silently drop it.
 
     ``PYTHONHASHSEED`` is *not* set here: hash randomization is fixed at
     interpreter start, so only the launcher can export it in time (it does).
     """
-    random.seed(seed)
-    try:
-        import numpy as np
+    import numpy as np
 
-        np.random.seed(seed)
-    except Exception:  # pragma: no cover - numpy is always present in practice
-        pass
+    random.seed(seed)
+    np.random.seed(seed)
     try:
         import torch
-
-        torch.manual_seed(seed)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed_all(seed)
-    except Exception:  # pragma: no cover - torch may be unavailable in tests
-        pass
+    except ImportError:  # pragma: no cover - torch is a hard dependency
+        return
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
