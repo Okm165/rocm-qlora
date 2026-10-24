@@ -2,9 +2,9 @@
 
     train     (every run)
         load the prepared NF4 checkpoint directly onto this rank's GPU
-        selective fp32 cast + freeze + gradient checkpointing
+        selective fp32 cast + freeze
         attach LoRA (all-linear / explicit target list)
-        -> SFTTrainer
+        -> SFTTrainer (which enables gradient checkpointing from the config)
 
 The one-time checkpoint surgery (`prepare`) lives in ``prepare.py``; merging a
 trained adapter back to bf16 lives in ``merge.py``.
@@ -13,6 +13,7 @@ trained adapter back to bf16 lives in ``merge.py``.
 from __future__ import annotations
 
 import math
+import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict
 
@@ -43,16 +44,18 @@ def quant_storage_dtype(cfg: Config):
     ]
 
 
-def load_tokenizer(cfg: Config) -> PreTrainedTokenizerBase:
+def load_tokenizer(cfg: Config, *, prefer_prepared: bool = True) -> PreTrainedTokenizerBase:
     """Tokenizer from the prepared checkpoint when it exists, else the hub source.
 
     `prepare` saves the tokenizer into the prepared directory, so everything
-    after it (train, merge, chat) works without touching the hub.
+    after it (train, merge, chat) works without touching the hub. `prepare`
+    itself passes ``prefer_prepared=False``: the checkpoint must carry the
+    *source* tokenizer, not a copy of itself.
     """
     from transformers import AutoTokenizer
 
     prepared = Path(cfg.model.prepared_dir)
-    source = str(prepared) if prepared.exists() else cfg.model.name
+    source = str(prepared) if prefer_prepared and prepared.exists() else cfg.model.name
     tokenizer = AutoTokenizer.from_pretrained(source, trust_remote_code=cfg.model.trust_remote_code)
     if tokenizer.pad_token is None:  # generic guard; Qwen checkpoints ship both
         tokenizer.pad_token = tokenizer.eos_token
@@ -73,12 +76,14 @@ def prepared_checkpoint_exists(cfg: Config) -> bool:
 def resolve_model_class(model_name: str, *, trust_remote_code: bool = False):
     """Pick the right Auto class for a checkpoint (VLM vs text-only)."""
     from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageTextToText
+    from transformers.models.auto.modeling_auto import MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES
 
     config = AutoConfig.from_pretrained(model_name, trust_remote_code=trust_remote_code)
-    # Multimodal checkpoints (e.g. Qwen3.8-27B) declare *ForConditionalGeneration
-    # and a vision config; text-only ones (e.g. Qwen3-8B) use AutoModelForCausalLM.
-    archs = config.architectures or []
-    is_vlm = any("ConditionalGeneration" in a for a in archs) or getattr(config, "vision_config", None) is not None
+    # The library's own routing table decides (qwen3_5 is in it); a vision config
+    # is the structural backup for a model_type the table does not know yet.
+    is_vlm = config.model_type in MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES or (
+        getattr(config, "vision_config", None) is not None
+    )
     return AutoModelForImageTextToText if is_vlm else AutoModelForCausalLM
 
 
@@ -100,6 +105,13 @@ def logical_numel(param: nn.Parameter) -> int:
     shape = getattr(quant_state, "shape", None)
     if shape is not None:
         return int(math.prod(shape))
+    import bitsandbytes as bnb
+
+    if isinstance(param, bnb.nn.Params4bit):
+        raise RuntimeError(
+            "a quantized parameter has no quant_state — bitsandbytes changed its layout; refusing to report "
+            "the packed element count as if it were logical (docs/01's accounting must stay exact)"
+        )
     return int(param.numel())
 
 
@@ -137,17 +149,28 @@ def load_model_for_training(cfg: Config, *, local_rank: int = 0, attn: str | Non
     # --- drop the (unused) vision tower -------------------------------------
     # Text-only training never touches it; dropping it frees the quantized
     # tower (~0.25 GiB) before DDP walks the parameters.
-    if hasattr(model, "model") and getattr(model.model, "visual", None) is not None:
-        model.model.visual = None
+    visual = getattr(getattr(model, "model", None), "visual", None)
+    if visual is not None:
+        model.model.visual = None  # type: ignore[union-attr]
         import gc
 
         gc.collect()
         torch.cuda.empty_cache()
+    elif getattr(model.config, "vision_config", None) is not None:
+        warnings.warn(
+            "vision_config is set but no 'model.visual' module was found — the vision tower stays in the "
+            "model (add its name to the drop list in model.load_model_for_training)",
+            stacklevel=2,
+        )
     return model
 
 
-def prepare_for_qlora(model: PreTrainedModel, cfg: Config):
-    """Freeze + selective fp32 cast + gradient checkpointing (QLoRA recipe).
+def prepare_for_qlora(model: PreTrainedModel):
+    """Freeze + selective fp32 cast (QLoRA recipe).
+
+    Gradient checkpointing is *not* enabled here: the trainer enables it from
+    the SFTConfig (with the same `use_reentrant`/`every_n_layers`/`offload`
+    kwargs, after PEFT wrapping — where it must be enabled).
 
     Differences from ``peft.prepare_model_for_kbit_training``:
     * the two big frozen lookup tables — the input embedding and the output
@@ -172,24 +195,18 @@ def prepare_for_qlora(model: PreTrainedModel, cfg: Config):
                     continue  # big frozen tables stay 16-bit (see docstring)
                 param.data = param.data.to(torch.float32)
 
-    if cfg.optim.gradient_checkpointing:
-        model.gradient_checkpointing_enable(
-            gradient_checkpointing_kwargs={"use_reentrant": False},
-            every_n_layers=cfg.optim.checkpoint_every_n_layers,
-            offload=cfg.optim.activation_offloading,
-        )
     model.enable_input_require_grads()  # PreTrainedModel API; grads must reach the frozen inputs
     return model
 
 
 def attach_lora(model: PreTrainedModel, cfg: Config):
-    """Attach LoRA adapters per config; returns the PeftModel."""
+    """Attach LoRA adapters per config; returns the PeftModel.
+
+    Call this *after* `load_model_for_training`: the vision tower is already
+    dropped there, so there is nothing to exclude from the target modules.
+    """
     from peft import LoraConfig, get_peft_model
 
-    # The vision tower is dropped at load (`load_model_for_training`); only pass
-    # the exclusion when it is actually present, or PEFT warns about an empty
-    # exclusion set on text-only checkpoints.
-    has_visual = any("visual" in name for name, _ in model.named_modules())
     lora = LoraConfig(
         r=cfg.lora.r,
         lora_alpha=cfg.lora.alpha,
@@ -197,7 +214,6 @@ def attach_lora(model: PreTrainedModel, cfg: Config):
         bias=cfg.lora.bias,
         task_type="CAUSAL_LM",
         target_modules=cfg.lora.target_modules,
-        exclude_modules=["visual"] if has_visual else None,  # keep the vision tower untouched when present
     )
     return get_peft_model(model, lora)
 

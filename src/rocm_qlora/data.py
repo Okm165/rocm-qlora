@@ -191,9 +191,7 @@ class TokenProfile:
         return sum(1 for length in self.lengths if length <= cap) / len(self.lengths)
 
 
-def _token_count(
-    tokenizer: PreTrainedTokenizerBase, messages: list[ChatMessage], template_kwargs: dict[str, Any] | None
-) -> int:
+def _token_count(tokenizer: PreTrainedTokenizerBase, messages: list[ChatMessage]) -> int:
     """Chat-templated token count for one example.
 
     Template failures propagate (``profile_tokens`` names the example): the
@@ -205,7 +203,6 @@ def _token_count(
         tokenize=True,
         add_generation_prompt=False,
         return_dict=False,  # a plain list[int], not a BatchEncoding
-        **(template_kwargs or {}),
     )
     return len(cast("list[int]", ids))
 
@@ -216,7 +213,6 @@ def profile_tokens(
     *,
     messages_field: str = "messages",
     max_length: int = 1024,
-    template_kwargs: dict[str, Any] | None = None,
 ) -> TokenProfile:
     """Tokenize every example with the tokenizer's current chat template and measure.
 
@@ -227,7 +223,7 @@ def profile_tokens(
     lengths: list[int] = []
     for index, item in enumerate(examples):
         try:
-            lengths.append(_token_count(tokenizer, item[messages_field], template_kwargs))
+            lengths.append(_token_count(tokenizer, item[messages_field]))
         except Exception as exc:
             raise DatasetError(f"chat template failed on example {index}: {exc}") from exc
     lengths.sort()
@@ -244,7 +240,6 @@ def render_preview(
     example: dict[str, list[ChatMessage]],
     *,
     messages_field: str = "messages",
-    template_kwargs: dict[str, Any] | None = None,
     max_chars: int = 1400,
 ) -> str:
     """Render one example with the real chat template (shown by the `data` command)."""
@@ -255,7 +250,6 @@ def render_preview(
                 cast("list[dict[str, str]]", example[messages_field]),  # TypedDict rows are plain dicts
                 tokenize=False,
                 add_generation_prompt=False,
-                **(template_kwargs or {}),
             ),
         )  # tokenize=False ⟹ str
     except Exception as exc:  # pragma: no cover - depends on tokenizer quirks

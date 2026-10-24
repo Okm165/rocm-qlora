@@ -23,7 +23,14 @@ from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
 
 from .config import Config
 from .hardware import gpu_snapshot
-from .model import compute_dtype, load_tokenizer, logical_numel, quant_storage_dtype, resolve_model_class
+from .model import (
+    compute_dtype,
+    load_tokenizer,
+    logical_numel,
+    prepared_checkpoint_exists,
+    quant_storage_dtype,
+    resolve_model_class,
+)
 from .utils import now_iso, read_json, write_json
 
 if TYPE_CHECKING:
@@ -110,7 +117,7 @@ def prepare_checkpoint(cfg: Config, *, force: bool = False, log: Callable[[str],
     """Create the prepared NF4 checkpoint at ``cfg.model.prepared_dir``."""
     out_dir = Path(cfg.model.prepared_dir)
     meta_path = out_dir / "finetune_meta.json"
-    cached = _cached_prepare_result(out_dir, meta_path, force=force)
+    cached = _cached_prepare_result(cfg, out_dir, meta_path, force=force)
     if cached is not None:
         return cached
 
@@ -121,13 +128,13 @@ def prepare_checkpoint(cfg: Config, *, force: bool = False, log: Callable[[str],
     # plain bf16/fp16 checkpoints get every Linear quantized.
     source_quantized = getattr(model.config, "quantization_config", None) is not None
     requantized = _requantize_all(model, cfg, source_quantized=source_quantized, log=log)
+    _require_16bit_lm_head(model)
     _write_quantization_config(model, cfg)
 
     log(f"Saving prepared checkpoint to {out_dir} …")
-    # Load the tokenizer *before* the directory exists (from the hub source):
-    # load_tokenizer prefers the prepared directory, which is only complete
-    # after this save.
-    tokenizer = load_tokenizer(cfg)
+    # Always the *source* tokenizer: a re-prepare must refresh the copy inside
+    # the checkpoint, never copy the old one forward.
+    tokenizer = load_tokenizer(cfg, prefer_prepared=False)
     out_dir.mkdir(parents=True, exist_ok=True)
     _save_prepared(model, out_dir)
     tokenizer.save_pretrained(out_dir)
@@ -145,11 +152,17 @@ def prepare_checkpoint(cfg: Config, *, force: bool = False, log: Callable[[str],
     )
 
 
-def _cached_prepare_result(out_dir: Path, meta_path: Path, *, force: bool) -> PrepareResult | None:
-    """Return the cached result when a complete prepared dir exists (and not forced)."""
-    if force or not out_dir.exists() or not (out_dir / "config.json").exists() or not meta_path.exists():
+def _cached_prepare_result(cfg: Config, out_dir: Path, meta_path: Path, *, force: bool) -> PrepareResult | None:
+    """The cached result when a complete prepared dir *from the same source* exists.
+
+    `finetune_meta.json` records the source model id; a config pointed at a
+    different base model rebuilds instead of silently reusing the old one.
+    """
+    if force or not prepared_checkpoint_exists(cfg):
         return None
     meta = read_json(meta_path)
+    if meta.get("source") != cfg.model.name:
+        return None
     return PrepareResult(
         out_dir=out_dir,
         requantized=meta.get("requantized", []),
@@ -217,6 +230,20 @@ def _requantize_all(model: nn.Module, cfg: Config, *, source_quantized: bool, lo
         requantized.append(name)
     log(f"Re-quantized {len(requantized)} module(s) to NF4")
     return requantized
+
+
+def _require_16bit_lm_head(model: PreTrainedModel) -> None:
+    """A quantized head breaks the training loss: TRL's fused chunked loss
+    slices the raw lm_head weight tensor (no full logits are materialized)."""
+    import bitsandbytes as bnb
+
+    head = model.get_output_embeddings()
+    if head is not None and isinstance(head.weight, bnb.nn.Params4bit):
+        raise RuntimeError(
+            "the source checkpoint has a quantized lm_head, but TRL's fused chunked loss slices the raw "
+            "head weight — the head must stay 16-bit; re-quantize from a source whose head is not quantized "
+            "(docs/01)"
+        )
 
 
 def _write_quantization_config(model: PreTrainedModel, cfg: Config) -> None:

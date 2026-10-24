@@ -313,7 +313,7 @@ def _build_model(
     from .model import attach_lora, load_model_for_training, parameter_report, prepare_for_qlora
 
     model = load_model_for_training(cfg, local_rank=local_rank, attn=attn)
-    model = prepare_for_qlora(model, cfg)
+    model = prepare_for_qlora(model)
     model = attach_lora(model, cfg)
     report = parameter_report(cast("PreTrainedModel", model))  # pyright: ignore[reportInvalidCast]  # PeftModel forwards to the base
 

@@ -22,7 +22,7 @@ from rich.markdown import Markdown
 from rich.prompt import Prompt
 
 from .config import Config
-from .data import THINK_OPEN, ChatMessage
+from .data import THINK_CLOSE, THINK_OPEN, ChatMessage
 
 if TYPE_CHECKING:
     from transformers import GenerationConfig, PreTrainedModel, PreTrainedTokenizerBase
@@ -75,9 +75,14 @@ def _load(
     return cast("PreTrainedModel", model), tokenizer
 
 
+#: Sampling defaults from the Qwen3.8 model card (temperature is a CLI flag).
+TOP_P = 0.95
+TOP_K = 20
+
+
 def _split_thinking(text: str) -> tuple[str | None, str]:
-    if "</think>" in text:
-        think, _, answer = text.partition("</think>")
+    if THINK_CLOSE in text:
+        think, _, answer = text.partition(THINK_CLOSE)
         think = think.replace(THINK_OPEN, "").strip("\n ")
         return think.strip(), answer.strip()
     return None, text
@@ -171,8 +176,6 @@ def run_chat(
     adapter: str | None = None,
     max_new_tokens: int = 1024,
     temperature: float = 0.6,
-    top_p: float = 0.95,
-    top_k: int = 20,
     console: Console | None = None,
 ) -> None:
     """Interactive loop: prompt → templated chat → sampled reply, with /commands."""
@@ -180,13 +183,12 @@ def run_chat(
     from transformers import GenerationConfig
 
     model, tokenizer = _load(Path(run_dir) if run_dir else None, base, adapter, console)
-    # temperature/top_p/top_k defaults are the Qwen3.8 model-card sampling values
     gen = GenerationConfig(
         max_new_tokens=max_new_tokens,
         temperature=temperature if temperature > 0 else 1.0,
         do_sample=temperature > 0,
-        top_p=top_p,
-        top_k=top_k,
+        top_p=TOP_P,
+        top_k=TOP_K,
         repetition_penalty=1.05,
         pad_token_id=tokenizer.pad_token_id,
     )

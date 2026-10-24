@@ -45,31 +45,35 @@ def _bundled_family_template(name: str) -> str | None:
 def ensure_training_chat_template(tokenizer: PreTrainedTokenizerBase, cfg: Config, log: Callable[[str], None]) -> None:
     """Make TRL's `{% generation %}` template detection succeed.
 
-    TRL's SFTTrainer asks `get_training_chat_template` for a training copy of
-    the checkpoint's template and *raises* when the checkpoint's copy is not
-    string-identical to a bundled reference. Asking the same function here
-    covers the stock case; the family fallback covers community checkpoints.
-    If neither matches, this raises — a run must never quietly drop the
-    assistant-only mask the config asked for.
+    TRL's SFTTrainer patches a template only when it lacks generation markers,
+    and its patch helper matches the checkpoint's copy against bundled
+    references by exact string equality. Asking the same helper covers the
+    stock case; community copies (e.g. unsloth's Qwen3.8-27B) fail that match
+    and get the bundled family template instead. If neither matches, this
+    raises — a run must never quietly drop the assistant-only mask.
     """
     if not cfg.data.assistant_only_loss:
         return
 
-    from trl.chat_template_utils import get_training_chat_template
+    from trl.chat_template_utils import get_training_chat_template, has_generation_markers
 
+    if has_generation_markers(tokenizer.chat_template):
+        return  # TRL's own gate: a marker-bearing template is used as-is
+    # Resolve the family fallback *before* the try: a TRL rename of a bundled
+    # constant must surface as itself, not masked inside an except handler.
+    family_template = _bundled_family_template(cfg.model.name)
     try:
         template = get_training_chat_template(tokenizer)
     except ValueError as exc:
-        template = _bundled_family_template(cfg.model.name)
-        if template is None:
+        if family_template is None:
             raise RuntimeError(
                 f"TRL cannot patch {cfg.model.name}'s chat template and no bundled training template "
                 "matched the name — add {% generation %} markers to the template or set "
                 "data.assistant_only_loss = false"
             ) from exc
+        template = family_template
         log("installed TRL's bundled training chat template (TRL could not match the checkpoint's copy)")
-    if template is not None:
-        tokenizer.chat_template = template
+    tokenizer.chat_template = template
 
 
 def _sft_kwargs(cfg: Config, run_dir: Path, *, dry_run: bool, max_steps: int | None) -> dict[str, Any]:
@@ -125,7 +129,6 @@ def _sft_kwargs(cfg: Config, run_dir: Path, *, dry_run: bool, max_steps: int | N
         # The dataset is tiny; two loader processes per rank are plenty and
         # do not fight the training ranks for host cores.
         "dataloader_num_workers": 2,
-        "dataloader_pin_memory": True,
         "ddp_find_unused_parameters": False,
         "torch_empty_cache_steps": 50,
         # transformers v5 accepts "all" | "non_padding" | "no"; the callback
