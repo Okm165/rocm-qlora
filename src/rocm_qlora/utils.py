@@ -167,9 +167,12 @@ def linear_slope(values: Iterable[float | None]) -> float:
 
 def seed_everything(seed: int) -> None:
     """Seed python/numpy/torch (torch imported lazily so this module stays
-    importable without the ML stack — e.g. in plotting-only tests)."""
+    importable without the ML stack — e.g. in plotting-only tests).
+
+    ``PYTHONHASHSEED`` is *not* set here: hash randomization is fixed at
+    interpreter start, so only the launcher can export it in time (it does).
+    """
     random.seed(seed)
-    os.environ["PYTHONHASHSEED"] = str(seed)
     try:
         import numpy as np
 

@@ -139,6 +139,10 @@ per GPU (5 GB in 16-bit → 1.3 GB at NF4; upstream checkpoints keep it in
 | `OMP_NUM_THREADS` | 8 per rank | plenty for dataloading; avoids host oversubscription |
 | `TOKENIZERS_PARALLELISM` | `false` | silences fork warnings |
 | `NCCL_P2P_DISABLE` | `1` (SHM default) | simplicity default; both transports are bit-exact — set `"0"` via `[env.extra]` for P2P |
+| `NCCL_IB_DISABLE` / `NCCL_DEBUG` | `1` / `WARN` | no InfiniBand probing on these machines; keeps NCCL's startup chatter out of the log |
+| `AMDGPU_ASIC_ID_TABLE_PATHS` | `/usr/share/libdrm` | silences libdrm's per-GPU `(null): No such file or directory` at HIP init |
+| `PYTHONHASHSEED` | `run.seed` | fixed before the interpreter starts; part of reproducibility |
+| `PYTHONUNBUFFERED` / `HF_HUB_DISABLE_TELEMETRY` | `1` / `1` | live log lines; no HF telemetry |
 
 `HSA_OVERRIDE_GFX_VERSION` is **not** needed for gfx1100 (native support);
 it exists for unsupported gfx targets only.
