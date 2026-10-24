@@ -489,15 +489,14 @@ def _train_and_save(
     return adapter_dir
 
 
-def _report_failure(run_dir: Path, writer: MetricsWriter | None, error: Exception) -> None:
+def _report_failure(run_dir: Path, writer: MetricsWriter, error: Exception) -> None:
     """Rank-0 abort path: record the abort event, print the failure lines."""
-    if writer:
-        from .monitor import EventRecord
-
-        writer.write(EventRecord(type="event", level="error", event="abort", error=str(error)))
-        writer.close()
     from rich.console import Console
 
+    from .monitor import EventRecord
+
+    writer.write(EventRecord(type="event", level="error", event="abort", error=str(error)))
+    writer.close()
     Console().print(
         f"[bold red]run aborted:[/bold red] {error}\n"
         f"  logs: {run_dir / 'logs'}\n"
