@@ -34,11 +34,11 @@ dependencies = [
     "accelerate>=1.15,<2",
     # huggingface-hub: imported directly (token/cache paths in the CLI)
     "huggingface-hub>=2.2,<3",
-    # --- Observability (dashboard, charts, reports) -------------------------
-    "rich>=14",          # terminal dashboards, panels, tables
+    # --- Observability (progress lines, charts, reports) --------------------
+    "rich>=14",          # terminal output: progress lines, tables, chat
     "matplotlib>=3.10",  # charts written to .outputs/runs/<id>/charts/
     "numpy>=2",          # numeric helpers for charts/statistics
-    "psutil>=6",         # host RAM/CPU sampling for the health panel
+    "psutil>=6",         # host RAM/CPU sampling (doctor, merge device choice)
     "tomli-w>=1.2",      # TOML writer for config snapshots (tomllib only reads)
     "pydantic>=2.14",    # config schema: strict parsing + field-level constraints
 ]
@@ -78,7 +78,7 @@ reportUnknownVariableType = "none"
 reportMissingTypeStubs = "none"
 # Idiomatic patterns we keep on purpose:
 reportUnusedCallResult = "none"          # parser.add_argument(...), plt.* calls
-reportImplicitStringConcatenation = "none"  # deliberate multi-line f-strings in panels
+reportImplicitStringConcatenation = "none"  # deliberate multi-line f-strings in status lines/tables
 reportUnknownLambdaType = "none"         # lambdas passed into untyped lib APIs
 reportPrivateImportUsage = "none"        # bnb.nn.Linear4bit / trl.SFTConfig are canonical at runtime
 
