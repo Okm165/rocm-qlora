@@ -3,7 +3,7 @@
 ## The three ideas
 
 **1. NF4 quantization.** The frozen base model's Linear weights are stored in
-4 bits (~0.55 bytes/param including quantization scales) instead of 16. NF4
+4 bits (~0.52 bytes/param including quantization scales) instead of 16. NF4
 places its 16 code values at the quantiles of a standard normal distribution —
 information-theoretically optimal for the roughly-Gaussian weights of trained
 transformers. The matmul itself still runs in **bfloat16**: weights are
@@ -12,13 +12,13 @@ kernel overhead.
 
 **2. Double quantization.** The per-block quantization scales (`absmax`) are
 themselves quantized (to 8-bit with their own scales). Saves ~0.4 bits/param
-more — on a 27B model that's ~1.3 GB.
+more — on a 27B model that's ~1.1 GB.
 
 **3. LoRA adapters.** Instead of updating `W` (27B params), LoRA trains
 `ΔW = (α/r)·B·A` where `B` (out×r) and `A` (r×in) are tiny. Only `A` and `B`
 receive gradients. For this project: `r=16` on every text-side linear layer →
-~0.5% of parameters trainable, optimizer state in the hundreds of MB instead
-of tens of GB.
+~0.4% of parameters trainable, optimizer state in the hundreds of MB instead
+of the hundreds of GB a full fine-tune needs.
 
 Why this preserves quality: the frozen base cannot be catastrophically
 forgotten, and on small datasets the low-rank bottleneck acts as a
