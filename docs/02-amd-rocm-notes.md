@@ -114,7 +114,7 @@ OOMs — this table (plus the knobs in docs/05) is what to react with:
 
 | item | GB | why |
 |---|---|---|
-| NF4 weights (fully quantized text side) | ~12.8 | ~24.4 B params at 0.5 B/param packed (+absmax) — measured on disk |
+| NF4 weights (text-side Linears) | ~12.5 | 24.33 B params at 0.5 B/param packed + 0.4 absmax — measured on disk. `in_proj_a/b` stay 16-bit (48 MB; upstream keeps the gate projections precise) |
 | embeddings (bf16, untied) | ~2.5 | `embed_tokens` is not a Linear |
 | lm_head (bf16) | ~2.5 | stays 16-bit — TRL's fused loss slices the raw weight; upcasting to fp32 costs +2.5 GB for nothing |
 | vision tower | ~0.2 | dropped right after load (freed) |
@@ -123,8 +123,9 @@ OOMs — this table (plus the knobs in docs/05) is what to react with:
 | context / fragmentation / RCCL | ~1 | HIP context + transport buffers |
 | **total** | **~21 of 24** | measured 21.1 GB at batch 1, step 1 (2026-10-23 run) |
 
-The single most important number: **requantizing `in_proj_qkv` saves ~5 GB**
-per GPU (upstream checkpoints keep it in 16-bit). That's `prepare`'s job.
+The single most important number: **requantizing `in_proj_qkv` frees ~3.7 GB**
+per GPU (5 GB in 16-bit → 1.3 GB at NF4; upstream checkpoints keep it in
+16-bit). That's `prepare`'s job.
 
 ## Environment variables that matter (and what the launcher sets)
 

@@ -98,8 +98,9 @@ uv run rocm-qlora train  --config configs/toy.toml --dry-run
 `load_in_4bit=True` on a **bf16 checkpoint** stages the entire bf16 model in
 host RAM before quantizing (~55 GB for 27B — times the number of DDP ranks).
 `prepare` quantizes **once** instead: it re-quantizes the modules upstream
-left in 16-bit (`in_proj_qkv`, the vision tower — worth ~5 GB/GPU, the
-difference between fitting and OOM on 24 GB cards), keeps `lm_head` 16-bit
+left in 16-bit (`in_proj_qkv`, the vision tower — freeing ~3.7 GB/GPU: a
+5 GB 16-bit projection becomes ~1.3 GB at NF4, the difference between
+fitting and OOM on 24 GB cards), keeps `lm_head` 16-bit
 (TRL's fused loss slices the raw weight tensor), and records **exact**
 parameter accounting + provenance in `finetune_meta.json`. The
 per-item 24 GB budget is in `docs/02-amd-rocm-notes.md`; in short: ~21 GB

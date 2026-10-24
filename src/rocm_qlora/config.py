@@ -59,7 +59,8 @@ class ModelConfig(_Section):
 
 class QuantizationConfig(_Section):
     quant_type: Literal["nf4", "fp4"] = "nf4"
-    #: Quantize the quantization constants too (~0.3 GB saved at 27B).
+    #: Quantize the quantization constants too (~1.1 GB saved at 27B: fp32
+    #: absmax per 64-param block would cost 1.5 GB, 8-bit nested costs 0.4).
     double_quant: bool = True
     #: Storage dtype of the 4-bit weights (uint8 required for FSDP/DDP sharding).
     quant_storage: Literal["uint8", "bfloat16", "float16", "float32"] = "uint8"

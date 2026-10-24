@@ -134,7 +134,7 @@ In order of effectiveness:
 
 1. `--set data.max_length=1280` (or 1024) — activation memory is linear in it.
 2. `--set optim.optimizer=adamw_8bit` (default already) or `adafactor`.
-3. Confirm `prepare` ran (weights ~17.3 GB); an un-prepared model needs ~25 GB.
+3. Confirm `prepare` ran (weights ~17.7 GB); an un-prepared model needs ~25 GB.
 4. Stop other VRAM consumers: `rocm-smi --showpids`. An inference server
    holding most of the VRAM will block training entirely — the preflight
    lists exactly who holds what.
