@@ -79,7 +79,7 @@ def merge_run(run_dir: str | Path, *, out_dir: str | Path | None = None, console
     out = Path(out_dir) if out_dir else run_dir / "merged"
     out.mkdir(parents=True, exist_ok=True)
 
-    device_map = _choose_merge_device(_estimate_model_bytes(cfg), host_memory(), console)
+    device_map = _choose_merge_device(_bf16_model_bytes(Path(cfg.model.prepared_dir)), host_memory(), console)
     model = _fold_adapter(cfg, adapter_dir, device_map, console)
 
     console.print(f"[dim]saving bf16 model to {out} …[/dim]")
@@ -103,25 +103,28 @@ def merge_run(run_dir: str | Path, *, out_dir: str | Path | None = None, console
     return out
 
 
-def _estimate_model_bytes(cfg: Config) -> int:
-    """Rough bf16 size of the merged model — drives the CPU-vs-GPU choice."""
-    base = Path(cfg.model.prepared_dir)
-    try:
-        total_params = json.loads((base / "finetune_meta.json").read_text()).get("total_params")
-        if total_params:
-            return int(total_params) * 2  # bf16 bytes per parameter
-    except Exception:
-        pass
-    try:
-        index = base / "model.safetensors.index.json"
-        if index.exists():
-            return int(json.loads(index.read_text())["metadata"].get("total_size", 0)) * 2
-        nf4_bytes = sum(f.stat().st_size for f in base.glob("*.safetensors"))
-        if nf4_bytes:
-            return nf4_bytes * 2
-    except Exception:
-        pass
-    return 60 * 10**9
+def _bf16_model_bytes(prepared_dir: Path) -> int:
+    """Exact bf16 size of a prepared checkpoint, from the safetensors headers.
+
+    Disk bytes are not parameter counts (NF4 packs two values per uint8), and
+    the headers carry the shapes — so the merged size is exact for any
+    prepared directory, no meta file required.
+    """
+    import math
+    import struct
+
+    dtype_bytes = {"U8": 4, "F16": 2, "BF16": 2, "F32": 4}  # U8 = 2 NF4 values/byte, 2 bytes each in bf16
+    aux = (".absmax", ".quant_map", ".nested_", ".quant_state")
+    total = 0
+    for shard in sorted(prepared_dir.glob("*.safetensors")):
+        with open(shard, "rb") as fh:
+            header_len = struct.unpack("<Q", fh.read(8))[0]
+            header = json.loads(fh.read(header_len))
+        for name, info in header.items():
+            if name == "__metadata__" or any(tag in name for tag in aux):
+                continue
+            total += math.prod(info["shape"]) * dtype_bytes.get(info["dtype"], 2)
+    return total
 
 
 def _dequantize_linear4bit(model: PreTrainedModel, *, dtype: torch.dtype):
