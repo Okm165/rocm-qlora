@@ -675,7 +675,9 @@ def _events_table(events: Sequence[EventRecord]) -> list[str]:
         return []
     lines = ["## Events\n", "| step | level | event | detail |", "|---|---|---|---|"]
     for e in events[:60]:
-        detail = {k: v for k, v in e.items() if k not in {"type", "level", "event", "step", "ts"}}
+        # The event's own payload only — not the run-wide stamp (world size is
+        # in the report header) and not the record's identity keys.
+        detail = {k: v for k, v in e.items() if k not in {"type", "level", "event", "step", "ts", "world_size"}}
         lines.append(
             f"| {e.get('step', '—')} | {e.get('level', 'info')} | {e.get('event')} | `{json.dumps(detail)[:120]}` |"
         )

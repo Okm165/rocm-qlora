@@ -63,8 +63,13 @@ def ensure_training_chat_template(
 
 
 def _warmup_steps(cfg: Config, n_train: int, world_size: int, max_steps: int | None) -> int:
-    """Warmup steps from the estimated total optimizer steps (transformers v5
-    removed `warmup_ratio`, so the ratio is computed here)."""
+    """Warmup steps from the computed total optimizer steps (transformers v5
+    removed `warmup_ratio`, so the ratio is applied here).
+
+    Every term is known — dataset size, batch, accumulation, world size,
+    epochs (or the explicit ``max_steps``) — so this is arithmetic, not an
+    estimate.
+    """
     effective_batch = cfg.optim.per_device_batch_size * cfg.optim.grad_accum * world_size
     steps_per_epoch = max(1, -(-n_train // effective_batch))  # ceil division
     total_steps = max_steps or int(steps_per_epoch * cfg.optim.epochs)
