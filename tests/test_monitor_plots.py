@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import math
 
+import pytest
+
 from rocm_qlora.metrics import (
     MetricsWriter,
     ema,
@@ -117,6 +119,16 @@ def test_metrics_roundtrip_and_summary(tmp_path):
     assert summary.world_size == 3
     assert summary.dry_run is True
     assert summary.total_seconds == 120.0
+
+
+def test_metrics_writer_refuses_an_existing_stream(tmp_path):
+    """Two runs in one directory would interleave two streams — fail loudly."""
+    path = tmp_path / "metrics.jsonl"
+    writer = MetricsWriter(path)
+    writer.write({"type": "train", "step": 1, "loss": 1.0})
+    writer.close()
+    with pytest.raises(FileExistsError, match="two runs in one directory"):
+        MetricsWriter(path)
 
 
 def test_truncated_last_line_tolerated(tmp_path):

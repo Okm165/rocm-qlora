@@ -188,11 +188,18 @@ def build_worker_env(cfg: Config, gpu_ids: list[int]) -> dict[str, str]:
 
 
 def make_run_dir(cfg: Config, *, dry_run: bool = False) -> Path:
-    """Create <output_root>/runs/<timestamp>-<name>/ with logs + charts."""
+    """Create <output_root>/runs/<timestamp>-<name>/ with logs + charts.
+
+    The timestamp slug is minute-resolution, so two launches within the same
+    minute would collide; a numeric suffix keeps every run's stream its own.
+    """
     root = Path(cfg.run.output_root) / "runs"
-    slug = timestamp_slug()
-    name = f"{slug}-{cfg.run.name}" + ("-dryrun" if dry_run else "")
+    name = f"{timestamp_slug()}-{cfg.run.name}" + ("-dryrun" if dry_run else "")
     run_dir = root / name
+    suffix = 2
+    while run_dir.exists():
+        run_dir = root / f"{name}-{suffix}"
+        suffix += 1
     (run_dir / "logs").mkdir(parents=True, exist_ok=True)
     (run_dir / "charts").mkdir(parents=True, exist_ok=True)
     return run_dir

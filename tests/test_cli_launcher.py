@@ -57,6 +57,18 @@ def test_make_run_dir_layout(tmp_path):
     assert (run / "logs").is_dir() and (run / "charts").is_dir()
 
 
+def test_make_run_dir_never_reuses_a_directory(tmp_path, monkeypatch):
+    """Minute-resolution slugs can collide; the second run gets a suffix."""
+    from rocm_qlora import launcher
+    from rocm_qlora.config import Config
+
+    cfg = Config.from_dict({"run": {"name": "x", "output_root": str(tmp_path)}})
+    first = launcher.make_run_dir(cfg)
+    second = launcher.make_run_dir(cfg)
+    assert first != second and second.name.endswith("-2")
+    assert (second / "logs").is_dir() and (second / "charts").is_dir()
+
+
 def test_build_worker_env_policy():
     cfg = Config.from_dict({})
     env = build_worker_env(cfg, [0, 2])

@@ -27,7 +27,7 @@ from .hardware import (
     package_versions,
     torch_runtime_info,
 )
-from .utils import human_bytes, timestamp_slug, write_json
+from .utils import timestamp_slug, write_json
 
 if TYPE_CHECKING:
     from .launcher import DoctorVerdict
@@ -45,7 +45,7 @@ def _doctor_host_table(mem: HostMemory, cpu: CpuInfo) -> None:
     host.add_row("CPU", f"{cpu.get('model', '?')} ({cpu.get('cores')} threads)")
     host.add_row("RAM", f"{mem['total_gib']:.0f} GiB total · {mem['available_gib']:.0f} GiB available")
     host.add_row("kernel", kernel_version())
-    host.add_row("disk free", human_bytes(disk_free_gb(".") * 1e9))
+    host.add_row("disk free", f"{disk_free_gb('.'):.1f} GB")
     console.print(host)
 
 

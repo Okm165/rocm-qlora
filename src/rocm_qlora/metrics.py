@@ -158,12 +158,18 @@ MetricsRecord = TrainRecord | EvalRecord | EpochEndRecord | EventRecord | RunEnd
 
 @final
 class MetricsWriter:
-    """Append-only JSONL writer with immediate flush (crash-safe)."""
+    """JSONL writer with immediate flush (crash-safe). One stream per file.
+
+    Opens exclusively: a second writer on the same path (two runs sharing a
+    directory) fails loudly instead of silently interleaving two streams.
+    """
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._fh = open(self.path, "a", encoding="utf-8")  # noqa: SIM115 — long-lived append handle, closed in close()
+        if self.path.exists():
+            raise FileExistsError(f"metrics stream already exists: {self.path} (two runs in one directory?)")
+        self._fh = open(self.path, "x", encoding="utf-8")  # noqa: SIM115 — long-lived handle, closed in close()
 
     def write(self, record: MetricsRecord) -> None:
         if "ts" not in record:

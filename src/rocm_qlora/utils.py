@@ -21,15 +21,20 @@ from typing import Any, TextIO
 
 
 def human_bytes(n: float | int | None) -> str:
-    """12345678 -> '11.8 GiB'."""
+    """12345678 -> '12.3 MB'. Decimal units.
+
+    Every size this tool measures (rocm-smi VRAM, disk space, model files)
+    and every size the docs quote is decimal, so file sizes are too. Host RAM
+    is the one exception and is reported as GiB where it is shown.
+    """
     if n is None:
         return "n/a"
     n = float(n)
-    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
-        if abs(n) < 1024.0 or unit == "TiB":
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if abs(n) < 1000.0 or unit == "TB":
             return f"{n:.1f} {unit}" if unit != "B" else f"{int(n)} B"
-        n /= 1024.0
-    return f"{n:.1f} TiB"  # pragma: no cover - unreachable
+        n /= 1000.0
+    return f"{n:.1f} TB"  # pragma: no cover - unreachable
 
 
 def human_duration(seconds: float | None) -> str:

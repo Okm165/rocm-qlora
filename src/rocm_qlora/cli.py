@@ -27,7 +27,7 @@ from rich.table import Table
 from . import __version__
 from .config import Config, ConfigError
 from .doctor import cmd_doctor
-from .utils import fmt_int, human_bytes, human_duration, timestamp_slug
+from .utils import fmt_int, human_duration, timestamp_slug
 
 if TYPE_CHECKING:
     from .data import DatasetStats, Percentiles, TokenProfile
@@ -196,7 +196,7 @@ def cmd_prepare(args: argparse.Namespace) -> int:
     table.add_row("path", str(result.out_dir))
     table.add_row("total params", f"{result.total_params / 1e9:.2f} B")
     table.add_row("re-quantized modules", str(len(result.requantized)))
-    table.add_row("disk size", human_bytes(result.disk_gb * 1e9))
+    table.add_row("disk size", f"{result.disk_gb:.1f} GB")
     if result.seconds:
         table.add_row("prepare time", human_duration(result.seconds))
     console.print(table)
@@ -265,7 +265,7 @@ def cmd_train(args: argparse.Namespace) -> int:
     )
     console.print(
         "[dim]fit is not predicted here — the run fits or OOMs; "
-        "docs/02 has the measured 24 GB budget, docs/05 the knobs to react with.[/dim]"
+        "docs/02 has the measured per-GPU budget, docs/05 the knobs to react with.[/dim]"
     )
 
     if args.dry_run:

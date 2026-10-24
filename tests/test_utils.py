@@ -16,11 +16,12 @@ from rocm_qlora.utils import (
 )
 
 
-def test_human_bytes():
+def test_human_bytes_is_decimal():
+    """Sizes match rocm-smi / the docs (decimal), not binary units."""
     assert human_bytes(None) == "n/a"
     assert human_bytes(0) == "0 B"
-    assert human_bytes(1536) == "1.5 KiB"
-    assert human_bytes(25.75 * 2**30) == "25.8 GiB"
+    assert human_bytes(1536) == "1.5 KB"
+    assert human_bytes(25_753_026_560) == "25.8 GB"  # the 24 GiB card as rocm-smi reports it
 
 
 def test_human_duration():
