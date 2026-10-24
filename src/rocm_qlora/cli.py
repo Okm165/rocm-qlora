@@ -6,7 +6,7 @@ doctor    environment + hardware report; SDPA/bnb probes; writes .context/
 data      dataset profile: token lengths, coverage, preview, chart
 prepare   quantize/surgery the base model into .data/models/ (once)
 train     preflight + launch (single GPU or DDP via torchrun)
-report    regenerate charts + Markdown/HTML report from metrics.jsonl
+report    regenerate charts + the Markdown report from metrics.jsonl
 chat      interactive sanity check against a trained adapter
 merge     merge adapter into a bf16 model (ready for GGUF export)
 """
@@ -408,11 +408,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    # Point the torch wheel's libdrm at the system ASIC-ID table (silences a
-    # per-GPU stderr flood at HIP init; workers inherit it via build_worker_env).
     """Parse arguments and dispatch to the selected command."""
     import os
 
+    # Point the torch wheel's libdrm at the system ASIC-ID table (silences a
+    # per-GPU stderr flood at HIP init; workers inherit it via build_worker_env).
     os.environ.setdefault("AMDGPU_ASIC_ID_TABLE_PATHS", "/usr/share/libdrm")
     parser = build_parser()
     args = parser.parse_args(argv)
