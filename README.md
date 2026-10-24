@@ -176,6 +176,7 @@ src/rocm_qlora/
   plots.py              all matplotlib charts + Markdown report
   hardware.py           rocm-smi parsing · VRAM estimator · GPU selection · SDPA probe
   launcher.py           GPU choice, worker env, torchrun orchestration
+  sft.py                config → SFTConfig mapping (checkpoint cadence, warmup)
   train.py              the training worker (one process per GPU)
   explain.py            contextual explainer panels (deduplicated per run)
   chat.py               interactive sanity check

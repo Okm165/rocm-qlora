@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from rocm_qlora.config import Config
-from rocm_qlora.train import build_sft_config
+from rocm_qlora.sft import build_sft_config
 
 RUN_DIR = Path("/tmp/rocm-qlora-test-run")
 

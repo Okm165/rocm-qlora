@@ -1,18 +1,14 @@
 """Hardware discovery and memory math for AMD ROCm systems.
 
-This module is the project's "eyes on the machine". It answers:
+* ``gpu_snapshot`` / ``gpu_processes`` — rocm-smi output, parsed tolerantly.
+* ``estimate_training_vram`` — a transparent, printed decomposition.
+* ``probe_sdpa`` — which attention backends actually launch on this stack
+  (a fresh subprocess per backend: a failed RDNA3 kernel launch can surface
+  as a *deferred* error and contaminate the process).
+* ``select_gpus`` — pick GPUs whose free VRAM fits the estimate.
 
-* What GPUs exist, how much VRAM is free right now, who is using it?
-  (``rocm-smi`` JSON, parsed tolerantly across rocm-smi versions.)
-* How much VRAM will a given training config need? (``estimate_training_vram``
-  — a transparent, printed decomposition rather than a magic number.)
-* Which SDPA attention backends actually work on this ROCm/PyTorch stack?
-  (``probe_sdpa`` — subprocess probes, because a failed kernel launch on
-  RDNA3 can surface as a *deferred* error and contaminate the process.)
-* Which GPUs should this run use? (``select_gpus``.)
-
-Design rule: everything here is safe to import without torch installed
-(tests, plotting, `data` command). Torch is imported lazily where needed.
+Everything here is safe to import without torch installed; torch is imported
+lazily where needed.
 """
 
 from __future__ import annotations
@@ -774,13 +770,11 @@ print(json.dumps({
 def probe_hip_ipc(python_exe: str | None = None, timeout: float = 120.0) -> HipIpcProbe:
     """Can HIP export IPC memory handles in this environment?
 
-    RCCL's P2P transport needs `hipIpcGetMemHandle`. The ROCm 7.1 runtime
-    defaults to *legacy* IPC mode, whose export ioctl exists only in the
-    out-of-tree DKMS driver — on mainline kernels it fails unless
-    `HSA_ENABLE_IPC_MODE_LEGACY=0` selects the dma-buf path. This probe runs
-    in a fresh subprocess (the flag must be set before HIP initializes) with
-    the flag applied, so `doctor` catches any future stack change that breaks
-    the P2P transport again.
+    RCCL's P2P transport needs `hipIpcGetMemHandle`. ROCm 7.1 defaults to
+    *legacy* IPC mode, whose export ioctl exists only in the out-of-tree DKMS
+    driver — on mainline kernels it fails unless `HSA_ENABLE_IPC_MODE_LEGACY=0`
+    selects the dma-buf path. Fresh subprocess: the flag must be set before
+    HIP initializes.
     """
     import sys as _sys
 

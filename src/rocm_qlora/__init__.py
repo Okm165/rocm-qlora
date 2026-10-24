@@ -7,6 +7,7 @@ Package layout (each module explains itself — see module docstrings):
     model.py      NF4 pre-quantization + 4-bit model/LoRA assembly + merge
     hardware.py   ROCm/GPU discovery, rocm-smi parsing, VRAM math, SDPA probe
     launcher.py   GPU selection + worker environment + torchrun orchestration
+    sft.py        project config -> trl.SFTConfig mapping
     train.py      the training worker (runs inside torchrun ranks)
     monitor.py    metrics JSONL, live rich dashboard, health guards, summaries
     plots.py      every matplotlib chart + the Markdown run report

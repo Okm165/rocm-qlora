@@ -311,18 +311,15 @@ def summarize(records: Sequence[MetricsRecord]) -> RunSummary:
 
 def health_violation(record: TrainRecord) -> tuple[str, str] | None:
     """Return ``(event, message)`` if a train record shows numerically broken
-    training, else ``None``. Three failure modes are loud errors, never silent
-    drift — a long run that quietly degrades into a garbage adapter is the
-    worst possible outcome:
+    training, else ``None`` — three failure modes, each a loud abort:
 
     * **non-finite loss** — the classic NaN/Inf loss spike.
-    * **loss exactly 0.0** — TRL's fused loss is ``sum(-log_probs) / n`` where
-      ignored positions contribute zeros, so a collapsed or all-masked batch
-      reports exactly zero and the loss EMA would keep "improving" on zeros.
-    * **finite loss with NaN grad_norm** — the forward was fine but the
-      backward poisoned the gradients; the next optimizer step writes NaN
-      into every weight. This slipped through a loss-only guard in a real
-      27B run (step 6, loss 1.07, grad_norm NaN).
+    * **loss exactly 0.0** — the fused loss divides masked positions in as
+      zeros, so a collapsed or all-masked batch reports exactly zero while the
+      EMA keeps "improving".
+    * **finite loss with NaN grad_norm** — the forward was fine, the backward
+      poisoned the gradients; the next optimizer step would write NaN into
+      every weight (seen in a real 27B run at step 6: loss 1.07, grad NaN).
     """
     step = record["step"]
     loss = record["loss"]
@@ -458,17 +455,21 @@ class RichDashboard:
         with contextlib.suppress(Exception):
             self._live.update(self._render())
 
-    def _render(self) -> Panel:
-        s = self.state
+    def _progress(self) -> Progress:
         progress = Progress(
             TextColumn("[bold]{task.description}"),
             BarColumn(bar_width=34, complete_style="cyan", finished_style="green"),
             TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
             expand=False,
         )
-        total = max(1, s.max_steps)
-        progress.add_task(f"step {s.step}/{s.max_steps}", total=total, completed=min(s.step, total))
+        total = max(1, self.state.max_steps)
+        progress.add_task(
+            f"step {self.state.step}/{self.state.max_steps}", total=total, completed=min(self.state.step, total)
+        )
+        return progress
 
+    def _metrics_table(self) -> Table:
+        s = self.state
         metrics = Table.grid(padding=(0, 2))
         metrics.add_column(justify="right", style="dim")
         metrics.add_column()
@@ -489,11 +490,13 @@ class RichDashboard:
             fmt_int(s.tokens_seen) + (f" / ~{fmt_int(s.total_tokens_estimate)}" if s.total_tokens_estimate else ""),
         )
         metrics.add_row("epoch", f"{s.epoch:.2f} / {s.total_epochs:.0f}")
+        return metrics
 
+    def _gpu_table(self) -> Table:
         gpu_table = Table.grid(padding=(0, 2))
         gpu_table.add_column(style="dim")
         gpu_table.add_column()
-        for g in s.gpus:
+        for g in self.state.gpus:
             frac = safe_div(g["mem_used_gb"], g["mem_total_gb"], 0)
             color = "red" if frac > 0.92 else ("yellow" if frac > 0.8 else "green")
             temp = f"{g['temp_edge_c']:.0f}°C" if g.get("temp_edge_c") is not None else "?"
@@ -503,12 +506,15 @@ class RichDashboard:
                 f"GPU {g['index']}",
                 f"[{color}]{g['mem_used_gb']:.1f}/{g['mem_total_gb']:.0f}GB[/{color}]  {temp}  {power}  util {util}",
             )
+        return gpu_table
 
+    def _render(self) -> Panel:
+        s = self.state
         body = Group(
-            progress,
+            self._progress(),
             Text(f"elapsed {human_duration(s.elapsed_s)} · ETA {fmt_eta(s.eta_s)}", style="dim"),
-            metrics,
-            Panel(gpu_table, title="GPUs", border_style="blue", padding=(0, 1)),
+            self._metrics_table(),
+            Panel(self._gpu_table(), title="GPUs", border_style="blue", padding=(0, 1)),
             Panel(
                 Text.from_markup("\n".join(s.health or ["starting…"]), style="dim"),
                 title="health",
@@ -552,7 +558,7 @@ class MetricsCallback(TrainerCallback):
         self.total_tokens_estimate = total_tokens_estimate
         self.world_size = max(1, world_size)
         # Injected by train.py: keeps `monitor` out of the `plots` import cycle
-        # while the lazy wrapper still defers matplotlib to the first render.
+        # while deferring matplotlib to the first render.
         self._chart_renderer = chart_renderer
 
         self.records: list[MetricsRecord] = []
@@ -753,7 +759,7 @@ class MetricsCallback(TrainerCallback):
         eta: float | None,
         gpu_recs: list[dict[str, Any]],
     ) -> None:
-        if self.dashboard is None:  # the caller guards; this keeps the type checker honest
+        if self.dashboard is None:  # caller guards; this narrows the type
             return
         emas = [as_float(r["loss_ema"]) for r in select(self.records, "train") if r.get("loss_ema") is not None]
         self.dashboard.update(

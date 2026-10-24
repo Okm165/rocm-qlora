@@ -155,18 +155,13 @@ def safe_div(a: float, b: float, default: float = float("nan")) -> float:  # pyr
     return a / b if b else default
 
 
-def percentile(sorted_values: Sequence[float], q: float) -> float:
-    """Linear-interpolated percentile (like numpy.percentile, q in [0,100])."""
-    if not sorted_values:
+def percentile(values: Sequence[float], q: float) -> float:
+    """Linear-interpolated percentile (numpy semantics, q in [0, 100])."""
+    if not values:
         return float("nan")
-    if len(sorted_values) == 1:
-        return float(sorted_values[0])
-    rank = (q / 100.0) * (len(sorted_values) - 1)
-    lo, hi = math.floor(rank), math.ceil(rank)
-    if lo == hi:
-        return float(sorted_values[lo])
-    frac = rank - lo
-    return float(sorted_values[lo] * (1 - frac) + sorted_values[hi] * frac)
+    import numpy as np
+
+    return float(np.percentile(values, q))
 
 
 def linear_slope(values: Iterable[float | None]) -> float:

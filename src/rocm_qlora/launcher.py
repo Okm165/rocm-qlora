@@ -149,34 +149,19 @@ def build_worker_env(cfg: Config, gpu_ids: list[int]) -> dict[str, str]:
     env["PYTHONUNBUFFERED"] = "1"
     env["HF_HUB_DISABLE_TELEMETRY"] = "1"
     # --- RCCL transport on consumer RDNA3 -----------------------------------
-    # P2P *works* here once the runtime uses dma-buf IPC (the flag below):
-    # `HSA_ENABLE_IPC_MODE_LEGACY=0` makes `hipIpcGetMemHandle` succeed and
-    # RCCL runs collectives `via P2P/IPC` at ~26 GB/s vs ~5.2 GB/s for the
-    # shared-memory fallback (measured; see scripts/poc_p2p_allreduce.py,
-    # which verifies P2P allreduce is bit-exact at the 27B gradient sizes).
-    #
-    # The default is nevertheless the *shared-memory* transport — a
-    # simplicity choice that keeps the IPC/IOMMU path out of the picture.
-    # The intermittent NaN-gradient events observed on the 27B are
-    # model-side, not transport-side: they occurred over both transports,
-    # and plain allreduce is bit-exact on both at the 27B's gradient sizes
-    # (100 iters x 4 sizes). For LoRA, SHM costs ~45 ms/step — noise next to
-    # a ~10-25 s step. The NaN guards abort loudly if anything misbehaves.
-    #
-    # Opt back into P2P via the config:
-    #   [env.extra]
-    #   NCCL_P2P_DISABLE = "0"
+    # P2P works via dma-buf IPC (HSA_ENABLE_IPC_MODE_LEGACY=0) at ~26 GB/s vs
+    # ~5.2 GB/s shared-memory, and is bit-exact at 27B gradient sizes
+    # (scripts/poc_p2p_allreduce.py). The default is still shared memory: a
+    # simplicity choice — for LoRA its ~45 ms/step is noise next to a 10-25 s
+    # step. Opt back in via [env.extra] NCCL_P2P_DISABLE = "0" (docs/02).
     env.setdefault("HSA_ENABLE_IPC_MODE_LEGACY", "0")
     env.setdefault("NCCL_P2P_DISABLE", "1")
     env.setdefault("NCCL_IB_DISABLE", "1")  # sensible default on machines without InfiniBand
     env.setdefault("NCCL_DEBUG", "WARN")
-    # The torch-wheel libdrm looks for the ASIC-ID table only under
-    # /opt/amdgpu/share/libdrm; when that path is absent it prints
-    # "(null): No such file or directory" per GPU to stderr at HIP init.
-    # Point it at the system table (cuts the flood from ~30 lines to a few).
+    # The torch wheel's libdrm prints "(null): No such file or directory" per
+    # GPU at HIP init unless the ASIC-ID table path points at the system one.
     env.setdefault("AMDGPU_ASIC_ID_TABLE_PATHS", "/usr/share/libdrm")
-    # Hash randomization must be fixed before the interpreter starts to make
-    # dict/set iteration order reproducible across the workers.
+    # Fix hash randomization before the interpreter starts (reproducible order).
     env.setdefault("PYTHONHASHSEED", str(cfg.run.seed))
     if cfg.env.hip_alloc_conf:
         env["PYTORCH_HIP_ALLOC_CONF"] = cfg.env.hip_alloc_conf
