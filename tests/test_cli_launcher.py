@@ -100,3 +100,15 @@ def test_doctor_verdict_readers(tmp_path, monkeypatch):
     cfg2 = Config.from_dict({"model": {"attn": "eager"}, "env": {"aotriton": "off"}})
     assert launcher.resolve_attn_impl(cfg2) == "eager"
     assert launcher.resolve_aotriton(cfg2) is False
+
+
+def test_max_length_hint_rounds_up_past_p99(monkeypatch):
+    """The suggestion must cover >= p99; rounding down would miss it (1425 -> 1536, not 1408)."""
+    from rocm_qlora import cli
+    from rocm_qlora.config import Config
+    from rocm_qlora.data import Percentiles
+
+    printed: list[str] = []
+    monkeypatch.setattr(cli.console, "print", lambda *a, **k: printed.append(str(a[0])))
+    cli._print_max_length_hint(Config.from_dict({}), Percentiles(400.0, 900.0, 1100.0, 1425.0, 2000.0))
+    assert "1536" in printed[0]
