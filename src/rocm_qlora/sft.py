@@ -17,9 +17,7 @@ if TYPE_CHECKING:
     from transformers import PreTrainedTokenizerBase
 
 
-def ensure_training_chat_template(
-    tokenizer: PreTrainedTokenizerBase, cfg: Config, log: Callable[[str], None]
-) -> None:
+def ensure_training_chat_template(tokenizer: PreTrainedTokenizerBase, cfg: Config, log: Callable[[str], None]) -> None:
     """Install a `{% generation %}`-marked training template when TRL's
     auto-detection cannot match the checkpoint's template.
 

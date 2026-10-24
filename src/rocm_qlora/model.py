@@ -64,9 +64,7 @@ def load_tokenizer(cfg: Config) -> PreTrainedTokenizerBase:
     from transformers import AutoTokenizer
 
     tokenizer = AutoTokenizer.from_pretrained(cfg.model.name, trust_remote_code=cfg.model.trust_remote_code)
-    if tokenizer.pad_token is None:
-        # Qwen uses <|endoftext|> as both eos and pad; set explicitly so the
-        # collator never guesses.
+    if tokenizer.pad_token is None:  # generic guard; Qwen checkpoints ship both
         tokenizer.pad_token = tokenizer.eos_token
     return tokenizer
 
@@ -464,8 +462,7 @@ def prepare_for_qlora(model: PreTrainedModel, cfg: Config):
             every_n_layers=cfg.optim.checkpoint_every_n_layers,
             offload=cfg.optim.activation_offloading,
         )
-    if hasattr(model, "enable_input_require_grads"):
-        model.enable_input_require_grads()
+    model.enable_input_require_grads()  # PreTrainedModel API; grads must reach the frozen inputs
     return model
 
 
