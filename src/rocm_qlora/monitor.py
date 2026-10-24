@@ -53,7 +53,6 @@ class TrainRecord(TypedDict):
     grad_norm: float | None
     tok_per_s: float | None
     tokens_seen: int
-    elapsed_s: float
     eta_s: float | None
     vram_peak_gb: float | None
     gpu: list[GpuMetric]
@@ -543,7 +542,6 @@ class MetricsCallback(TrainerCallback):
             "grad_norm": logs.get("grad_norm"),
             "tok_per_s": tok_per_s,
             "tokens_seen": tokens,
-            "elapsed_s": time.monotonic() - self._t0,
             "eta_s": step_time_ema * remaining if step_time_ema is not None else None,
             "vram_peak_gb": vram_peak,
             "gpu": gpu_recs,

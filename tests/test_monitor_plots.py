@@ -30,7 +30,6 @@ def synth_records(n=60, epochs=3):
             "grad_norm": 0.5 + 0.1 * math.sin(i),
             "tok_per_s": 800.0,
             "tokens_seen": i * 4096,
-            "elapsed_s": i * 2.0,
             "eta_s": (n - i) * 2.0,
             "vram_peak_gb": 19.5,
             "world_size": 3,
