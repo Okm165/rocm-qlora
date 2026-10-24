@@ -54,7 +54,8 @@ llama-quantize model-f16.gguf model-Q4_K_M.gguf Q4_K_M
   (fewer epochs, more dropout — `configs/qwen3.8-27b.toml` comments say where).
 * **VRAM per GPU** — starts ~21 GB and sawtooths toward ~24 GB (2026-10-23
   batch-1 run); a sustained climb means fragmentation — resuming resets it.
-* **health line** — temps < 80 °C, no warning events, loss trend not "rising".
+* **warnings** — the console prints `!` lines when the loss EMA rises, a GPU
+  hits 90 °C, or VRAM grows over a run; none should appear on a healthy run.
 
 ## The guards (why the run aborts instead of rotting)
 

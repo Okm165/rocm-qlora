@@ -25,6 +25,26 @@ handled by the libraries. This project adds exactly three things:
 The *teaching* is the `docs/` set below — static, read deliberately, nothing
 rendered into your terminal at runtime.
 
+## House rules (the decisions behind the code)
+
+* **Facts on the terminal, knowledge in `docs/`.** Commands print what
+  happened and what to do next — plain status/progress lines, warnings,
+  tables, artifact paths. Concepts, rationale and exact commands live in
+  this README and `docs/`; no boxes, no teaching text at runtime.
+* **One artifact per fact.** `metrics.jsonl` is the single source of
+  truth: charts, `report.md` and the end-of-run numbers all derive from
+  it, so nothing needs keeping in sync. The other files in a run dir are
+  records of one thing each (config snapshot, environment fingerprint).
+* **No fit prediction.** The launcher reports visible GPUs, free VRAM and
+  the processes holding them, then launches. A run either fits or OOMs —
+  the measured 24 GB budget is in `docs/02`, the knobs to react with in
+  `docs/05`.
+* **Configs explain themselves.** Every knob is commented where you set
+  it (`configs/*.toml`); the reasoning behind the values is `docs/03`.
+* **Loud guards, no silent rot.** Numerically broken training (NaN or
+  exactly-zero loss, NaN `grad_norm`) aborts with a named `error` event
+  and a doc pointer instead of continuing (`docs/05`).
+
 ## Requirements
 
 * Linux with **AMD ROCm 7.1** user-space (the pinned torch wheel is built for it)
@@ -147,7 +167,7 @@ src/rocm_qlora/
   data.py               ShareGPT loading, validation, token profiling, previews
   model.py              prepare (NF4 + surgery) · 4-bit load · LoRA
   merge.py              adapter → bf16 merge (ready for GGUF export)
-  monitor.py            metrics.jsonl · health checks · summaries
+  monitor.py            metrics.jsonl · progress lines · health guards · summaries
   plots.py              all matplotlib charts + Markdown report
   hardware.py           rocm-smi parsing · GPU selection
   probes.py             SDPA / RCCL-IPC / matmul probes
