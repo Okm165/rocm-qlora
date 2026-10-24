@@ -1,16 +1,10 @@
 """Configuration: TOML -> validated dataclasses -> snapshots.
 
-Design notes
-------------
-* **Strict parsing**: unknown TOML keys raise errors (typos in a 100-line
-  config are otherwise silent and expensive). The error message lists the
-  offending key and its location.
-* **Single source of truth**: every knob the trainer uses is a field here.
-  The resolved config is snapshotted into the run directory as both TOML
-  (human-readable) and JSON (machine-readable), so a run is reproducible
-  from its own output folder.
-* **CLI overrides** are applied on top of the file (see ``with_overrides``),
-  and *validation always runs last*.
+Unknown TOML keys are rejected (typos in a 100-line config are otherwise
+silent and expensive); every knob the trainer uses is a field here. The
+resolved config is snapshotted into the run directory as TOML + JSON, so a
+run is reproducible from its own output folder. CLI overrides are applied
+on top of the file, and validation always runs last.
 
 The comments in ``configs/*.toml`` are the user-facing documentation; this
 module is the contract.
@@ -20,10 +14,10 @@ from __future__ import annotations
 
 import dataclasses
 import tomllib
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, get_type_hints
 
 from .utils import write_json, write_text
 
@@ -196,11 +190,6 @@ class DistConfig:
     safety_factor: float = 1.10
 
 
-def _require(cond: bool, msg: str) -> str | None:
-    """Return `msg` when `cond` is falsy, else None (collecting validators)."""
-    return None if cond else msg
-
-
 @dataclass
 class Config:
     """Full resolved configuration: one dataclass per TOML section."""
@@ -273,103 +262,82 @@ class Config:
 
     def validate(self) -> list[str]:
         """Collect all config errors as an ordered list (empty = valid)."""
-        return (
-            self._core_errors()
-            + self._data_errors()
-            + self._lora_errors()
-            + self._optim_errors()
-            + self._runtime_errors()
-        )
-
-    def _core_errors(self) -> list[str]:
-        errs = [
-            _require(self.run.seed >= 0, "run.seed must be >= 0"),
-            _require(self.run.console_refresh_per_second > 0, "run.console_refresh_per_second must be > 0"),
-            _require(self.model.dtype in {"bfloat16", "float16"}, "model.dtype must be bfloat16 or float16"),
-            _require(self.model.attn in {"auto", "sdpa", "eager"}, "model.attn must be auto|sdpa|eager"),
-            _require(self.quantization.quant_type in {"nf4", "fp4"}, "quantization.quant_type must be nf4 or fp4"),
-            _require(
-                self.quantization.quant_storage in {"uint8", "bfloat16", "float16", "float32"},
-                "quantization.quant_storage must be one of uint8|bfloat16|float16|float32",
-            ),
-        ]
-        return [e for e in errs if e]
-
-    def _data_errors(self) -> list[str]:
-        errs = [
-            _require(0.0 <= self.data.eval_fraction < 0.5, "data.eval_fraction must be in [0, 0.5)"),
-            _require(128 <= self.data.max_length <= 32768, "data.max_length must be in [128, 32768]"),
-            _require(
-                self.data.truncation_mode == "keep_start",
-                "data.truncation_mode must be keep_start (TRL 1.16 deprecated keep_end; it is removed in TRL 2)",
-            ),
-            _require(
-                self.data.packing_strategy in {"bfd", "bfd_split", "wrapped"},
-                "data.packing_strategy must be bfd|bfd_split|wrapped",
-            ),
-        ]
-        return [e for e in errs if e]
-
-    def _lora_errors(self) -> list[str]:
-        errs = [
-            _require(1 <= self.lora.r <= 512, "lora.r must be in [1, 512]"),
-            _require(self.lora.alpha > 0, "lora.alpha must be > 0"),
-            _require(0.0 <= self.lora.dropout < 1.0, "lora.dropout must be in [0, 1)"),
-            _require(self.lora.bias in {"none", "all", "lora_only"}, "lora.bias must be none|all|lora_only"),
-        ]
-        if isinstance(self.lora.target_modules, list):
-            errs.append(_require(len(self.lora.target_modules) > 0, "lora.target_modules list must not be empty"))
-        return [e for e in errs if e]
-
-    def _optim_errors(self) -> list[str]:
-        errs = [
-            _require(0.0 < self.optim.lr <= 1e-2, "optim.lr must be in (0, 1e-2]"),
-            _require(self.optim.epochs > 0, "optim.epochs must be > 0"),
-            _require(self.optim.per_device_batch_size >= 1, "optim.per_device_batch_size must be >= 1"),
-            _require(self.optim.grad_accum >= 1, "optim.grad_accum must be >= 1"),
-            _require(self.optim.max_grad_norm > 0, "optim.max_grad_norm must be > 0"),
-            _require(
-                self.optim.optimizer in {"adamw_torch", "adamw_8bit", "adafactor"},
-                "optim.optimizer must be adamw_torch|adamw_8bit|adafactor "
-                "(paged optimizers are CUDA-only and unsupported on ROCm)",
-            ),
-            _require(
-                self.optim.scheduler in {"cosine", "linear", "constant", "cosine_with_restarts"},
-                "optim.scheduler must be cosine|linear|constant|cosine_with_restarts",
-            ),
-            _require(0.0 <= self.optim.warmup_ratio < 0.5, "optim.warmup_ratio must be in [0, 0.5)"),
-            _require(
-                1 <= self.optim.checkpoint_every_n_layers <= 8,
-                "optim.checkpoint_every_n_layers must be in [1, 8]",
-            ),
-            _require(self.optim.loss_type in {"nll", "dft"}, "optim.loss_type must be nll|dft"),
-        ]
+        errors = [msg for msg, ok in _RULES if not ok(self)]
+        if isinstance(self.lora.target_modules, list) and not self.lora.target_modules:
+            errors.append("lora.target_modules list must not be empty")
         if "lm_head" in self.quantization.requantize_modules:
-            errs.append(
+            errors.append(
                 "quantization.requantize_modules contains 'lm_head', which cannot be quantized: TRL 1.16 "
                 "computes every SFT loss through a fused chunked head that slices the raw lm_head weight "
                 "tensor (no full logits are materialized). The head must stay in 16-bit."
             )
-        return [e for e in errs if e]
-
-    def _runtime_errors(self) -> list[str]:
-        errs = [
-            _require(self.eval.per_device_batch_size >= 1, "eval.per_device_batch_size must be >= 1"),
-            _require(self.logging.chart_snapshot_steps >= 1, "logging.chart_snapshot_steps must be >= 1"),
-            _require(self.logging.gpu_sample_seconds >= 1.0, "logging.gpu_sample_seconds must be >= 1.0"),
-            _require(
-                self.logging.checkpoint_every_n_steps >= 0,
-                "logging.checkpoint_every_n_steps must be >= 0 (0 = epoch-only checkpoints)",
-            ),
-            _require(self.env.aotriton in {"auto", "on", "off"}, "env.aotriton must be auto|on|off"),
-            _require(self.env.omp_num_threads >= 1, "env.omp_num_threads must be >= 1"),
-            _require(self.dist.mode in {"auto", "ddp", "single"}, "dist.mode must be auto|ddp|single"),
-        ]
         if isinstance(self.dist.gpus, list):
-            errs.append(_require(len(self.dist.gpus) > 0, "dist.gpus list must not be empty"))
-            errs.append(_require(all(g >= 0 for g in self.dist.gpus), "dist.gpus ids must be >= 0"))
-        errs.append(_require(self.dist.safety_factor >= 1.0, "dist.safety_factor must be >= 1.0"))
-        return [e for e in errs if e]
+            if not self.dist.gpus:
+                errors.append("dist.gpus list must not be empty")
+            elif any(g < 0 for g in self.dist.gpus):
+                errors.append("dist.gpus ids must be >= 0")
+        return errors
+
+
+#: One (message, predicate) pair per rule; a falsy predicate reports the message.
+_RULES: tuple[tuple[str, Callable[[Config], bool]], ...] = (
+    ("run.seed must be >= 0", lambda c: c.run.seed >= 0),
+    ("run.console_refresh_per_second must be > 0", lambda c: c.run.console_refresh_per_second > 0),
+    ("model.dtype must be bfloat16 or float16", lambda c: c.model.dtype in {"bfloat16", "float16"}),
+    ("model.attn must be auto|sdpa|eager", lambda c: c.model.attn in {"auto", "sdpa", "eager"}),
+    ("quantization.quant_type must be nf4 or fp4", lambda c: c.quantization.quant_type in {"nf4", "fp4"}),
+    (
+        "quantization.quant_storage must be one of uint8|bfloat16|float16|float32",
+        lambda c: c.quantization.quant_storage in {"uint8", "bfloat16", "float16", "float32"},
+    ),
+    ("data.eval_fraction must be in [0, 0.5)", lambda c: 0.0 <= c.data.eval_fraction < 0.5),
+    ("data.max_length must be in [128, 32768]", lambda c: 128 <= c.data.max_length <= 32768),
+    (
+        "data.truncation_mode must be keep_start (TRL 1.16 deprecated keep_end; it is removed in TRL 2)",
+        lambda c: c.data.truncation_mode == "keep_start",
+    ),
+    (
+        "data.packing_strategy must be bfd|bfd_split|wrapped",
+        lambda c: c.data.packing_strategy in {"bfd", "bfd_split", "wrapped"},
+    ),
+    ("lora.r must be in [1, 512]", lambda c: 1 <= c.lora.r <= 512),
+    ("lora.alpha must be > 0", lambda c: c.lora.alpha > 0),
+    ("lora.dropout must be in [0, 1)", lambda c: 0.0 <= c.lora.dropout < 1.0),
+    ("lora.bias must be none|all|lora_only", lambda c: c.lora.bias in {"none", "all", "lora_only"}),
+    ("optim.lr must be in (0, 1e-2]", lambda c: 0.0 < c.optim.lr <= 1e-2),
+    ("optim.epochs must be > 0", lambda c: c.optim.epochs > 0),
+    ("optim.per_device_batch_size must be >= 1", lambda c: c.optim.per_device_batch_size >= 1),
+    ("optim.grad_accum must be >= 1", lambda c: c.optim.grad_accum >= 1),
+    ("optim.max_grad_norm must be > 0", lambda c: c.optim.max_grad_norm > 0),
+    (
+        (
+            "optim.optimizer must be adamw_torch|adamw_8bit|adafactor "
+            "(paged optimizers are CUDA-only and unsupported on ROCm)"
+        ),
+        lambda c: c.optim.optimizer in {"adamw_torch", "adamw_8bit", "adafactor"},
+    ),
+    (
+        "optim.scheduler must be cosine|linear|constant|cosine_with_restarts",
+        lambda c: c.optim.scheduler in {"cosine", "linear", "constant", "cosine_with_restarts"},
+    ),
+    ("optim.warmup_ratio must be in [0, 0.5)", lambda c: 0.0 <= c.optim.warmup_ratio < 0.5),
+    (
+        "optim.checkpoint_every_n_layers must be in [1, 8]",
+        lambda c: 1 <= c.optim.checkpoint_every_n_layers <= 8,
+    ),
+    ("optim.loss_type must be nll|dft", lambda c: c.optim.loss_type in {"nll", "dft"}),
+    ("eval.per_device_batch_size must be >= 1", lambda c: c.eval.per_device_batch_size >= 1),
+    ("logging.chart_snapshot_steps must be >= 1", lambda c: c.logging.chart_snapshot_steps >= 1),
+    ("logging.gpu_sample_seconds must be >= 1.0", lambda c: c.logging.gpu_sample_seconds >= 1.0),
+    (
+        "logging.checkpoint_every_n_steps must be >= 0 (0 = epoch-only checkpoints)",
+        lambda c: c.logging.checkpoint_every_n_steps >= 0,
+    ),
+    ("env.aotriton must be auto|on|off", lambda c: c.env.aotriton in {"auto", "on", "off"}),
+    ("env.omp_num_threads must be >= 1", lambda c: c.env.omp_num_threads >= 1),
+    ("dist.mode must be auto|ddp|single", lambda c: c.dist.mode in {"auto", "ddp", "single"}),
+    ("dist.safety_factor must be >= 1.0", lambda c: c.dist.safety_factor >= 1.0),
+)
 
 
 class ConfigError(Exception):
@@ -383,14 +351,12 @@ class ConfigError(Exception):
 
 def _build(cls: type, raw: Mapping[str, Any], prefix: str) -> Any:
     """Recursively construct dataclasses from dicts, rejecting unknown keys."""
-    from typing import get_type_hints
-
     if not isinstance(raw, Mapping):  # pyright: ignore[reportUnnecessaryIsInstance]  # runtime guard
-        raise ConfigError(  # pyright: ignore[reportUnreachable]  # runtime guard for non-Mapping TOML values
+        raise ConfigError(  # pyright: ignore[reportUnreachable]  # non-table TOML values
             f"Expected a table at '{prefix or '<root>'}', got {type(raw).__name__}"
         )
     known = {f.name: f for f in fields(cls)}
-    hints = get_type_hints(cls)  # resolves string annotations (future import)
+    hints = get_type_hints(cls)  # resolves the string annotations from __future__
     unknown = set(raw) - set(known)
     if unknown:
         raise ConfigError(
