@@ -332,7 +332,10 @@ def select_gpus(*, requested: str | list[int] = "auto") -> GpuPlan:
         return GpuPlan(gpus=list(requested), free_gb=free, warnings=warnings)
 
     if not free:
-        raise RuntimeError("No GPUs detected by rocm-smi")
+        raise RuntimeError(
+            "rocm-smi reported no GPUs — either none are visible to this user or rocm-smi failed; "
+            "run `rocm-qlora doctor` to see which"
+        )
     # Every visible GPU — data-parallel throughput is free.
     return GpuPlan(gpus=sorted(free), free_gb=free)
 

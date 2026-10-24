@@ -155,8 +155,13 @@ def cmd_data(args: argparse.Namespace) -> int:
 
     _print_dataset_table(cfg, stats)
 
-    console.print("[dim]tokenizing with the model's chat template…[/dim]")
+    console.print("[dim]tokenizing with the training chat template…[/dim]")
     tokenizer = load_tokenizer(cfg)
+    from .sft import ensure_training_chat_template
+
+    # Same swap the training worker does, so these lengths are what training
+    # actually renders (a mismatched template would misplace the p99).
+    ensure_training_chat_template(tokenizer, cfg, lambda msg: console.print(f"[dim]{msg}[/dim]"))
     profile = profile_tokens(
         tokenizer, examples, messages_field=cfg.data.messages_field, max_length=cfg.data.max_length
     )

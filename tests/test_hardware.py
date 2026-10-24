@@ -86,4 +86,4 @@ def test_select_gpus_raises_without_gpus(monkeypatch):
         hardware.select_gpus()
         raise AssertionError("expected RuntimeError")
     except RuntimeError as exc:
-        assert "No GPUs" in str(exc)
+        assert "rocm-smi reported no GPUs" in str(exc)

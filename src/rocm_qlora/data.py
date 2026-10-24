@@ -183,24 +183,26 @@ class TokenProfile:
 def _token_count(
     tokenizer: PreTrainedTokenizerBase, messages: list[ChatMessage], template_kwargs: dict[str, Any] | None
 ) -> int:
-    """Chat-templated token count for one example (~3.6 chars/token on failure)."""
-    try:
-        ids: Any = tokenizer.apply_chat_template(  # dynamic union; normalized just below
-            cast("list[dict[str, str]]", messages),  # TypedDict rows are plain dicts
-            tokenize=True,
-            add_generation_prompt=False,
-            **(template_kwargs or {}),
-        )
-        # transformers v5 may return a BatchEncoding/dict, a tensor, or a list.
-        if isinstance(ids, dict) or hasattr(ids, "input_ids"):
-            ids = ids["input_ids"]
-        if hasattr(ids, "tolist"):
-            ids = ids.tolist()
-        while ids and isinstance(ids[0], list):  # strip batch dims
-            ids = ids[0]
-        return len(ids)
-    except Exception:
-        return int(len("".join(m["content"] for m in messages)) / 3.6)
+    """Chat-templated token count for one example.
+
+    Template failures propagate (``profile_tokens`` names the example): the
+    same template renders the training data, so an estimate here would poison
+    the length profile that `max_length` is chosen from.
+    """
+    ids: Any = tokenizer.apply_chat_template(  # dynamic union; normalized just below
+        cast("list[dict[str, str]]", messages),  # TypedDict rows are plain dicts
+        tokenize=True,
+        add_generation_prompt=False,
+        **(template_kwargs or {}),
+    )
+    # transformers v5 may return a BatchEncoding/dict, a tensor, or a list.
+    if isinstance(ids, dict) or hasattr(ids, "input_ids"):
+        ids = ids["input_ids"]
+    if hasattr(ids, "tolist"):
+        ids = ids.tolist()
+    while ids and isinstance(ids[0], list):  # strip batch dims
+        ids = ids[0]
+    return len(ids)
 
 
 def profile_tokens(
@@ -211,14 +213,19 @@ def profile_tokens(
     max_length: int = 1024,
     template_kwargs: dict[str, Any] | None = None,
 ) -> TokenProfile:
-    """Tokenize every example with the model's chat template and measure.
+    """Tokenize every example with the tokenizer's current chat template and measure.
 
-    Note: TRL tokenizes with its own (possibly patched) template during
-    training; the numbers here are the right ballpark for choosing
-    ``max_length``. The profiler measures the rendered conversation *including* the
-    assistant turn (i.e., exactly what the model is trained on).
+    Both callers install the *training* template first (``data`` and the
+    training worker), so these are the token counts training actually renders —
+    including the assistant turn, which is what the loss is computed on.
     """
-    lengths = sorted(_token_count(tokenizer, item[messages_field], template_kwargs) for item in examples)
+    lengths: list[int] = []
+    for index, item in enumerate(examples):
+        try:
+            lengths.append(_token_count(tokenizer, item[messages_field], template_kwargs))
+        except Exception as exc:
+            raise DatasetError(f"chat template failed on example {index}: {exc}") from exc
+    lengths.sort()
     return TokenProfile(
         lengths=lengths,
         n_truncated=sum(1 for length in lengths if length > max_length),
