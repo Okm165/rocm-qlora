@@ -31,6 +31,12 @@ from .utils import as_float, linear_slope, now_iso
 
 METRICS_FILENAME = "metrics.jsonl"
 
+#: EMA span for the live loss curve and the charts (docs/04's "EMA" line).
+EMA_SPAN = 20
+#: Edge-temperature warning threshold (°C): the run's ! warning and the
+#: gpu_health chart's dashed line share it.
+GPU_TEMP_WARN_C = 90
+
 
 # ---------------------------------------------------------------------------
 # Metrics file
@@ -223,7 +229,7 @@ def select(records: Sequence[MetricsRecord], kind: str) -> Any:
 # ---------------------------------------------------------------------------
 
 
-def ema(values: Sequence[float | None], span: int = 20) -> list[float]:
+def ema(values: Sequence[float | None], span: int = EMA_SPAN) -> list[float]:
     """Exponential moving average of a series."""
     alpha = 2.0 / (span + 1.0)
     out: list[float] = []

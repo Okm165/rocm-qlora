@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from rocm_qlora.config import Config
 from rocm_qlora.sft import build_sft_config
 
@@ -66,19 +68,48 @@ def test_dataloader_workers_are_a_plain_constant():
     assert sft.dataloader_num_workers == 2
 
 
+class _StubTokenizer:
+    """Only the attribute the family table reads; the 3.5 branch is tested separately."""
+
+    chat_template = ""
+
+
 def test_bundled_family_template_matches_by_family_name():
     """The fallback for community checkpoints: the same template TRL would pick."""
-    from trl.chat_template_utils import (
-        qwen3_5_think_training_chat_template,
-        qwen3_8_training_chat_template,
-        qwen3_training_chat_template,
-    )
+    from trl.chat_template_utils import qwen3_8_training_chat_template, qwen3_training_chat_template
 
     from rocm_qlora.sft import _bundled_family_template
 
+    stub = _StubTokenizer()
     # specificity: a 3.8 name must not fall through to the generic qwen3 template
-    assert _bundled_family_template("unsloth/Qwen3.8-27B-unsloth-bnb-4bit") == qwen3_8_training_chat_template
-    assert _bundled_family_template("Qwen/Qwen3_5-0.8B") == qwen3_5_think_training_chat_template
-    assert _bundled_family_template("Qwen/Qwen3-8B") == qwen3_training_chat_template
+    assert (
+        _bundled_family_template("unsloth/Qwen3.8-27B-unsloth-bnb-4bit", stub)  # type: ignore[arg-type]
+        == qwen3_8_training_chat_template
+    )
+    assert _bundled_family_template("Qwen/Qwen3-8B", stub) == qwen3_training_chat_template  # type: ignore[arg-type]
     # unknown family: None, so the caller raises instead of dropping the mask
-    assert _bundled_family_template("meta-llama/Llama-3-8B") is None
+    assert _bundled_family_template("meta-llama/Llama-3-8B", stub) is None  # type: ignore[arg-type]
+
+
+def test_qwen35_variant_is_read_off_the_template_render():
+    """The toy's copy is TRL's nothink variant; the discriminator must see that.
+
+    The two bundled variants differ only in the assistant prefix rendered when
+    ``enable_thinking`` is absent, so the variant is decided by comparing that
+    render — a modified copy matching neither reference yields None.
+    """
+    from pathlib import Path
+
+    from transformers import AutoTokenizer
+    from trl.chat_template_utils import qwen3_5_nothink_training_chat_template
+
+    from rocm_qlora.sft import _qwen35_variant
+
+    prepared = Path(".data/models/qwen3.5-0.8b-nf4")
+    if not prepared.exists():
+        pytest.skip("toy prepared tokenizer not present")
+    tokenizer = AutoTokenizer.from_pretrained(str(prepared), trust_remote_code=False)
+    assert _qwen35_variant(tokenizer) == qwen3_5_nothink_training_chat_template
+    # a copy that matches neither reference render is not guessed at
+    tokenizer.chat_template = "{{ messages }}"
+    assert _qwen35_variant(tokenizer) is None

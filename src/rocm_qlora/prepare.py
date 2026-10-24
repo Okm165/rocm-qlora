@@ -67,15 +67,17 @@ class PrepareResult:
     disk_gb: float
 
 
-def _requantize_linear(module: nn.Linear, cfg: Config):
+def _requantize_linear(module: nn.Linear, cfg: Config, device: str):
     """Convert an fp16 nn.Linear into bnb Linear4bit (NF4), preserving math.
 
-    The source module must already live on the target GPU: moving the new
-    module triggers bitsandbytes' lazy quantization there.
+    The module is moved to ``device`` first: bitsandbytes quantizes lazily on
+    whichever device holds the new module, and the source stays on the host
+    between modules (it is far larger than one card).
     """
     import bitsandbytes as bnb
     import torch
 
+    module = module.to(device)
     new = bnb.nn.Linear4bit(
         module.in_features,
         module.out_features,
@@ -142,13 +144,14 @@ def prepare_checkpoint(cfg: Config, *, force: bool = False, log: Callable[[str],
     meta = _prepare_meta(model, cfg, requantized)
     write_json(meta_path, meta)
     seconds = time.perf_counter() - t0
-    log(f"Prepared checkpoint ready ({_dir_size_gb(out_dir):.1f} GB on disk, {seconds / 60:.1f} min)")
+    size_gb = _dir_size_gb(out_dir)  # one walk of the 15-20 GB tree
+    log(f"Prepared checkpoint ready ({size_gb:.1f} GB on disk, {seconds / 60:.1f} min)")
     return PrepareResult(
         out_dir=out_dir,
         requantized=requantized,
         seconds=seconds,
         total_params=meta["total_params"],
-        disk_gb=_dir_size_gb(out_dir),
+        disk_gb=size_gb,
     )
 
 
@@ -193,8 +196,10 @@ def _load_source_model(cfg: Config, log: Callable[[str], None]):
     return model
 
 
-def _should_quantize(name: str, module: nn.Module, cfg: Config, *, source_quantized: bool) -> bool:
-    """Whether one module needs NF4 surgery (lm_head always stays 16-bit)."""
+def _should_quantize(
+    name: str, module: nn.Module, cfg: Config, *, source_quantized: bool, output_head: nn.Module | None
+) -> bool:
+    """Whether one module needs NF4 surgery (the output head always stays 16-bit)."""
     import torch
 
     if not isinstance(module, torch.nn.Linear):
@@ -203,17 +208,19 @@ def _should_quantize(name: str, module: nn.Module, cfg: Config, *, source_quanti
 
     if isinstance(module, bnb.nn.Linear4bit):
         return False
-    if name.endswith("lm_head"):
-        # The output head always stays 16-bit: TRL 1.16 computes the SFT
-        # loss through a fused chunked head that slices the raw weight
-        # tensor — a quantized head (flattened uint8 buffer) breaks it.
+    if module is output_head:
+        # The head always stays 16-bit: TRL 1.16 computes the SFT loss through
+        # a fused chunked head that slices the raw weight tensor — a quantized
+        # head (flattened uint8 buffer) breaks it.
         return False
     if source_quantized:
         return _match_requantize(name, cfg)
     return True  # plain source: quantize all remaining Linears
 
 
-def _requantize_all(model: nn.Module, cfg: Config, *, source_quantized: bool, log: Callable[[str], None]) -> list[str]:
+def _requantize_all(
+    model: PreTrainedModel, cfg: Config, *, source_quantized: bool, log: Callable[[str], None]
+) -> list[str]:
     """Quantize every module that needs it; returns the requantized names."""
     requantized: list[str] = []
     if not (cfg.quantization.requantize_modules or cfg.quantization.requantize_vision or not source_quantized):
@@ -221,11 +228,12 @@ def _requantize_all(model: nn.Module, cfg: Config, *, source_quantized: bool, lo
     # The quantization runs on the freest GPU (this is a GPU-only tool); the
     # model itself stays host-resident because it is far larger than one card.
     device = _surgery_device()
+    output_head = model.get_output_embeddings()  # identified by module, not by name
     for name, module in list(model.named_modules()):
-        if not _should_quantize(name, module, cfg, source_quantized=source_quantized):
+        if not _should_quantize(name, module, cfg, source_quantized=source_quantized, output_head=output_head):
             continue
         parent, attr = parent_of(model, name)
-        new = _requantize_linear(cast("nn.Linear", module.to(device)), cfg)
+        new = _requantize_linear(cast("nn.Linear", module), cfg, device)
         setattr(parent, attr, new.to("cpu"))  # back to host RAM for the save
         requantized.append(name)
     log(f"Re-quantized {len(requantized)} module(s) to NF4")

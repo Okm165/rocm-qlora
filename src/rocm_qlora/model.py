@@ -79,11 +79,10 @@ def resolve_model_class(model_name: str, *, trust_remote_code: bool = False):
     from transformers.models.auto.modeling_auto import MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES
 
     config = AutoConfig.from_pretrained(model_name, trust_remote_code=trust_remote_code)
-    # The library's own routing table decides (qwen3_5 is in it); a vision config
-    # is the structural backup for a model_type the table does not know yet.
-    is_vlm = config.model_type in MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES or (
-        getattr(config, "vision_config", None) is not None
-    )
+    # The library's own routing table decides (qwen3_5 is in it). No fallback on
+    # config.vision_config: transformers auto-fills non-optional sub-configs, so
+    # its presence does not mean the checkpoint declared a vision tower.
+    is_vlm = config.model_type in MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES
     return AutoModelForImageTextToText if is_vlm else AutoModelForCausalLM
 
 
@@ -186,13 +185,18 @@ def prepare_for_qlora(model: PreTrainedModel):
     for _, param in model.named_parameters():
         param.requires_grad = False
 
-    for name, module in model.named_modules():
+    # The two big frozen lookup tables are found by module identity, not by
+    # module name (names are architecture-specific).
+    big_tables = {
+        id(m.weight)
+        for m in (model.get_input_embeddings(), model.get_output_embeddings())
+        if m is not None and hasattr(m, "weight")
+    }
+    for module in model.modules():
         if isinstance(module, (bnb.nn.Linear4bit, bnb.nn.Linear8bitLt)):
             continue
         for _pname, param in module.named_parameters(recurse=False):
-            if param.dtype in (torch.float16, torch.bfloat16):
-                if "embed_tokens" in name or "lm_head" in name:
-                    continue  # big frozen tables stay 16-bit (see docstring)
+            if param.dtype in (torch.float16, torch.bfloat16) and id(param) not in big_tables:
                 param.data = param.data.to(torch.float32)
 
     model.enable_input_require_grads()  # PreTrainedModel API; grads must reach the frozen inputs

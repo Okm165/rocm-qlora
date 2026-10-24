@@ -371,11 +371,12 @@ def _build_trainer(
         )
 
     metrics_callback = _make_callback(cfg, run_dir, ui=ui, world_size=world_size) if ui is not None else None
-    callbacks = [metrics_callback] if metrics_callback is not None else []
+    callbacks: list[TrainerCallback] = [metrics_callback] if metrics_callback is not None else []
 
     if world_size > 1:
         skip_redundant_init_sync(logger.info)
 
+    from transformers import TrainerCallback
     from trl import SFTTrainer
 
     trainer = SFTTrainer(
@@ -384,7 +385,7 @@ def _build_trainer(
         train_dataset=data.train_ds,
         eval_dataset=data.eval_ds,
         processing_class=data.tokenizer,
-        callbacks=cast("list[Any]", callbacks),  # duck-typed hooks; not a TrainerCallback subclass
+        callbacks=callbacks,
     )
     return trainer, metrics_callback
 
@@ -485,6 +486,7 @@ def main(argv: list[str] | None = None) -> None:
         adapter_dir = _train_and_save(run_dir, args, trainer, data=data, ui=ui, world_size=world_size, logger=logger)
 
         if ui is not None:  # ui exists exactly on rank 0
+            assert metrics_callback is not None  # _build_trainer creates it whenever ui exists
             _finalize_run(
                 cfg,
                 run_dir,
@@ -518,7 +520,7 @@ def _finalize_run(
     run_dir: Path,
     adapter_dir: Path,
     ui: Rank0UI,
-    metrics_callback: MetricsCallback | None,
+    metrics_callback: MetricsCallback,
     *,
     start_time: float,
     dry_run: bool,
@@ -527,7 +529,7 @@ def _finalize_run(
     from .metrics import RunEndRecord, chart_meta
     from .plots import render_charts, write_report
 
-    records = metrics_callback.records if metrics_callback else []
+    records = metrics_callback.records
     summary = _assemble_summary(adapter_dir, records, start_time=start_time)
     run_end: RunEndRecord = {
         "type": "run_end",

@@ -27,6 +27,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from .metrics import (
+    GPU_TEMP_WARN_C,
     METRICS_FILENAME,
     ChartMeta,
     EpochEndRecord,
@@ -175,7 +176,7 @@ def _loss_curves(ax: Axes, train: Sequence[TrainRecord], *, labels: bool) -> tup
     """Raw + EMA loss lines; returns (steps, EMA series) for further annotation."""
     steps = [r["step"] for r in train]
     losses = [r["loss"] for r in train]
-    smoothed = ema(losses, span=20)
+    smoothed = ema(losses)
     ax.plot(steps, losses, color=COLORS["loss_raw"], lw=1.0, alpha=0.6, label="per-step loss" if labels else None)
     ax.plot(steps, smoothed, color=COLORS["loss_ema"], lw=2.2, label="EMA (span 20)" if labels else None)
     return steps, smoothed
@@ -352,7 +353,7 @@ def gpu_health(records: Sequence[MetricsRecord], out_path: str | Path, *, meta: 
             c = COLORS["gpus"][gi % len(COLORS["gpus"])]
             ax_t.plot(steps, _gpu_field(train, gi, "temp_edge_c"), color=c, lw=1.5, label=f"GPU {gi} edge °C")
             ax_p.plot(steps, _gpu_field(train, gi, "power_w"), color=c, lw=1.5, label=f"GPU {gi} W")
-        ax_t.axhline(90, color=COLORS["grad"], ls="--", lw=1.0)
+        ax_t.axhline(GPU_TEMP_WARN_C, color=COLORS["grad"], ls="--", lw=1.0)
         ax_t.annotate(
             "90 °C warning threshold",
             xy=(steps[0], 90),

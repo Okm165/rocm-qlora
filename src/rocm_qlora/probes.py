@@ -53,14 +53,7 @@ print(json.dumps(result))
 """
 
 
-def _run_probe(
-    script: str,
-    args: list[str],
-    env: dict[str, str],
-    timeout: float,
-    *,
-    python_exe: str | None = None,
-) -> Any:
+def _run_probe(script: str, args: list[str], env: dict[str, str], timeout: float) -> Any:
     """Run one probe script in a fresh process; returns its parsed JSON line or an error dict.
 
     The JSON comes from the embedded probe scripts, so it is untyped at this
@@ -68,7 +61,7 @@ def _run_probe(
     """
     try:
         proc = subprocess.run(
-            [python_exe or sys.executable, "-c", script, *args],
+            [sys.executable, "-c", script, *args],
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -95,9 +88,9 @@ def _sdpa_probe_env(env_mode: str) -> dict[str, str]:
     return env
 
 
-def _run_sdpa_probe(python_exe: str | None, backend: str, env: dict[str, str], timeout: float) -> SdpaBackendResult:
+def _run_sdpa_probe(backend: str, env: dict[str, str], timeout: float) -> SdpaBackendResult:
     """Run one backend in a fresh process; returns its JSON result or an error."""
-    return _run_probe(_SDPA_PROBE, [backend], env, timeout, python_exe=python_exe)
+    return _run_probe(_SDPA_PROBE, [backend], env, timeout)
 
 
 def _sdpa_verdict(backends: dict[str, Any]) -> tuple[str, str]:
@@ -159,7 +152,7 @@ class MatmulBench(TypedDict):
     tflops: float
 
 
-def probe_sdpa(python_exe: str | None = None, timeout: float = 300.0) -> SdpaProbe:
+def probe_sdpa(timeout: float = 300.0) -> SdpaProbe:
     """Empirically test SDPA backends on THIS machine.
 
     Runs each backend in a fresh process (deferred launch errors on RDNA3
@@ -171,7 +164,7 @@ def probe_sdpa(python_exe: str | None = None, timeout: float = 300.0) -> SdpaPro
     for env_mode in ("on", "off"):
         env = _sdpa_probe_env(env_mode)
         for backend in ("flash", "efficient", "math"):
-            backends[f"{backend}_{env_mode}"] = _run_sdpa_probe(python_exe, backend, env, timeout)
+            backends[f"{backend}_{env_mode}"] = _run_sdpa_probe(backend, env, timeout)
 
     verdict, attn_implementation = _sdpa_verdict(backends)
     return SdpaProbe(verdict=verdict, attn_implementation=attn_implementation, backends=backends)
@@ -205,7 +198,7 @@ print(json.dumps({
 """
 
 
-def probe_hip_ipc(python_exe: str | None = None, timeout: float = 120.0) -> HipIpcProbe:
+def probe_hip_ipc(timeout: float = 120.0) -> HipIpcProbe:
     """Can HIP export IPC memory handles in this environment?
 
     RCCL's P2P transport needs `hipIpcGetMemHandle`. ROCm 7.1 defaults to
@@ -216,7 +209,7 @@ def probe_hip_ipc(python_exe: str | None = None, timeout: float = 120.0) -> HipI
     """
     env = dict(os.environ)
     env["HSA_ENABLE_IPC_MODE_LEGACY"] = "0"
-    return _run_probe(_HIP_IPC_PROBE, [], env, timeout, python_exe=python_exe)
+    return _run_probe(_HIP_IPC_PROBE, [], env, timeout)
 
 
 def matmul_benchmark(dtype_name: str = "bfloat16", size: int = 8192, iters: int = 20, warmup: int = 5) -> MatmulBench:

@@ -24,6 +24,7 @@ from transformers import TrainerCallback, TrainerControl, TrainerState, Training
 from .config import Config
 from .hardware import GpuInfo, GpuMetric, gpu_snapshot
 from .metrics import (
+    GPU_TEMP_WARN_C,
     ChartMeta,
     EpochEndRecord,
     EvalRecord,
@@ -135,7 +136,7 @@ class MetricsCallback(TrainerCallback):
             warnings.append("loss EMA is rising — check LR / data quality")
         gpus = self.sampler.latest()
         hottest = max(gpus, key=lambda g: g.temp_edge_c or 0, default=None)
-        if hottest is not None and (hottest.temp_edge_c or 0) >= 90:
+        if hottest is not None and (hottest.temp_edge_c or 0) >= GPU_TEMP_WARN_C:
             warnings.append(f"GPU {hottest.index} at {hottest.temp_edge_c:.0f}°C — throttling risk")
         if len(self._gpu_mem_series) > 20:
             step0, mem0 = next((s for s in self._gpu_mem_series if s[0] >= 10), self._gpu_mem_series[0])
