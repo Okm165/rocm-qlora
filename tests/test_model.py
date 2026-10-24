@@ -90,3 +90,30 @@ def test_parameter_report_buckets_by_peft_module_name():
     report = parameter_report(model)
     assert report["trainable"] == 32 * 4 + 4 * 32
     assert report["by_module"] == {"q_proj": 32 * 4 + 4 * 32}
+
+
+def test_logical_numel_uses_the_quant_state_shape():
+    """Packed 4-bit storage under-reports `numel()`; quant_state has the logical shape."""
+    from types import SimpleNamespace
+
+    import bitsandbytes as bnb
+    import torch
+
+    from rocm_qlora.model import logical_numel
+
+    packed = bnb.nn.Params4bit(torch.zeros(64, 1, dtype=torch.uint8))  # 64 packed bytes
+    packed.quant_state = SimpleNamespace(shape=(8, 16))  # two 4-bit values per byte
+    assert logical_numel(packed) == 128
+    assert logical_numel(nn.Parameter(torch.zeros(3, 4))) == 12
+
+
+def test_prepared_checkpoint_requires_the_finish_marker(tmp_path):
+    """`finetune_meta.json` is written last — a config-only dir is a crashed save."""
+    from rocm_qlora.model import prepared_checkpoint_exists
+
+    cfg = Config.from_dict({"model": {"prepared_dir": str(tmp_path)}})
+    assert prepared_checkpoint_exists(cfg) is False
+    (tmp_path / "config.json").write_text("{}")
+    assert prepared_checkpoint_exists(cfg) is False
+    (tmp_path / "finetune_meta.json").write_text("{}")
+    assert prepared_checkpoint_exists(cfg) is True

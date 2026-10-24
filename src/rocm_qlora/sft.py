@@ -17,45 +17,59 @@ if TYPE_CHECKING:
     from transformers import PreTrainedTokenizerBase
 
 
-def ensure_training_chat_template(tokenizer: PreTrainedTokenizerBase, cfg: Config, log: Callable[[str], None]) -> None:
-    """Install a `{% generation %}`-marked training template when TRL's
-    auto-detection cannot match the checkpoint's template.
+def _bundled_family_template(name: str) -> str | None:
+    """TRL's bundled training template for a checkpoint name, or None.
 
-    TRL swaps in a training template for known model families by *exact
-    string equality* against its bundled reference templates. Community
-    checkpoints (e.g. unsloth's Qwen3.8-27B) often carry a slightly modified
-    template, so the match fails and TRL refuses `assistant_only_loss=True`.
-    The bundled family template is then picked by model name — the same one
-    TRL would have swapped in.
+    TRL patches templates by *exact string equality* against its bundled
+    references; community checkpoints (e.g. unsloth's Qwen3.8-27B) carry
+    slightly modified copies, so the family has to come from the name — the
+    only signal available here. An unknown family returns None and the caller
+    fails loudly rather than training without the assistant mask.
     """
     from trl.chat_template_utils import (
-        has_generation_markers,
         qwen3_5_think_training_chat_template,
         qwen3_8_training_chat_template,
         qwen3_training_chat_template,
     )
 
+    name = name.lower()
+    if "qwen3.8" in name or "qwen3_8" in name:
+        return qwen3_8_training_chat_template
+    if "qwen3.5" in name or "qwen3_5" in name:
+        return qwen3_5_think_training_chat_template
+    if "qwen3" in name:
+        return qwen3_training_chat_template
+    return None
+
+
+def ensure_training_chat_template(tokenizer: PreTrainedTokenizerBase, cfg: Config, log: Callable[[str], None]) -> None:
+    """Make TRL's `{% generation %}` template detection succeed.
+
+    TRL's SFTTrainer asks `get_training_chat_template` for a training copy of
+    the checkpoint's template and *raises* when the checkpoint's copy is not
+    string-identical to a bundled reference. Asking the same function here
+    covers the stock case; the family fallback covers community checkpoints.
+    If neither matches, this raises — a run must never quietly drop the
+    assistant-only mask the config asked for.
+    """
     if not cfg.data.assistant_only_loss:
         return
-    if has_generation_markers(getattr(tokenizer, "chat_template", None) or ""):
-        return  # already training-compatible
 
-    name = cfg.model.name.lower()
-    candidates: list[str] = []
-    if "qwen3.8" in name or "qwen3_8" in name:
-        candidates.append(qwen3_8_training_chat_template)
-    if "qwen3.5" in name or "qwen3_5" in name:
-        candidates.append(qwen3_5_think_training_chat_template)
-    if "qwen3" in name:
-        candidates.append(qwen3_training_chat_template)
+    from trl.chat_template_utils import get_training_chat_template
 
-    if candidates:
-        tokenizer.chat_template = candidates[0]
-        log("installed TRL's bundled training chat template (auto-detection could not match the checkpoint's)")
-        return
-
-    log("WARNING: no bundled training template matched; disabling assistant_only_loss")
-    cfg.data.assistant_only_loss = False
+    try:
+        template = get_training_chat_template(tokenizer)
+    except ValueError as exc:
+        template = _bundled_family_template(cfg.model.name)
+        if template is None:
+            raise RuntimeError(
+                f"TRL cannot patch {cfg.model.name}'s chat template and no bundled training template "
+                "matched the name — add {% generation %} markers to the template or set "
+                "data.assistant_only_loss = false"
+            ) from exc
+        log("installed TRL's bundled training chat template (TRL could not match the checkpoint's copy)")
+    if template is not None:
+        tokenizer.chat_template = template
 
 
 def _sft_kwargs(cfg: Config, run_dir: Path, *, dry_run: bool, max_steps: int | None) -> dict[str, Any]:

@@ -12,6 +12,7 @@ trained adapter back to bf16 lives in ``merge.py``.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict
 
@@ -58,30 +59,27 @@ def load_tokenizer(cfg: Config) -> PreTrainedTokenizerBase:
     return tokenizer
 
 
+def prepared_checkpoint_exists(cfg: Config) -> bool:
+    """True when `prepare` has written a complete checkpoint.
+
+    `finetune_meta.json` is written after the weights and the tokenizer, so it
+    marks a finished save; a directory with only `config.json` is a crashed or
+    foreign one.
+    """
+    prepared = Path(cfg.model.prepared_dir)
+    return (prepared / "config.json").exists() and (prepared / "finetune_meta.json").exists()
+
+
 def resolve_model_class(model_name: str, *, trust_remote_code: bool = False):
     """Pick the right Auto class for a checkpoint (VLM vs text-only)."""
-    import transformers
-    from transformers import AutoConfig
+    from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageTextToText
 
     config = AutoConfig.from_pretrained(model_name, trust_remote_code=trust_remote_code)
-    archs = getattr(config, "architectures", []) or []
-    # Multimodal checkpoints (e.g. Qwen3.8-27B) use the *ForConditionalGeneration
-    # class; text-only checkpoints (e.g. Qwen3-8B) use AutoModelForCausalLM.
-    is_vlm = any("ConditionalGeneration" in a for a in archs) or (
-        hasattr(config, "vision_config") and getattr(config, "vision_config", None)
-    )
-    if is_vlm:
-        cls = getattr(transformers, "AutoModelForImageTextToText", None)
-        if cls is not None:
-            return cls
-        # Last resort: explicit class by architecture name
-        for a in archs:
-            cls = getattr(transformers, a, None)
-            if cls is not None:
-                return cls
-    from transformers import AutoModelForCausalLM
-
-    return AutoModelForCausalLM
+    # Multimodal checkpoints (e.g. Qwen3.8-27B) declare *ForConditionalGeneration
+    # and a vision config; text-only ones (e.g. Qwen3-8B) use AutoModelForCausalLM.
+    archs = config.architectures or []
+    is_vlm = any("ConditionalGeneration" in a for a in archs) or getattr(config, "vision_config", None) is not None
+    return AutoModelForImageTextToText if is_vlm else AutoModelForCausalLM
 
 
 # ---------------------------------------------------------------------------
@@ -90,17 +88,19 @@ def resolve_model_class(model_name: str, *, trust_remote_code: bool = False):
 
 
 def logical_numel(param: nn.Parameter) -> int:
-    """True parameter count of a tensor.
+    """Logical element count of a parameter, packed 4-bit storage included.
 
-    bitsandbytes packs two NF4 values per uint8, so ``numel()`` on a 4-bit
-    weight reports half the logical parameter count — the difference between
-    the ~15B a naive sum shows and the real ~27B of this checkpoint.
+    bitsandbytes stores quantized weights packed — two 4-bit values per byte of
+    ``quant_storage`` — and keeps the unpacked shape on ``quant_state``, so the
+    tensor's own ``numel()`` is the packed count, not the logical one (this is
+    why a naive sum shows ~15B for a 27B checkpoint). Every other parameter's
+    tensor shape is already logical.
     """
-    import torch
-
-    if param.dtype == torch.uint8 and getattr(param, "quant_state", None) is not None:
-        return param.numel() * 2
-    return param.numel()
+    quant_state = getattr(param, "quant_state", None)
+    shape = getattr(quant_state, "shape", None)
+    if shape is not None:
+        return int(math.prod(shape))
+    return int(param.numel())
 
 
 # ---------------------------------------------------------------------------
@@ -118,13 +118,12 @@ def load_model_for_training(cfg: Config, *, local_rank: int = 0, attn: str | Non
     """
     import torch
 
-    prepared = Path(cfg.model.prepared_dir)
-    if not (prepared / "config.json").exists():
+    if not prepared_checkpoint_exists(cfg):
         raise RuntimeError(
-            f"prepared checkpoint not found at {prepared} — run "
+            f"prepared checkpoint missing or incomplete at {cfg.model.prepared_dir} — run "
             f"`rocm-qlora prepare --config <config>` first (docs/01 explains why it exists)"
         )
-    model_cls = resolve_model_class(str(prepared), trust_remote_code=cfg.model.trust_remote_code)
+    model_cls = resolve_model_class(cfg.model.prepared_dir, trust_remote_code=cfg.model.trust_remote_code)
     kwargs: dict[str, Any] = {
         "dtype": compute_dtype(cfg),
         "device_map": {"": f"cuda:{local_rank}"},

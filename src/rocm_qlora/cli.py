@@ -206,11 +206,13 @@ def cmd_prepare(args: argparse.Namespace) -> int:
 
 def _ensure_prepared(cfg: Config, args: argparse.Namespace) -> bool:
     """Print the prepare-required message when the NF4 checkpoint is missing."""
-    prepared = Path(cfg.model.prepared_dir)
-    if (prepared / "config.json").exists():
+    from .model import prepared_checkpoint_exists
+
+    if prepared_checkpoint_exists(cfg):
         return True
     console.print(
-        f"[yellow]prepare required:[/yellow] the prepared checkpoint [bold]{prepared}[/bold] does not exist yet.\n"
+        f"[yellow]prepare required:[/yellow] the prepared checkpoint [bold]{cfg.model.prepared_dir}[/bold] "
+        "is missing or incomplete.\n"
         f"  run first: [bold]uv run rocm-qlora prepare --config {args.config}[/bold]\n"
         "  [dim]docs/01 + docs/02 explain what prepare does and why.[/dim]"
     )

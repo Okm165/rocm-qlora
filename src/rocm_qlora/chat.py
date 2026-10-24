@@ -36,10 +36,12 @@ def _load(
 
     cfg: Config | None = None
     if run_dir is not None:
-        try:
-            cfg = Config.from_toml(Path(run_dir) / "config.resolved.toml")
-        except Exception:
-            cfg = None
+        resolved = Path(run_dir) / "config.resolved.toml"
+        if resolved.exists():
+            try:
+                cfg = Config.from_toml(resolved)
+            except Exception as exc:
+                console.print(f"[yellow]! could not read {resolved} ({exc}) — using defaults[/yellow]")
 
     base_dir = base_override or (cfg.model.prepared_dir if cfg else None)
     adapter_dir = adapter_override or (str(Path(run_dir) / "adapter") if run_dir else None)

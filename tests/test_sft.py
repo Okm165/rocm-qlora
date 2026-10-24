@@ -64,3 +64,21 @@ def test_dataloader_workers_are_a_plain_constant():
     core-count modelling."""
     sft = build_sft_config(Config.from_dict({}), RUN_DIR, dry_run=False, max_steps=None)
     assert sft.dataloader_num_workers == 2
+
+
+def test_bundled_family_template_matches_by_family_name():
+    """The fallback for community checkpoints: the same template TRL would pick."""
+    from trl.chat_template_utils import (
+        qwen3_5_think_training_chat_template,
+        qwen3_8_training_chat_template,
+        qwen3_training_chat_template,
+    )
+
+    from rocm_qlora.sft import _bundled_family_template
+
+    # specificity: a 3.8 name must not fall through to the generic qwen3 template
+    assert _bundled_family_template("unsloth/Qwen3.8-27B-unsloth-bnb-4bit") == qwen3_8_training_chat_template
+    assert _bundled_family_template("Qwen/Qwen3_5-0.8B") == qwen3_5_think_training_chat_template
+    assert _bundled_family_template("Qwen/Qwen3-8B") == qwen3_training_chat_template
+    # unknown family: None, so the caller raises instead of dropping the mask
+    assert _bundled_family_template("meta-llama/Llama-3-8B") is None
