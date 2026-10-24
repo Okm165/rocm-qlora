@@ -279,8 +279,8 @@ class Config(_Section):
         merged = self.to_dict()
         for dotted, value in overrides.items():
             if value is None:
-                # An explicit `--set key=null` (or a TOML null) is a mistake, not
-                # a request to keep the current value.
+                # An explicit `--set key=null` is a mistake, not a request to
+                # keep the current value (TOML has no null to reach here from).
                 raise ConfigError(f"Override '{dotted}' is null — give it a value")
             node: dict[str, Any] = merged
             parts = dotted.split(".")
