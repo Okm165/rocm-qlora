@@ -405,12 +405,12 @@ def _show_dataset_panel(
     tokenizer: PreTrainedTokenizerBase,
     logger: logging.Logger,
 ) -> None:
-    """Rank-0 dataset summary panel, explainer cards and first-example preview."""
+    """Rank-0 dataset summary panel and first-example preview."""
     from rich.panel import Panel
 
     from .data import render_preview
 
-    console, book = ui.console, ui.book
+    console = ui.console
     pcts = profile.percentiles()
     table = kv_table()
     table.add_row(
@@ -431,10 +431,6 @@ def _show_dataset_panel(
         f"{stats.think_blocks} assistant turns with  thinking ({stats.think_complete} complete)",
     )
     console.print(Panel(table, title="[bold]dataset[/bold]", border_style="cyan"))
-    book.show("reasoning_data")
-    book.show("truncation")
-    if stats.n_examples < 1000:
-        book.show("epochs_small_data")
     console.print(
         Panel(
             render_preview(tokenizer, examples[0], messages_field=cfg.data.messages_field),
@@ -508,10 +504,10 @@ def _build_model(
 
 
 def _show_model_panel(ui: _Rank0UI, attn: str, disabled: list[str], report: dict[str, Any], *, world_size: int) -> None:
-    """Rank-0 model summary panel, explainer cards and model_loaded event."""
+    """Rank-0 model summary panel and model_loaded event."""
     from rich.panel import Panel
 
-    console, book = ui.console, ui.book
+    console = ui.console
     table = kv_table()
     table.add_row("total params", fmt_int(report["total"]))
     table.add_row("trainable (LoRA)", f"{fmt_int(report['trainable'])}  ({report['pct']:.3f}%)")
@@ -522,11 +518,6 @@ def _show_model_panel(ui: _Rank0UI, attn: str, disabled: list[str], report: dict
         attn_note = f"{attn}  ({', '.join(disabled)} off per doctor verdict)"
     table.add_row("attention", attn_note)
     console.print(Panel(table, title="[bold]model[/bold]", border_style="cyan"))
-    book.show("lora_targets")
-    book.show("rank_alpha")
-    book.show("assistant_only_loss")
-    book.show("chunked_loss")
-    book.show("multi_gpu_ddp")
     if ui.writer:
         from .monitor import EventRecord
 
@@ -565,9 +556,6 @@ def _build_trainer(
     """Phase 3: SFTConfig, observability callback, init-sync skip, SFTTrainer."""
     if ui is not None:  # ui exists exactly on rank 0
         ui.dashboard.update(phase="building trainer")
-        ui.book.show("effective_batch")
-        ui.book.show("warmup")
-        ui.book.show("vram_budget")
 
     sft_config = build_sft_config(
         cfg, run_dir, world_size=world_size, n_train=data.n_train, dry_run=args.dry_run, max_steps=args.max_steps
@@ -632,8 +620,6 @@ def _train_and_save(
         ui.dashboard.update(phase="training")
         ui.dashboard.start()
         ui.book.show("reading_loss")
-        ui.book.show("grad_norm")
-        ui.book.show("gpu_health")
         if data.eval_ds is not None:
             ui.book.show("eval")
         ui.book.hint(f"charts refresh every {cfg.logging.chart_snapshot_steps} steps into {run_dir / 'charts'}")

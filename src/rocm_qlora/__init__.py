@@ -10,7 +10,7 @@ Package layout (each module explains itself — see module docstrings):
     train.py      the training worker (runs inside torchrun ranks)
     monitor.py    metrics JSONL, live rich dashboard, health guards, summaries
     plots.py      every matplotlib chart + the Markdown run report
-    explain.py    the teaching layer: contextual explainer panels
+    explain.py    contextual explainer panels (deduplicated per run)
     chat.py       interactive sanity-check chat against a trained adapter
     utils.py      small shared helpers (formatting, timing, seeds)
     cli.py        `rocm-qlora <command>` entry point

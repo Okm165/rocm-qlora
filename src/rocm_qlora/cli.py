@@ -450,8 +450,7 @@ def cmd_prepare(args: argparse.Namespace) -> int:
     cfg = _load_config(args)
     console.rule("[bold cyan]prepare checkpoint[/bold cyan]")
     book = ExplainerBook(console, enabled=cfg.run.explainers)
-    book.show("prepare_surgery")
-    book.show("nf4")
+    book.show("prepared_checkpoint")
     console.print(
         f"source: [bold]{cfg.model.name}[/bold] → target: [bold]{cfg.model.prepared_dir}[/bold]\n"
         f"[dim]requantize: {cfg.quantization.requantize_modules} · vision: "
@@ -550,11 +549,6 @@ def cmd_train(args: argparse.Namespace) -> int:
         return 2
 
     book.show("qlora")
-    book.show("lr_schedule")
-    book.show("packing")
-    book.show("seed")
-    if cfg.optim.loss_type == "dft":
-        book.show("dft")
 
     needed = _plan_vram(cfg, book)
     preflight = preflight_gpus(cfg, needed)

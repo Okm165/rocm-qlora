@@ -12,9 +12,9 @@ A **thin, teaching-first wrapper** around the standard 2026 stack
 The training loop, quantization, chat templates and loss masking are all
 handled by the libraries. This project adds exactly four things:
 
-1. **Explainers** — every concept (NF4, LoRA rank/alpha, effective batch,
-   gradient norms, eval gaps) is explained in the terminal *at the moment it
-   matters*, with "what to expect" and "read more" links.
+1. **A short explainer set** — the handful of concepts that actually matter
+   here (QLoRA, the prepared checkpoint, ROCm attention, loss reading) shown
+   in the terminal *when they first matter*, with links into `docs/`.
 2. **A live instrument panel** — rich dashboard (loss/EMA/trend, LR, grad
    norm, tokens/s, ETA, per-GPU VRAM/temp/power) + `metrics.jsonl` +
    matplotlib charts regenerated *while training runs*.
@@ -177,11 +177,11 @@ src/rocm_qlora/
   hardware.py           rocm-smi parsing · VRAM estimator · GPU selection · SDPA probe
   launcher.py           GPU choice, worker env, torchrun orchestration
   train.py              the training worker (one process per GPU)
-  explain.py            the teaching layer (explainer panels)
+  explain.py            contextual explainer panels (deduplicated per run)
   chat.py               interactive sanity check
 docs/                   01-qlora-explained · 02-amd-rocm-notes · 03-hyperparameters · 04-reading-the-plots · 05-troubleshooting · 06-27b-runbook
 scripts/                 train_worker.py · poc_p2p_allreduce.py (RCCL transport POC) · poc_deltanet_backward.py (27B NaN hunt)
-tests/                   26 tests: config, data, metrics/charts/health-guards, hardware parsing
+tests/                   62 tests, none needs a GPU
 ```
 
 **Before the 27B run**: `docs/06-27b-runbook.md` — exact commands,

@@ -1,7 +1,7 @@
 # 01 · QLoRA explained (for this exact project)
 
-> Companion reading: the in-terminal explainers (run with `--quiet` off, the
-> default) show condensed versions of this document at the right moments.
+> Companion reading: the in-terminal explainer panels (shown unless `--quiet`)
+> condense this document at the moments they matter.
 
 ## The three ideas
 
