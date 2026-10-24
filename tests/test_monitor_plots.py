@@ -21,6 +21,7 @@ from rocm_qlora.plots import render_charts, write_report
 def synth_records(n=60, epochs=3):
     records = []
     per_epoch = n // epochs
+    records.append({"type": "event", "level": "info", "event": "train_start", "max_steps": n})
     for i in range(1, n + 1):
         loss = 1.5 * math.exp(-i / 25) + 0.05
         rec = {
@@ -35,7 +36,6 @@ def synth_records(n=60, epochs=3):
             "world_size": 3,
             "gpu": [
                 {
-                    "index": g,
                     "mem_used_gb": 19.0 + g * 0.1,
                     "mem_total_gb": 24.0,
                     "temp_edge_c": 60 + g,
@@ -56,7 +56,6 @@ def synth_records(n=60, epochs=3):
                     "elapsed_s": i * 2.0,
                 }
             )
-    records.append({"type": "event", "level": "info", "event": "train_start", "step": 0})
     records.append({"type": "event", "level": "warn", "event": "grad_spike", "step": 30, "value": 9.9})
     records.append({"type": "run_end", "total_seconds": n * 2.0, "dry_run": True})
     return records
@@ -187,7 +186,7 @@ def test_summarize_does_not_let_nan_decide_the_best():
             "grad_norm": 1.0,
             "tok_per_s": 800.0,
             "tokens_seen": step * 100,
-            "gpu": [{"index": 0, "mem_used_gb": mem, "mem_total_gb": 24.0, "temp_edge_c": 60, "power_w": 250}],
+            "gpu": [{"mem_used_gb": mem, "mem_total_gb": 24.0, "temp_edge_c": 60, "power_w": 250}],
         }
         # the abort case: the NaN step is the last record in the stream
         for step, loss, mem in ((1, 1.5, 20.0), (2, 1.2, 21.0), (3, float("nan"), float("nan")))

@@ -69,7 +69,6 @@ def _gpu_records(gpus: Sequence[GpuInfo]) -> list[GpuMetric]:
     """Project sampled GPU state onto the record fields the charts read."""
     return [
         GpuMetric(
-            index=g.index,
             mem_used_gb=g.mem_used_gb,
             mem_total_gb=g.mem_total_gb,
             temp_edge_c=g.temp_edge_c,
@@ -111,8 +110,7 @@ class MetricsCallback(TrainerCallback):
 
         self.records: list[MetricsRecord] = []
         self._t0 = time.monotonic()
-        self._last_tokens: int | None = None
-        self._last_tokens_time: float | None = None
+        self._last_tokens: tuple[int, float] | None = None  # (tokens_seen, monotonic time)
         self._epoch_losses: list[float] = []
         self._epoch_index = 0
         self._warned_grad_spike_at = -(10**9)
@@ -182,7 +180,11 @@ class MetricsCallback(TrainerCallback):
             "warmup_end_step": self.warmup_end_step,
         }
 
-    def _write(self, record: MetricsRecord) -> None:
+    def _write(self, record: TrainRecord | EvalRecord | EpochEndRecord | EventRecord) -> None:
+        """Append + write. Every record *this* method writes carries world_size
+        (crash tolerance: a killed stream still says how many ranks ran);
+        run_end is written directly by train._finalize_run and never passes here.
+        """
         if "world_size" not in record:
             record["world_size"] = self.world_size
         self.records.append(record)
@@ -273,11 +275,12 @@ class MetricsCallback(TrainerCallback):
             return None, None
         tokens = int(seen)
         tok_per_s = None
-        if self._last_tokens is not None and self._last_tokens_time is not None:
-            dt = now - self._last_tokens_time
+        if self._last_tokens is not None:
+            prev_tokens, prev_time = self._last_tokens
+            dt = now - prev_time
             if dt > 0:
-                tok_per_s = (tokens - self._last_tokens) / dt
-        self._last_tokens, self._last_tokens_time = tokens, now
+                tok_per_s = (tokens - prev_tokens) / dt
+        self._last_tokens = (tokens, now)
         return tokens, tok_per_s
 
     def _track_loss(self, logs: dict[str, Any]) -> tuple[float, float | None]:
@@ -320,11 +323,10 @@ class MetricsCallback(TrainerCallback):
                         median=med,
                     )
                 )
-                if self.console:
-                    self.console.print(
-                        f"[yellow]! gradient spike at step {record['step']}: {grad:.2f} vs median "
-                        f"{med:.2f} — clipping contains it; watch the EMA loss.[/yellow]"
-                    )
+                self.console.print(
+                    f"[yellow]! gradient spike at step {record['step']}: {grad:.2f} vs median "
+                    f"{med:.2f} — clipping contains it; watch the EMA loss.[/yellow]"
+                )
 
     @override
     def on_epoch_end(

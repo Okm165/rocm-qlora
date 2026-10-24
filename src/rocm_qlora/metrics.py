@@ -94,7 +94,6 @@ class EventRecord(TypedDict):
     level: Literal["info", "warn", "error"]
     event: str
     step: NotRequired[int]
-    epoch: NotRequired[int]
     detail: NotRequired[str]
     total_params: NotRequired[float]
     trainable: NotRequired[float]
@@ -118,7 +117,6 @@ class RunEndRecord(TypedDict):
     type: Literal["run_end"]
     total_seconds: float
     dry_run: bool
-    world_size: NotRequired[int]  # the generic _write stamp would add it; _finalize_run writes directly
     ts: NotRequired[str]
 
 
@@ -174,6 +172,8 @@ class MetricsWriter:
         self._fh = open(self.path, "x", encoding="utf-8")  # noqa: SIM115 — long-lived handle, closed in close()
 
     def write(self, record: MetricsRecord) -> None:
+        if self._fh.closed:  # a late failure event after close(): same stream, reopened
+            self._fh = open(self.path, "a", encoding="utf-8")  # noqa: SIM115 — same long-lived handle
         if "ts" not in record:
             record["ts"] = now_iso()
         self._fh.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
@@ -313,13 +313,14 @@ def summarize(records: Sequence[MetricsRecord]) -> RunSummary:
         rates = [as_float(r["tok_per_s"]) for r in train if r.get("tok_per_s")]
         if rates:
             s.avg_tok_per_s = sum(rates) / len(rates)
-        samples = [v for v in (as_float(g["mem_used_gb"]) for r in train for g in r["gpu"]) if math.isfinite(v)]
+        samples = [
+            v for v in (as_float(g["mem_used_gb"]) for r in train for g in (r.get("gpu") or [])) if math.isfinite(v)
+        ]
         if samples:
             s.peak_vram_gb = max(samples)
     if evals:
         el = [r["eval_loss"] for r in evals]
-        if el:
-            s.first_eval_loss, s.last_eval_loss, s.best_eval_loss = el[0], el[-1], min(el)
+        s.first_eval_loss, s.last_eval_loss, s.best_eval_loss = el[0], el[-1], min(el)
     if events:
         s.warnings = sum(1 for e in events if e.get("level") == "warn")
     ws = next((r.get("world_size") for r in reversed(records) if r.get("world_size")), None)

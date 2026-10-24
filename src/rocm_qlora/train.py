@@ -466,6 +466,7 @@ def main(argv: list[str] | None = None) -> None:
 
     start_time = time.monotonic()
     ui = _rank0_ui(cfg, run_dir, enabled=is_main)
+    metrics_callback = None
 
     try:
         data = _load_training_data(cfg, args, ui=ui, logger=logger)
@@ -492,6 +493,8 @@ def main(argv: list[str] | None = None) -> None:
             _report_failure(run_dir, ui.writer, exc)
         raise
     finally:
+        if metrics_callback is not None:
+            metrics_callback.sampler.stop()
         if world_size > 1:
             with contextlib.suppress(Exception):
                 torch.distributed.destroy_process_group()

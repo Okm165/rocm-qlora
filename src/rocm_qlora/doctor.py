@@ -127,8 +127,9 @@ def _probe_hip_ipc() -> HipIpcProbe:
         console.print("RCCL IPC handles (hipIpcGetMemHandle, dma-buf mode): [green]✓[/green] → P2P collectives enabled")
     else:
         console.print(
-            f"RCCL IPC handles: [red]✗[/red] {ipc.get('error', '')} — "
-            "training will fall back to shared-memory collectives; set NCCL_P2P_DISABLE=1 in [env.extra] to silence"
+            f"RCCL IPC handles: [red]✗[/red] {ipc.get('error', '')} — runs use shared-memory collectives "
+            '(the launcher\'s default: NCCL_P2P_DISABLE=1); opt into P2P with [env.extra] NCCL_P2P_DISABLE = "0" '
+            "(docs/02)"
         )
     return ipc
 

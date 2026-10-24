@@ -135,7 +135,7 @@ def _warmup_span(ax: Axes, meta: ChartMeta | None, first_step: int) -> None:
 
 def _epoch_lines(ax: Axes, train: Sequence[TrainRecord]) -> None:
     """Dotted lines + labels at epoch boundaries."""
-    prev_epoch = math.floor(train[0].get("epoch", 0)) if train else 0
+    prev_epoch = math.floor(train[0].get("epoch", 0))  # callers render only when train is non-empty
     for rec in train:
         epoch = math.floor(rec.get("epoch", 0))
         if epoch > prev_epoch:
@@ -605,7 +605,7 @@ def write_report(run_dir: str | Path) -> Path:
     cfg = _read_config(run_dir)
     # The run_end record is authoritative; a crashed run has none, and the
     # directory name is the one place its dry-run flag survives.
-    dry_run = summary.dry_run or run_dir.name.endswith("-dryrun")
+    dry_run = summary.dry_run or "-dryrun" in run_dir.name  # make_run_dir may suffix a collision
 
     lines = [
         f"# Run report — {run_dir.name}\n",

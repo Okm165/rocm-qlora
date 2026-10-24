@@ -14,7 +14,6 @@ ROCM_SMI_JSON = json.dumps(
     {
         "card0": {
             "Temperature (Sensor edge) (C)": "48.0",
-            "Temperature (Sensor junction) (C)": "53.0",
             "Average Graphics Package Power (W)": "14.0",
             "GPU use (%)": "0",
             "VRAM Total Memory (B)": "25753026560",

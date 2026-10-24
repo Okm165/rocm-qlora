@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import subprocess
 from dataclasses import dataclass, field
 from importlib import metadata as importlib_metadata
@@ -30,13 +31,11 @@ from typing import Any, TypedDict
 @dataclass
 class GpuInfo:
     index: int
-    name: str = "AMD GPU"
     mem_total_b: int = 0
     mem_used_b: int = 0
     temp_edge_c: float | None = None
-    temp_junction_c: float | None = None
     power_w: float | None = None
-    util_pct: float | None = None
+    util_pct: float | None = None  # doctor's table only
 
     @property
     def mem_free_b(self) -> int:
@@ -59,11 +58,10 @@ class GpuMetric(TypedDict):
     """One GPU's sampled state inside a train record.
 
     Only the fields a chart reads: VRAM (used/total) for `vram.png`, edge
-    temperature and package power for `gpu_health.png`. `index` identifies the
-    series. Junction temperature and utilization are not charted.
+    temperature and package power for `gpu_health.png`. The list position is
+    the GPU (records keep GPUs ordered by index), so no index is stored.
     """
 
-    index: int
     mem_used_gb: float
     mem_total_gb: float
     temp_edge_c: float | None
@@ -120,9 +118,6 @@ def gpu_snapshot(timeout: float = 10.0) -> list[GpuInfo]:
                 mem_total_b=_to_int(_first_key(d, "VRAM Total Memory")) or 0,
                 mem_used_b=_to_int(_first_key(d, "VRAM Total Used Memory")) or 0,
                 temp_edge_c=_to_float(_first_key(d, "Temperature (Sensor edge)", "Temperature (Sensor Edge)")),
-                temp_junction_c=_to_float(
-                    _first_key(d, "Temperature (Sensor junction)", "Temperature (Sensor Junction)")
-                ),
                 power_w=_to_float(_first_key(d, "Average Graphics Package Power", "Average Power", "Power (W)")),
                 util_pct=_to_float(_first_key(d, "GPU use (%)", "GPU Use (%)")),
             )
@@ -178,63 +173,33 @@ class HostMemory(TypedDict):
 
 
 def host_memory() -> HostMemory:
-    """Total/available host RAM in GiB (psutil if available, else /proc)."""
-    try:
-        import psutil
+    """Total/available host RAM in GiB (psutil — a pinned dependency)."""
+    import psutil
 
-        vm = psutil.virtual_memory()
-        return {"total_gib": vm.total / 2**30, "available_gib": vm.available / 2**30}
-    except Exception:
-        try:
-            meminfo = Path("/proc/meminfo").read_text()
-            vals = {
-                k.strip(): int(v.split()[0])
-                for k, v in (line.split(":") for line in meminfo.splitlines() if ":" in line)
-            }
-            total = vals.get("MemTotal", 0) / 2**20
-            avail = vals.get("MemAvailable", 0) / 2**20
-            return {"total_gib": total, "available_gib": avail}
-        except Exception:
-            return {"total_gib": float("nan"), "available_gib": float("nan")}
+    vm = psutil.virtual_memory()
+    return {"total_gib": vm.total / 2**30, "available_gib": vm.available / 2**30}
 
 
 class CpuInfo(TypedDict, total=False):
     """`cpu_info`'s result — the ``cpu`` section of doctor-latest.json."""
 
     cores: int | None
-    physical_cores: int | None
-    freq_mhz: int
     model: str
 
 
 def cpu_info() -> CpuInfo:
-    """CPU model + thread count from /proc/cpuinfo."""
+    """CPU model + thread count (/proc/cpuinfo; Linux-only, like the rest)."""
     info: CpuInfo = {"cores": os.cpu_count()}
-    try:
-        import psutil
-
-        info["physical_cores"] = psutil.cpu_count(logical=False)
-        info["freq_mhz"] = round(psutil.cpu_freq().max or 0)
-    except Exception:
-        pass
-    try:
-        for line in Path("/proc/cpuinfo").read_text().splitlines():
-            if line.startswith("model name"):
-                info["model"] = line.split(":", 1)[1].strip()
-                break
-    except Exception:
-        pass
+    for line in Path("/proc/cpuinfo").read_text().splitlines():
+        if line.startswith("model name"):
+            info["model"] = line.split(":", 1)[1].strip()
+            break
     return info
 
 
 def kernel_version() -> str:
     """Running kernel release string."""
-    try:
-        import platform
-
-        return platform.release()
-    except Exception:  # pragma: no cover
-        return "unknown"
+    return platform.release()
 
 
 def package_versions() -> dict[str, str]:
