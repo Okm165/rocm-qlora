@@ -1,20 +1,18 @@
 """Charts (matplotlib) + the Markdown run report.
 
-One module for everything visual:
-
 * ``render_charts`` — the chart set written to ``<run>/charts/``; ``live=True``
   renders the cheap subset used for periodic snapshots during training.
 * ``write_report`` — a Markdown report built purely from ``metrics.jsonl`` +
   ``summary.json``, so it works even for a crashed run.
 
-Chart philosophy: annotated, not just plotted (epoch boundaries, warmup
-shading, best-step markers, clip lines, coverage markers), dark theme,
-degrade gracefully on partial data, headless-safe (Agg backend).
+Charts are annotated where it helps (epoch boundaries, warmup shading, best
+step, clip line), dark-themed, and headless-safe (Agg backend).
 """
 
 from __future__ import annotations
 
 import contextlib
+import json
 import math
 from collections.abc import Generator, Sequence
 from pathlib import Path
@@ -121,24 +119,41 @@ def _chart(out_path: str | Path, *args: Any, **kwargs: Any) -> Generator[tuple[F
         _save(fig, out_path)
 
 
+def _warmup_span(ax: Axes, meta: dict[str, Any] | None, first_step: int) -> None:
+    """Shade the warmup window when the run recorded it."""
+    end = meta.get("warmup_end_step") if meta else None
+    if not end:
+        return
+    ax.axvspan(first_step, end, color=COLORS["warmup"], alpha=0.55, lw=0)
+    ax.annotate("warmup", xy=((first_step + end) / 2, ax.get_ylim()[0]), ha="center", fontsize=8, color=COLORS["dim"])
+
+
 def _epoch_lines(ax: Axes, train: Sequence[TrainRecord]) -> None:
-    seen: set[int] = set()
+    """Dotted lines + labels at epoch boundaries."""
+    prev_epoch = math.floor(train[0].get("epoch", 0)) if train else 0
     for rec in train:
-        epi = math.floor(rec["epoch"])
-        step = rec["step"]
-        if epi >= 1 and epi not in seen:
-            prev = [r for r in train if r.get("step", 0) < step]
-            if prev and math.floor(prev[-1].get("epoch", 0)) == epi - 1:
-                seen.add(epi)
-                ax.axvline(step, color=COLORS["dim"], lw=0.8, ls=":", alpha=0.8)
-                ax.annotate(
-                    f"epoch {epi}",
-                    xy=(step, ax.get_ylim()[1]),
-                    xytext=(3, -12),
-                    textcoords="offset points",
-                    fontsize=8,
-                    color=COLORS["dim"],
-                )
+        epoch = math.floor(rec.get("epoch", 0))
+        if epoch > prev_epoch:
+            ax.axvline(rec["step"], color=COLORS["dim"], lw=0.8, ls=":", alpha=0.8)
+            ax.annotate(
+                f"epoch {epoch}",
+                xy=(rec["step"], ax.get_ylim()[1]),
+                xytext=(3, -12),
+                textcoords="offset points",
+                fontsize=8,
+                color=COLORS["dim"],
+            )
+        prev_epoch = epoch
+
+
+def _gpu_field(train: Sequence[TrainRecord], gi: int, field: str) -> list[float]:
+    """One GPU-metric series across steps (NaN where the GPU is absent)."""
+    out: list[float] = []
+    for rec in train:
+        gpus = rec.get("gpu") or []
+        value = (gpus[gi] or {}).get(field) if gi < len(gpus) else None
+        out.append(float(value) if value is not None else float("nan"))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -164,16 +179,7 @@ def loss_curve(
         steps = [r["step"] for r in train]
         losses = [r["loss"] for r in train]
         smoothed = ema(losses, span=20)
-        warmup_end = meta.get("warmup_end_step") if meta else None
-        if warmup_end:
-            ax.axvspan(min(steps), warmup_end, color=COLORS["warmup"], alpha=0.55, lw=0)
-            ax.annotate(
-                "warmup",
-                xy=((min(steps) + warmup_end) / 2, ax.get_ylim()[0]),
-                ha="center",
-                fontsize=8,
-                color=COLORS["dim"],
-            )
+        _warmup_span(ax, meta, min(steps))
         ax.plot(steps, losses, color=COLORS["loss_raw"], lw=1.0, alpha=0.6, label="per-step loss")
         ax.plot(steps, smoothed, color=COLORS["loss_ema"], lw=2.2, label="EMA (span 20)")
         best_i = min(range(len(smoothed)), key=lambda i: smoothed[i])
@@ -219,12 +225,10 @@ def lr_schedule(records: Sequence[MetricsRecord], out_path: str | Path, *, meta:
             _no_data(ax)
             return
         ax.plot([r["step"] for r in train], [r["lr"] for r in train], color=COLORS["lr"], lw=2.0)
-        warmup_end = meta.get("warmup_end_step") if meta else None
-        if warmup_end:
-            ax.axvspan(train[0]["step"], warmup_end, color=COLORS["warmup"], alpha=0.55, lw=0)
+        _warmup_span(ax, meta, train[0]["step"])
         ax.set_xlabel("optimizer step")
         ax.set_ylabel("learning rate")
-        ax.set_title("Learning-rate schedule (warmup → cosine decay)")
+        ax.set_title("Learning-rate schedule")
         ax.ticklabel_format(axis="y", style="sci", scilimits=(-2, 2))
         _watermark(fig, meta)
 
@@ -253,7 +257,7 @@ def grad_norm(records: Sequence[MetricsRecord], out_path: str | Path, *, meta: d
             )
         ax.set_xlabel("optimizer step")
         ax.set_ylabel("global grad norm")
-        ax.set_title("Gradient norm — spikes are contained by clipping")
+        ax.set_title("Gradient norm (pre-clip)")
         ax.legend(loc="upper right")
         _watermark(fig, meta)
 
@@ -296,21 +300,17 @@ def vram(records: Sequence[MetricsRecord], out_path: str | Path, *, meta: dict[s
         steps = [r["step"] for r in train]
         n_gpus = len(train[-1]["gpu"])
         for gi in range(n_gpus):
-            ys = [
-                (r["gpu"][gi] or {}).get("mem_used_gb", float("nan")) if gi < len(r.get("gpu", [])) else float("nan")
-                for r in train
-            ]
             total = (train[-1]["gpu"][gi] or {}).get("mem_total_gb")
             ax.plot(
                 steps,
-                ys,
+                _gpu_field(train, gi, "mem_used_gb"),
                 color=COLORS["gpus"][gi % len(COLORS["gpus"])],
                 lw=1.6,
                 label=f"GPU {gi}" + (f" (of {total:.0f} GB)" if total else ""),
             )
         ax.set_xlabel("optimizer step")
         ax.set_ylabel("VRAM used (GB)")
-        ax.set_title("VRAM per GPU — watch for a monotonic climb (leak)")
+        ax.set_title("VRAM per GPU")
         ax.legend(loc="upper left", ncols=3)
         _watermark(fig, meta)
 
@@ -327,24 +327,12 @@ def gpu_health(records: Sequence[MetricsRecord], out_path: str | Path, *, meta: 
         n_gpus = len(train[-1]["gpu"])
         for gi in range(n_gpus):
             c = COLORS["gpus"][gi % len(COLORS["gpus"])]
-            ax_t.plot(
-                steps,
-                [(r["gpu"][gi] or {}).get("temp_edge_c") if gi < len(r.get("gpu", [])) else None for r in train],
-                color=c,
-                lw=1.5,
-                label=f"GPU {gi} edge °C",
-            )
-            ax_p.plot(
-                steps,
-                [(r["gpu"][gi] or {}).get("power_w") if gi < len(r.get("gpu", [])) else None for r in train],
-                color=c,
-                lw=1.5,
-                label=f"GPU {gi} W",
-            )
+            ax_t.plot(steps, _gpu_field(train, gi, "temp_edge_c"), color=c, lw=1.5, label=f"GPU {gi} edge °C")
+            ax_p.plot(steps, _gpu_field(train, gi, "power_w"), color=c, lw=1.5, label=f"GPU {gi} W")
         ax_t.axhline(85, color=COLORS["best"], ls="--", lw=1.0)
         ax_t.axhline(95, color=COLORS["grad"], ls="--", lw=1.0)
         ax_t.annotate(
-            "85 °C — warm but fine · 95 °C — throttling",
+            "85 / 95 °C thresholds",
             xy=(steps[0], 95),
             xytext=(4, 4),
             textcoords="offset points",
@@ -352,7 +340,7 @@ def gpu_health(records: Sequence[MetricsRecord], out_path: str | Path, *, meta: 
             color=COLORS["dim"],
         )
         ax_t.set_ylabel("temperature (°C)")
-        ax_t.set_title("GPU health — temperature and power")
+        ax_t.set_title("GPU health")
         ax_t.legend(loc="upper left", ncols=3)
         ax_p.set_xlabel("optimizer step")
         ax_p.set_ylabel("power (W)")
@@ -382,7 +370,7 @@ def eval_curve(records: Sequence[MetricsRecord], out_path: str | Path, *, meta: 
                 )
         ax.set_xlabel("optimizer step")
         ax.set_ylabel("loss (nats/token)")
-        ax.set_title("Train vs eval — the overfitting dial")
+        ax.set_title("Train vs eval")
         ax.legend(loc="upper right")
         _watermark(fig, meta)
 
@@ -423,7 +411,7 @@ def epoch_bars(records: Sequence[MetricsRecord], out_path: str | Path, *, meta: 
                 )
         ax.set_xticks(x, labels)
         ax.set_ylabel("loss (nats/token)")
-        ax.set_title("Per-epoch losses — watch the train/eval gap")
+        ax.set_title("Per-epoch losses")
         ax.legend(loc="upper right")
         _watermark(fig, meta)
 
@@ -474,13 +462,9 @@ def _panel_vram(ax: Axes, train: Sequence[TrainRecord]) -> None:
         _no_data(ax)
         return
     for gi in range(len(gpu_recs[-1]["gpu"])):
-        ys = [
-            (r["gpu"][gi] or {}).get("mem_used_gb", float("nan")) if gi < len(r.get("gpu", [])) else float("nan")
-            for r in gpu_recs
-        ]
         ax.plot(
             [r["step"] for r in gpu_recs],
-            ys,
+            _gpu_field(gpu_recs, gi, "mem_used_gb"),
             color=COLORS["gpus"][gi % len(COLORS["gpus"])],
             lw=1.5,
             label=f"GPU {gi}",
@@ -628,56 +612,6 @@ def replot(run_dir: str | Path) -> list[Path]:
 # ---------------------------------------------------------------------------
 
 
-def _interpretation_notes(records: Sequence[MetricsRecord], summary: RunSummary) -> list[str]:
-    notes: list[str] = []
-    first, last = summary.first_loss, summary.last_loss
-    if first is not None and last is not None:
-        drop = first - last
-        if drop > 0.1:
-            notes.append(
-                f"**Loss fell {drop:.3f} nats** ({first:.3f} → {last:.3f}) — the adapter "
-                f"learned something real on this dataset."
-            )
-        elif drop > 0:
-            notes.append(
-                f"Loss moved only {drop:.3f} nats — enough for format/style adaptation, "
-                f"but consider more epochs or a higher LR."
-            )
-        else:
-            notes.append(
-                "Loss did **not** decrease — check docs/05-troubleshooting.md (LR, template, data formatting)."
-            )
-    ev_first, ev_last = summary.first_eval_loss, summary.last_eval_loss
-    if ev_first is not None and ev_last is not None:
-        gap = ev_last - ev_first
-        if gap > 0.15:
-            notes.append(
-                f"**Eval loss rose {gap:+.3f}** — overfitting. Fewer epochs / more dropout / more data would help."
-            )
-        elif gap < -0.05:
-            notes.append(
-                f"Eval loss fell {gap:.3f} — the holdout improved, so the adapter generalizes rather than memorizes."
-            )
-        else:
-            notes.append(
-                "Eval loss is roughly flat — the holdout is tiny (~5%), so read the shape, not the third decimal."
-            )
-    slope = summary.loss_slope
-    if slope is not None and slope > 1e-3:
-        notes.append(
-            "The last 50 steps show a *rising* loss trend — too-high LR, or the schedule ended while still exploring."
-        )
-    warns = [e for e in select(records, "event") if e.get("level") == "warn"]
-    if warns:
-        notes.append(
-            f"{len(warns)} warning event(s) recorded — see the events table (gradient "
-            f"spikes are usually benign if the EMA loss kept falling)."
-        )
-    if summary.avg_tok_per_s:
-        notes.append(f"Throughput averaged ~{summary.avg_tok_per_s:,.0f} tokens/s across all GPUs.")
-    return notes or ["Not enough data for interpretation — did the run finish?"]
-
-
 def write_report(run_dir: str | Path) -> Path:
     """Write ``report.md`` from metrics.jsonl + summary.json (crash-tolerant)."""
     run_dir = Path(run_dir)
@@ -686,73 +620,52 @@ def write_report(run_dir: str | Path) -> Path:
         summary = RunSummary.from_dict(read_json(run_dir / "summary.json"))
     except Exception:
         summary = summarize(records)
-    try:
+    cfg: dict[str, Any] = {}
+    with contextlib.suppress(Exception):
         cfg = read_json(run_dir / "config.resolved.json")
-    except Exception:
-        cfg = {}
 
-    charts = sorted((run_dir / "charts").glob("*.png"))
-    events = select(records, "event")
-    epochs = select(records, "epoch_end")
-
-    lines: list[str] = []
-    lines += _report_header(run_dir, cfg, summary)
-    lines += _report_headline_table(summary)
-    lines += _report_interpretation(records, summary)
-    lines += _report_epoch_table(epochs)
-    lines += _report_charts_section(charts)
-    lines += _report_events_table(events)
-    lines += _report_paths_section(run_dir)
-    lines += _report_next_steps(run_dir)
-
-    md = "\n".join(lines)
-    (run_dir / "report.md").write_text(md, encoding="utf-8")
-    return run_dir / "report.md"
-
-
-def _report_header(run_dir: Path, cfg: dict[str, Any], summary: RunSummary) -> list[str]:
-    """Title + model/dataset provenance line."""
-    return [
+    lines = [
         f"# Run report — {run_dir.name}\n",
         (
             f"*Model:* `{cfg.get('model', {}).get('name', summary.model or '?')}` · "
             f"*dataset:* `{cfg.get('data', {}).get('path', summary.dataset or '?')}` · "
             f"*GPUs:* {summary.world_size} · *dry run:* {summary.dry_run}\n"
         ),
+        *_headline_table(summary),
+        *_epoch_table(select(records, "epoch_end")),
+        *_charts_section(sorted((run_dir / "charts").glob("*.png"))),
+        *_events_table(select(records, "event")),
+        *_continue_section(run_dir),
     ]
+    (run_dir / "report.md").write_text("\n".join(lines), encoding="utf-8")
+    return run_dir / "report.md"
 
 
-def _report_headline_table(summary: RunSummary) -> list[str]:
+def _headline_table(summary: RunSummary) -> list[str]:
     """The headline-numbers markdown table."""
-    lines = [
-        "## Headline numbers\n",
-        "| metric | value |",
-        "|---|---|",
-        f"| optimizer steps | {fmt_int(summary.steps)} |",
-        f"| loss (first → last) | {fmt_float(summary.first_loss)} → {fmt_float(summary.last_loss)} |",
-        f"| best train loss | {fmt_float(summary.best_loss)} @ step {summary.best_step} |",
+    rows: list[tuple[str, str]] = [
+        ("optimizer steps", fmt_int(summary.steps)),
+        ("loss (first → last)", f"{fmt_float(summary.first_loss)} → {fmt_float(summary.last_loss)}"),
+        ("best train loss", f"{fmt_float(summary.best_loss)} @ step {summary.best_step}"),
     ]
     if summary.best_eval_loss is not None:
-        lines.append(
-            f"| eval loss (first → last) | {fmt_float(summary.first_eval_loss)} → {fmt_float(summary.last_eval_loss)} |"
+        rows.append(
+            ("eval loss (first → last)", f"{fmt_float(summary.first_eval_loss)} → {fmt_float(summary.last_eval_loss)}")
         )
-    lines.append(f"| tokens seen | {fmt_int(summary.tokens_seen)} |")
-    lines.append(f"| wall time | {human_duration(summary.total_seconds)} |")
+    rows += [("tokens seen", fmt_int(summary.tokens_seen)), ("wall time", human_duration(summary.total_seconds))]
     if summary.peak_vram_gb:
-        lines.append(f"| peak VRAM (busiest GPU) | {summary.peak_vram_gb:.1f} GB |")
+        rows.append(("peak VRAM (busiest GPU)", f"{summary.peak_vram_gb:.1f} GB"))
+    if summary.avg_tok_per_s:
+        rows.append(("throughput (mean)", f"{summary.avg_tok_per_s:,.0f} tokens/s"))
+    if summary.warnings:
+        rows.append(("warnings", str(summary.warnings)))
+    lines = ["## Headline numbers\n", "| metric | value |", "|---|---|"]
+    lines += [f"| {metric} | {value} |" for metric, value in rows]
     lines.append("")
     return lines
 
 
-def _report_interpretation(records: Sequence[MetricsRecord], summary: RunSummary) -> list[str]:
-    """The "what the numbers mean" section."""
-    lines = ["## What the numbers mean\n"]
-    lines.extend(f"- {note}" for note in _interpretation_notes(records, summary))
-    lines.append("")
-    return lines
-
-
-def _report_epoch_table(epochs: Sequence[EpochEndRecord]) -> list[str]:
+def _epoch_table(epochs: Sequence[EpochEndRecord]) -> list[str]:
     """Per-epoch markdown table (empty list when there are no epochs)."""
     if not epochs:
         return []
@@ -761,43 +674,41 @@ def _report_epoch_table(epochs: Sequence[EpochEndRecord]) -> list[str]:
         "| epoch | step | train loss (mean) | eval loss | elapsed |",
         "|---|---|---|---|---|",
     ]
-    lines.extend(
+    lines += [
         f"| {e.get('epoch')} | {e.get('step')} | {fmt_float(e.get('train_loss_mean'))} | "
         f"{fmt_float(e.get('eval_loss')) if e.get('eval_loss') is not None else '—'} | "
         f"{human_duration(e.get('elapsed_s'))} |"
         for e in epochs
-    )
+    ]
     lines.append("")
     return lines
 
 
-def _report_charts_section(charts: Sequence[Path]) -> list[str]:
+def _charts_section(charts: Sequence[Path]) -> list[str]:
     """Embedded chart images (empty list when no charts were rendered)."""
     if not charts:
         return []
     lines = ["## Charts\n"]
-    lines.extend(f"### {chart.stem}\n\n![{chart.stem}](charts/{chart.name})\n" for chart in charts)
+    lines += [f"### {chart.stem}\n\n![{chart.stem}](charts/{chart.name})\n" for chart in charts]
     return lines
 
 
-def _report_events_table(events: Sequence[EventRecord]) -> list[str]:
+def _events_table(events: Sequence[EventRecord]) -> list[str]:
     """The events table (first 60 records; empty list when there are none)."""
     if not events:
         return []
-    import json as _json
-
     lines = ["## Events\n", "| step | level | event | detail |", "|---|---|---|---|"]
     for e in events[:60]:
         detail = {k: v for k, v in e.items() if k not in {"type", "level", "event", "step", "ts"}}
         lines.append(
-            f"| {e.get('step', '—')} | {e.get('level', 'info')} | {e.get('event')} | `{_json.dumps(detail)[:120]}` |"
+            f"| {e.get('step', '—')} | {e.get('level', 'info')} | {e.get('event')} | `{json.dumps(detail)[:120]}` |"
         )
     lines.append("")
     return lines
 
 
-def _report_paths_section(run_dir: Path) -> list[str]:
-    """Where everything lives."""
+def _continue_section(run_dir: Path) -> list[str]:
+    """Artifact paths + the follow-up commands (chat, merge, GGUF export)."""
     return [
         "## Where everything is\n",
         f"- metrics (JSONL): `{run_dir / 'metrics.jsonl'}`",
@@ -807,12 +718,6 @@ def _report_paths_section(run_dir: Path) -> list[str]:
         f"- environment fingerprint: `{run_dir / 'env_fingerprint.json'}`",
         f"- per-rank logs: `{run_dir / 'logs'}`",
         "",
-    ]
-
-
-def _report_next_steps(run_dir: Path) -> list[str]:
-    """Chat/merge commands + GGUF export recipe."""
-    return [
         "## Continue from here\n",
         "```bash",
         f"uv run rocm-qlora chat --run {run_dir}     # talk to the adapter",
