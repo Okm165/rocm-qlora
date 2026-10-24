@@ -288,6 +288,39 @@ def _show_dataset_panel(
     logger.info("dataset ready: %d train / %s eval", n_train, len(eval_ds) if eval_ds is not None else 0)
 
 
+def _resolve_attention(cfg: Config, logger: logging.Logger) -> tuple[str, list[str]]:
+    """Attention implementation + the SDPA backends the doctor verdict disabled."""
+    import torch
+
+    from .launcher import apply_sdpa_verdict, resolve_attn_impl
+
+    attn = resolve_attn_impl(cfg)
+    disabled = apply_sdpa_verdict()
+    if disabled:
+        logger.info(
+            "SDPA backends disabled by the doctor verdict: %s — masked attention falls back to math (docs/05)",
+            ", ".join(disabled),
+        )
+    logger.info(
+        "SDPA backends: flash=%s mem_efficient=%s math=%s",
+        torch.backends.cuda.flash_sdp_enabled(),
+        torch.backends.cuda.mem_efficient_sdp_enabled(),
+        torch.backends.cuda.math_sdp_enabled(),
+    )
+    return attn, disabled
+
+
+def _install_diagnostics(model: torch.nn.Module, logger: logging.Logger) -> None:
+    """Env-gated numerical diagnostics (see ``health_violation`` for the failure mode)."""
+    if os.environ.get("ROCM_QLORA_DETECT_ANOMALY") == "1":
+        import torch
+
+        torch.autograd.set_detect_anomaly(True)
+        logger.info("autograd anomaly detection ON — the first NaN-producing op will raise with a traceback")
+    if os.environ.get("ROCM_QLORA_GRAD_CHECK") == "1":
+        _install_grad_finite_checks(model, logger.info)
+
+
 def _build_model(
     cfg: Config,
     local_rank: int,
@@ -305,21 +338,7 @@ def _build_model(
         ui.book.show("hybrid_attention")
         ui.book.show("rocm_attention")
 
-    from .launcher import apply_sdpa_verdict, resolve_attn_impl
-
-    attn = resolve_attn_impl(cfg)
-    disabled = apply_sdpa_verdict()
-    if disabled:
-        logger.info(
-            "SDPA backends disabled by the doctor verdict: %s — masked attention falls back to math (docs/05)",
-            ", ".join(disabled),
-        )
-    logger.info(
-        "SDPA backends: flash=%s mem_efficient=%s math=%s",
-        torch.backends.cuda.flash_sdp_enabled(),
-        torch.backends.cuda.mem_efficient_sdp_enabled(),
-        torch.backends.cuda.math_sdp_enabled(),
-    )
+    attn, disabled = _resolve_attention(cfg, logger)
     from .model import attach_lora, load_model_for_training, parameter_report, prepare_for_qlora
 
     model = load_model_for_training(cfg, local_rank=local_rank, attn=attn)
@@ -327,13 +346,7 @@ def _build_model(
     model = attach_lora(model, cfg)
     report = parameter_report(cast("PreTrainedModel", model))  # pyright: ignore[reportInvalidCast]  # PeftModel forwards to the base
 
-    # --- optional numerical diagnostics (env-gated) ----------------------
-    # For the finite-loss/NaN-gradient failure mode: see health_violation.
-    if os.environ.get("ROCM_QLORA_DETECT_ANOMALY") == "1":
-        torch.autograd.set_detect_anomaly(True)
-        logger.info("autograd anomaly detection ON — the first NaN-producing op will raise with a traceback")
-    if os.environ.get("ROCM_QLORA_GRAD_CHECK") == "1":
-        _install_grad_finite_checks(model, logger.info)
+    _install_diagnostics(model, logger)
 
     # Reclaim the load-time casting transients still sitting in the
     # allocator's reserved pool (~2.4 GB for this model). Without this,

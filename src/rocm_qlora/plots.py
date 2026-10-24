@@ -165,6 +165,23 @@ def _gpu_field(train: Sequence[TrainRecord], gi: int, field: GpuField) -> list[f
 # ---------------------------------------------------------------------------
 
 
+def _loss_curves(ax: Axes, train: Sequence[TrainRecord], *, labels: bool) -> tuple[list[int], list[float]]:
+    """Raw + EMA loss lines; returns (steps, EMA series) for further annotation."""
+    steps = [r["step"] for r in train]
+    losses = [r["loss"] for r in train]
+    smoothed = ema(losses, span=20)
+    ax.plot(steps, losses, color=COLORS["loss_raw"], lw=1.0, alpha=0.6, label="per-step loss" if labels else None)
+    ax.plot(steps, smoothed, color=COLORS["loss_ema"], lw=2.2, label="EMA (span 20)" if labels else None)
+    return steps, smoothed
+
+
+def _eval_overlay(ax: Axes, eval_records: Sequence[EvalRecord], *, label: str | None = None) -> None:
+    """Dashed eval-loss overlay (shared by the loss chart and the dashboard)."""
+    ev = [(r["step"], r["eval_loss"]) for r in eval_records]
+    if ev:
+        ax.plot([e[0] for e in ev], [e[1] for e in ev], "o--", color=COLORS["eval"], lw=1.6, ms=6, label=label)
+
+
 def loss_curve(
     records: Sequence[MetricsRecord],
     out_path: str | Path,
@@ -180,12 +197,8 @@ def loss_curve(
             _no_data(ax)
             ax.set_title(title)
             return
-        steps = [r["step"] for r in train]
-        losses = [r["loss"] for r in train]
-        smoothed = ema(losses, span=20)
-        _warmup_span(ax, meta, min(steps))
-        ax.plot(steps, losses, color=COLORS["loss_raw"], lw=1.0, alpha=0.6, label="per-step loss")
-        ax.plot(steps, smoothed, color=COLORS["loss_ema"], lw=2.2, label="EMA (span 20)")
+        _warmup_span(ax, meta, train[0]["step"])
+        steps, smoothed = _loss_curves(ax, train, labels=True)
         best_i = min(range(len(smoothed)), key=lambda i: smoothed[i])
         ax.scatter(
             [steps[best_i]],
@@ -196,17 +209,7 @@ def loss_curve(
             label=f"best EMA {smoothed[best_i]:.3f}",
         )
         _epoch_lines(ax, train)
-        ev = [(r["step"], r["eval_loss"]) for r in eval_records]
-        if ev:
-            ax.plot(
-                [e[0] for e in ev],
-                [e[1] for e in ev],
-                "o--",
-                color=COLORS["eval"],
-                lw=1.6,
-                ms=6,
-                label="eval loss (holdout)",
-            )
+        _eval_overlay(ax, eval_records, label="eval loss (holdout)")
         ax.set_xlabel("optimizer step")
         ax.set_ylabel("cross-entropy loss (nats/token)")
         ax.set_title(title)
@@ -393,13 +396,8 @@ def _panel_loss(ax: Axes, train: Sequence[TrainRecord], eval_records: Sequence[E
     if not train:
         _no_data(ax)
         return
-    steps = [r["step"] for r in train]
-    losses = [r["loss"] for r in train]
-    ax.plot(steps, losses, color=COLORS["loss_raw"], lw=1.0, alpha=0.6)
-    ax.plot(steps, ema(losses, span=20), color=COLORS["loss_ema"], lw=2.2)
-    ev = [(r["step"], r["eval_loss"]) for r in eval_records]
-    if ev:
-        ax.plot([e[0] for e in ev], [e[1] for e in ev], "o--", color=COLORS["eval"], lw=1.4, ms=5)
+    _loss_curves(ax, train, labels=False)
+    _eval_overlay(ax, eval_records)
     _epoch_lines(ax, train)
     ax.set_title("loss")
     ax.set_xlabel("step")

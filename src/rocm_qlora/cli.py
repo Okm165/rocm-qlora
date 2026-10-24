@@ -564,12 +564,12 @@ def cmd_train(args: argparse.Namespace) -> int:
     book.show("qlora")
 
     needed = _plan_vram(cfg, book)
-    preflight = preflight_gpus(cfg, needed)
-    for warning in preflight.warnings:
+    plan = preflight_gpus(cfg, needed)
+    for warning in plan.warnings:
         console.print(f"[yellow]! {warning}[/yellow]")
     console.print(
-        f"[bold]GPUs for this run:[/bold] {preflight.gpu_ids} "
-        f"(free: {', '.join(f'{g}: {preflight.free_gb.get(g, float("nan")):.1f} GB' for g in preflight.gpu_ids)})"
+        f"[bold]GPUs for this run:[/bold] {plan.gpus} "
+        f"(free: {', '.join(f'{g}: {plan.free_gb.get(g, float("nan")):.1f} GB' for g in plan.gpus)})"
     )
 
     if args.dry_run:
@@ -577,17 +577,17 @@ def cmd_train(args: argparse.Namespace) -> int:
 
     run_dir = make_run_dir(cfg, dry_run=args.dry_run)
     cfg.snapshot(run_dir)
-    write_env_fingerprint(run_dir, cfg, preflight.gpu_ids)
+    write_env_fingerprint(run_dir, cfg, plan.gpus)
     console.print(f"[dim]run directory: {run_dir}[/dim]")
 
     resume_checkpoint = _resolve_resume(args)
     if args.resume and resume_checkpoint is None:
         return 2
 
-    result = launch_worker(cfg, run_dir, preflight.gpu_ids, extra_args=_worker_extra_args(args, resume_checkpoint))
-    if result.returncode != 0:
-        _print_launch_failure(run_dir, result.returncode)
-    return result.returncode
+    code = launch_worker(cfg, run_dir, plan.gpus, extra_args=_worker_extra_args(args, resume_checkpoint))
+    if code != 0:
+        _print_launch_failure(run_dir, code)
+    return code
 
 
 def cmd_report(args: argparse.Namespace) -> int:

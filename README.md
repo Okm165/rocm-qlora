@@ -181,7 +181,7 @@ src/rocm_qlora/
   explain.py            contextual explainer panels (deduplicated per run)
   chat.py               interactive sanity check
 docs/                   01-qlora-explained · 02-amd-rocm-notes · 03-hyperparameters · 04-reading-the-plots · 05-troubleshooting · 06-27b-runbook
-scripts/                 train_worker.py · poc_p2p_allreduce.py (RCCL transport POC) · poc_deltanet_backward.py (27B NaN hunt)
+scripts/                 poc_p2p_allreduce.py (RCCL transport POC) · poc_deltanet_backward.py (27B NaN hunt)
 tests/                   62 tests, none needs a GPU
 ```
 

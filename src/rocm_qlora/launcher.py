@@ -27,13 +27,13 @@ import os
 import socket
 import subprocess
 import sys
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TypedDict
 
 from .config import Config
 from .hardware import (
     CpuInfo,
+    GpuPlan,
     HipIpcProbe,
     HostMemory,
     MatmulBench,
@@ -211,23 +211,17 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
-@dataclass
-class LaunchResult:
-    returncode: int
-    run_dir: Path
-    gpu_ids: list[int]
+def launch_worker(cfg: Config, run_dir: Path, gpu_ids: list[int], *, extra_args: list[str] | None = None) -> int:
+    """Spawn the training worker(s); returns the process exit code.
 
-
-def launch_worker(
-    cfg: Config, run_dir: Path, gpu_ids: list[int], *, extra_args: list[str] | None = None
-) -> LaunchResult:
-    """Spawn the training worker(s) with a fully-specified environment."""
+    Both paths run the same module entrypoint (``rocm_qlora.train``):
+    directly for one GPU, under ``torchrun --module`` for data parallelism.
+    """
     env = build_worker_env(cfg, gpu_ids)
-    extra_args = extra_args or []
+    args = ["--run-dir", str(run_dir), *(extra_args or [])]
     if len(gpu_ids) == 1:
-        cmd = [sys.executable, "-m", "rocm_qlora.train", "--run-dir", str(run_dir), *extra_args]
+        cmd = [sys.executable, "-m", "rocm_qlora.train", *args]
     else:
-        worker = REPO_ROOT / "scripts" / "train_worker.py"
         cmd = [
             sys.executable,
             "-m",
@@ -236,13 +230,11 @@ def launch_worker(
             "--nnodes=1",
             f"--nproc_per_node={len(gpu_ids)}",
             f"--master_port={_free_port()}",
-            str(worker),
-            "--run-dir",
-            str(run_dir),
-            *extra_args,
+            "--module",
+            "rocm_qlora.train",
+            *args,
         ]
-    proc = subprocess.run(cmd, env=env, cwd=str(REPO_ROOT))
-    return LaunchResult(returncode=proc.returncode, run_dir=run_dir, gpu_ids=gpu_ids)
+    return subprocess.run(cmd, env=env, cwd=str(REPO_ROOT)).returncode
 
 
 # ---------------------------------------------------------------------------
@@ -250,14 +242,7 @@ def launch_worker(
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class Preflight:
-    gpu_ids: list[int]
-    free_gb: dict[int, float]
-    warnings: list[str]
-
-
-def preflight_gpus(cfg: Config, needed_gb: float) -> Preflight:
+def preflight_gpus(cfg: Config, needed_gb: float) -> GpuPlan:
     """Choose GPUs for this run and collect human-readable context."""
     requested = cfg.dist.gpus
     mode = cfg.dist.mode
@@ -265,16 +250,13 @@ def preflight_gpus(cfg: Config, needed_gb: float) -> Preflight:
         requested = [0]
 
     plan = select_gpus(needed_gb, requested=requested, safety_factor=cfg.dist.safety_factor)
-    warnings = list(plan.warnings)
-
     # Note about other VRAM consumers (e.g. a running inference server).
     holders = gpu_processes()
     for g in plan.gpus:
         who = [f"{p['name']} (pid {p['pid']}, {p['vram_b'] / 1e9:.1f} GB)" for p in holders if str(g) in str(p["gpus"])]
         if who:
-            warnings.append(f"GPU {g} is currently shared with: {', '.join(who)}")
-
-    return Preflight(gpu_ids=plan.gpus, free_gb=plan.free_gb, warnings=warnings)
+            plan.warnings.append(f"GPU {g} is currently shared with: {', '.join(who)}")
+    return plan
 
 
 class GpuFingerprint(TypedDict):

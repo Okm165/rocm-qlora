@@ -645,22 +645,30 @@ class MetricsCallback(TrainerCallback):
     ) -> None:
         """Per-step hot path: write the metrics record, drive the dashboard."""
         logs = logs or {}
-        now = time.monotonic()
-
         if "eval_loss" in logs:
             self._record_eval(state, logs["eval_loss"])
             return
         if "loss" not in logs:
             return
 
+        record, gpu_recs = self._track_step(time.monotonic(), logs, state)
+        self._write(record)
+        self._health_checks(record)
+
+        if self.dashboard:
+            self._update_dashboard(state, logs, record, gpu_recs=gpu_recs)
+
+        if state.global_step - self._last_snapshot_step >= self.cfg.logging.chart_snapshot_steps:
+            self._last_snapshot_step = state.global_step
+            self._schedule_snapshot()
+
+    def _track_step(self, now: float, logs: dict[str, Any], state: TrainerState) -> tuple[TrainRecord, list[GpuMetric]]:
+        """Assemble one train record from the tracker helpers."""
         step_time_ema = self._track_step_timing(now)
         tokens, tok_per_s = self._track_tokens(now, logs, state)
         loss, loss_ema = self._track_loss(logs)
         gpu_recs, vram_peak = self._track_vram()
-
         remaining = max(0, self.max_steps - state.global_step)
-        eta = step_time_ema * remaining if step_time_ema is not None else None
-
         record: TrainRecord = {
             "type": "train",
             "step": state.global_step,
@@ -673,28 +681,11 @@ class MetricsCallback(TrainerCallback):
             "samples_per_s": (tok_per_s / self.cfg.data.max_length) if tok_per_s else None,
             "tokens_seen": tokens,
             "elapsed_s": self.stopwatch.elapsed(),
-            "eta_s": eta,
+            "eta_s": step_time_ema * remaining if step_time_ema is not None else None,
             "vram_peak_gb": vram_peak,
             "gpu": gpu_recs,
         }
-        self._write(record)
-        self._health_checks(record)
-
-        if self.dashboard:
-            self._update_dashboard(
-                state,
-                logs,
-                loss=loss,
-                loss_ema=loss_ema,
-                tok_per_s=tok_per_s,
-                record=record,
-                eta=eta,
-                gpu_recs=gpu_recs,
-            )
-
-        if state.global_step - self._last_snapshot_step >= self.cfg.logging.chart_snapshot_steps:
-            self._last_snapshot_step = state.global_step
-            self._schedule_snapshot()
+        return record, gpu_recs
 
     def _record_eval(self, state: TrainerState, eval_loss: float) -> None:
         record: EvalRecord = {
@@ -750,12 +741,8 @@ class MetricsCallback(TrainerCallback):
         self,
         state: TrainerState,
         logs: dict[str, Any],
-        *,
-        loss: float,
-        loss_ema: float | None,
-        tok_per_s: float | None,
         record: TrainRecord,
-        eta: float | None,
+        *,
         gpu_recs: list[GpuMetric],
     ) -> None:
         if self.dashboard is None:  # caller guards; this narrows the type
@@ -764,18 +751,18 @@ class MetricsCallback(TrainerCallback):
         self.dashboard.update(
             step=state.global_step,
             epoch=float(state.epoch or 0),
-            loss=loss,
-            loss_ema=loss_ema,
+            loss=record["loss"],
+            loss_ema=record["loss_ema"],
             best_loss=min(emas, default=None),
             loss_trend=trend_arrow(emas),
             lr=logs.get("learning_rate"),
             grad_norm=logs.get("grad_norm"),
-            tok_per_s=tok_per_s,
+            tok_per_s=record["tok_per_s"],
             samples_per_s=record["samples_per_s"],
             tokens_seen=record["tokens_seen"],
             total_tokens_estimate=self.total_tokens_estimate,
             elapsed_s=self.stopwatch.elapsed(),
-            eta_s=eta,
+            eta_s=record["eta_s"],
             gpus=gpu_recs,
             health=self._health_lines(),
         )
