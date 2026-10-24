@@ -240,6 +240,6 @@ uv run rocm-qlora doctor              # full probe → .context/doctor-latest.js
 <run>/logs/rank-0.log                 # first ERROR line
 ```
 
-For deeper health analysis: `ROCM_QLORA_LOG_LEVEL=DEBUG` (package file-log
-verbosity) and `ROCM_QLORA_HF_LOG_LEVEL=info` (HF/TRL internals into the rank
-logs).
+For HF/TRL internals in the rank logs: `ROCM_QLORA_HF_LOG_LEVEL=info`.
+`ROCM_QLORA_LOG_LEVEL` (default `INFO`) sets the package's own file-log level —
+`WARNING` quiets the per-step health lines.

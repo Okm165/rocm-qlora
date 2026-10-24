@@ -25,16 +25,33 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
-def _choose_merge_device(model_bytes: int, ram: HostMemory, console: Console) -> Any:
-    """CPU when host RAM fits the model with ~2.2x headroom, else shard across GPUs."""
-    if ram.get("available_gib", 0) * 2**30 > model_bytes * 2.2:
+#: Host RAM the CPU merge path needs beyond the bf16 model itself: interpreter
+#: + torch/transformers/peft/bnb imports and the write path. Measured — a
+#: 1.6 GiB toy merge peaked at 4.1 GiB RSS; the bare import floor is 3.1 GiB.
+_MERGE_RUNTIME_BYTES = 4 * 2**30
+
+
+def _choose_merge_device(model_bytes: int, ram: HostMemory, console: Console, *, device: str = "auto") -> Any:
+    """Device map for the merge — CPU when host RAM fits, else shard across GPUs.
+
+    ``auto`` decides on two facts only: the exact bf16 size (safetensors
+    headers) and the measured runtime overhead. No safety-factor modelling —
+    if it still does not fit, the process OOMs and these printed facts are
+    what to react with; ``--device`` overrides the choice.
+    """
+    free = ram.get("available_gib", 0) * 2**30
+    needed = model_bytes + _MERGE_RUNTIME_BYTES
+    if device == "auto":
+        device = "cpu" if free > needed else "gpu"
+    if device == "cpu":
         console.print(
-            f"[dim]merging on CPU ({human_bytes(model_bytes)} model, {ram['available_gib']:.0f} GiB RAM free)[/dim]"
+            f"[dim]merging on CPU ({human_bytes(model_bytes)} model + ~{human_bytes(_MERGE_RUNTIME_BYTES)} runtime, "
+            f"{ram['available_gib']:.0f} GiB RAM free)[/dim]"
         )
         return {"": "cpu"}
     console.print(
-        f"[dim]merging sharded across GPUs (model ≈ {human_bytes(model_bytes)}, "
-        f"host RAM free {ram['available_gib']:.0f} GiB)[/dim]"
+        f"[dim]merging sharded across GPUs ({human_bytes(model_bytes)} model, "
+        f"{ram['available_gib']:.0f} GiB RAM free vs ~{human_bytes(needed)} needed on CPU)[/dim]"
     )
     return "balanced"
 
@@ -61,11 +78,18 @@ def _fold_adapter(cfg: Config, adapter_dir: Path, device_map: Any, console: Cons
     return model
 
 
-def merge_run(run_dir: str | Path, *, out_dir: str | Path | None = None, console: Console | None = None) -> Path:
+def merge_run(
+    run_dir: str | Path,
+    *,
+    out_dir: str | Path | None = None,
+    console: Console | None = None,
+    device: str = "auto",
+) -> Path:
     """Fold the adapter into the base, dequantize NF4 → bf16, save.
 
     A 27B model needs ~55 GB of bf16 memory: host RAM if it fits, otherwise
     the model is sharded across the available GPUs (``device_map="balanced"``).
+    ``device`` ("auto"/"cpu"/"gpu") overrides that choice.
     """
     from rich.console import Console
 
@@ -78,7 +102,9 @@ def merge_run(run_dir: str | Path, *, out_dir: str | Path | None = None, console
     out = Path(out_dir) if out_dir else run_dir / "merged"
     out.mkdir(parents=True, exist_ok=True)
 
-    device_map = _choose_merge_device(_bf16_model_bytes(Path(cfg.model.prepared_dir)), host_memory(), console)
+    device_map = _choose_merge_device(
+        _bf16_model_bytes(Path(cfg.model.prepared_dir)), host_memory(), console, device=device
+    )
     model = _fold_adapter(cfg, adapter_dir, device_map, console)
 
     console.print(f"[dim]saving bf16 model to {out} …[/dim]")

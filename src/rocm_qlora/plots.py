@@ -299,16 +299,16 @@ def throughput(records: Sequence[MetricsRecord], out_path: str | Path, *, meta: 
         if not train:
             _no_data(ax)
             return
-        steps = [r["step"] for r in train]
         _tok_series(ax, train, label="tokens/s (all GPUs)")
         ax.set_xlabel("optimizer step")
         ax.set_ylabel("tokens / second")
-        if any(r.get("tokens_seen") for r in train):
+        seen = [r for r in train if r.get("tokens_seen") is not None]
+        if seen:
             ax2 = ax.twinx()
             ax2.grid(False)
             ax2.plot(
-                steps,
-                [r.get("tokens_seen", 0) / 1e6 for r in train],
+                [r["step"] for r in seen],
+                [as_float(r["tokens_seen"]) / 1e6 for r in seen],
                 color=COLORS["dim"],
                 lw=1.2,
                 ls="--",
@@ -626,7 +626,9 @@ def _headline_table(summary: RunSummary) -> list[str]:
         rows.append(
             ("eval loss (first → last)", f"{fmt_float(summary.first_eval_loss)} → {fmt_float(summary.last_eval_loss)}")
         )
-    rows += [("tokens seen", fmt_int(summary.tokens_seen)), ("wall time", human_duration(summary.total_seconds))]
+    if summary.tokens_seen is not None:
+        rows.append(("tokens seen", fmt_int(summary.tokens_seen)))
+    rows.append(("wall time", human_duration(summary.total_seconds)))
     if summary.peak_vram_gb:
         rows.append(("peak VRAM (busiest GPU)", f"{summary.peak_vram_gb:.1f} GB"))
     if summary.avg_tok_per_s:

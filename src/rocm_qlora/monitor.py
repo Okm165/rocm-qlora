@@ -52,7 +52,7 @@ class TrainRecord(TypedDict):
     lr: float | None
     grad_norm: float | None
     tok_per_s: float | None
-    tokens_seen: int
+    tokens_seen: int | None
     eta_s: float | None
     vram_peak_gb: float | None
     gpu: list[GpuMetric]
@@ -113,7 +113,7 @@ class RunEndRecord(TypedDict):
     steps: int
     best_loss: float | None
     best_eval_loss: float | None
-    tokens_seen: int
+    tokens_seen: int | None
     world_size: NotRequired[int]
     dry_run: NotRequired[bool]
     ts: NotRequired[str]
@@ -251,7 +251,7 @@ class RunSummary:
     last_eval_loss: float | None = None
     best_eval_loss: float | None = None
     total_seconds: float = 0.0
-    tokens_seen: int = 0
+    tokens_seen: int | None = None
     avg_tok_per_s: float | None = None
     peak_vram_gb: float | None = None
     warnings: int = 0
@@ -273,7 +273,8 @@ def summarize(records: Sequence[MetricsRecord]) -> RunSummary:
         if finite:
             s.first_loss, s.last_loss = finite[0][1], finite[-1][1]
             s.best_step, s.best_loss = min(finite, key=lambda t: t[1])
-        s.tokens_seen = int(train[-1].get("tokens_seen") or 0)
+        seen = train[-1].get("tokens_seen")
+        s.tokens_seen = int(seen) if seen is not None else None
         rates = [as_float(r["tok_per_s"]) for r in train if r.get("tok_per_s")]
         if rates:
             s.avg_tok_per_s = sum(rates) / len(rates)
@@ -528,7 +529,7 @@ class MetricsCallback(TrainerCallback):
     def _track_step(self, now: float, logs: dict[str, Any], state: TrainerState) -> TrainRecord:
         """Assemble one train record from the tracker helpers."""
         step_time_avg = self._track_step_timing(now)
-        tokens, tok_per_s = self._track_tokens(now, logs, state)
+        tokens, tok_per_s = self._track_tokens(now, logs)
         loss, loss_ema = self._track_loss(logs)
         gpu_recs, vram_peak = self._track_vram(state.global_step)
         remaining = max(0, self.max_steps - state.global_step)
@@ -566,28 +567,24 @@ class MetricsCallback(TrainerCallback):
         self._last_step_time = now
         return (sum(self._step_times[-20:]) / len(self._step_times[-20:])) if self._step_times else None
 
-    def _track_tokens(self, now: float, logs: dict[str, Any], state: TrainerState) -> tuple[int, float | None]:
+    def _track_tokens(self, now: float, logs: dict[str, Any]) -> tuple[int | None, float | None]:
         """Tokens seen and tokens/s since the previous log.
 
-        TRL reports ``num_input_tokens_seen`` (non-padding tokens); when it is
-        missing we fall back to a full-length estimate.
+        TRL reports ``num_input_tokens_seen`` (non-padding tokens) because
+        ``sft._sft_kwargs`` sets ``include_num_input_tokens_seen``. If the key
+        is ever absent the count stays *unknown* — no fabricated estimate.
         """
-        tokens = logs.get("num_input_tokens_seen")
-        if tokens is None:
-            tokens = (
-                state.global_step
-                * self.cfg.optim.per_device_batch_size
-                * self.cfg.optim.grad_accum
-                * self.world_size
-                * self.cfg.data.max_length
-            )
+        seen = logs.get("num_input_tokens_seen")
+        if seen is None:
+            return None, None
+        tokens = int(seen)
         tok_per_s = None
         if self._last_tokens is not None and self._last_tokens_time is not None:
             dt = now - self._last_tokens_time
             if dt > 0:
                 tok_per_s = (tokens - self._last_tokens) / dt
         self._last_tokens, self._last_tokens_time = tokens, now
-        return int(tokens), tok_per_s
+        return tokens, tok_per_s
 
     def _track_loss(self, logs: dict[str, Any]) -> tuple[float, float | None]:
         loss = float(logs["loss"])

@@ -97,10 +97,6 @@ omp_num_threads = 8     # a handful per rank; avoids host oversubscription
 # Removes the documented KFD-eviction trigger of the MES/GPU-reset failure
 # class (ROCm #6386; cost ~0.1%, outputs unchanged — docs/05).
 HSA_USE_SVM = "0"
-# Health-analysis verbosity for the package logger (INFO default). DEBUG keeps
-# the same output today but future diagnostics will land at DEBUG level.
-# For HF/TRL internals in the rank logs, launch with ROCM_QLORA_HF_LOG_LEVEL=info.
-ROCM_QLORA_LOG_LEVEL = "DEBUG"
 
 [dist]
 mode = "auto"           # DDP across every visible GPU
