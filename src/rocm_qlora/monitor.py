@@ -52,7 +52,6 @@ class TrainRecord(TypedDict):
     lr: float | None
     grad_norm: float | None
     tok_per_s: float | None
-    samples_per_s: float | None
     tokens_seen: int
     elapsed_s: float
     eta_s: float | None
@@ -530,17 +529,10 @@ class MetricsCallback(TrainerCallback):
     def _track_step(self, now: float, logs: dict[str, Any], state: TrainerState) -> TrainRecord:
         """Assemble one train record from the tracker helpers."""
         step_time_ema = self._track_step_timing(now)
-        tokens, tok_per_s, token_dt = self._track_tokens(now, logs, state)
+        tokens, tok_per_s = self._track_tokens(now, logs, state)
         loss, loss_ema = self._track_loss(logs)
         gpu_recs, vram_peak = self._track_vram(state.global_step)
         remaining = max(0, self.max_steps - state.global_step)
-        # Samples/s over the same interval as tok/s: every optimizer step
-        # consumes one batch, and logging may span several steps.
-        samples_per_s = None
-        if token_dt and token_dt > 0:
-            batch = self.cfg.optim.per_device_batch_size * self.cfg.optim.grad_accum * self.world_size
-            steps_logged = max(1, state.global_step - (self._last_step or 0))
-            samples_per_s = batch * steps_logged / token_dt
         record: TrainRecord = {
             "type": "train",
             "step": state.global_step,
@@ -550,7 +542,6 @@ class MetricsCallback(TrainerCallback):
             "lr": logs.get("learning_rate"),
             "grad_norm": logs.get("grad_norm"),
             "tok_per_s": tok_per_s,
-            "samples_per_s": samples_per_s,
             "tokens_seen": tokens,
             "elapsed_s": time.monotonic() - self._t0,
             "eta_s": step_time_ema * remaining if step_time_ema is not None else None,
@@ -576,10 +567,8 @@ class MetricsCallback(TrainerCallback):
         self._last_step_time = now
         return (sum(self._step_times[-20:]) / len(self._step_times[-20:])) if self._step_times else None
 
-    def _track_tokens(
-        self, now: float, logs: dict[str, Any], state: TrainerState
-    ) -> tuple[int, float | None, float | None]:
-        """Tokens seen, tokens/s, and the interval they cover.
+    def _track_tokens(self, now: float, logs: dict[str, Any], state: TrainerState) -> tuple[int, float | None]:
+        """Tokens seen and tokens/s since the previous log.
 
         TRL reports ``num_input_tokens_seen`` (non-padding tokens); when it is
         missing we fall back to a full-length estimate.
@@ -594,13 +583,12 @@ class MetricsCallback(TrainerCallback):
                 * self.cfg.data.max_length
             )
         tok_per_s = None
-        token_dt = None
         if self._last_tokens is not None and self._last_tokens_time is not None:
-            token_dt = now - self._last_tokens_time
-            if token_dt > 0:
-                tok_per_s = (tokens - self._last_tokens) / token_dt
+            dt = now - self._last_tokens_time
+            if dt > 0:
+                tok_per_s = (tokens - self._last_tokens) / dt
         self._last_tokens, self._last_tokens_time = tokens, now
-        return int(tokens), tok_per_s, token_dt
+        return int(tokens), tok_per_s
 
     def _track_loss(self, logs: dict[str, Any]) -> tuple[float, float | None]:
         loss = float(logs["loss"])

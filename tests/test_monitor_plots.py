@@ -29,7 +29,6 @@ def synth_records(n=60, epochs=3):
             "lr": 1e-4 * max(0.01, 1 - i / n),
             "grad_norm": 0.5 + 0.1 * math.sin(i),
             "tok_per_s": 800.0,
-            "samples_per_s": 0.5,
             "tokens_seen": i * 4096,
             "elapsed_s": i * 2.0,
             "eta_s": (n - i) * 2.0,
