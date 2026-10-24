@@ -9,7 +9,7 @@
 [project]
 name = "rocm-qlora"
 version = "0.1.0"
-description = "Teaching-first, production-shaped QLoRA fine-tuning on AMD ROCm (RDNA3)"
+description = "A thin, readable QLoRA fine-tuning wrapper for AMD ROCm (gfx1100 / RDNA3)"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12,<3.13"
