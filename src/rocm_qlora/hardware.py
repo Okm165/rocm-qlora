@@ -18,7 +18,6 @@ import json
 import os
 import platform
 import subprocess
-from collections.abc import Sequence
 from dataclasses import dataclass, field
 from importlib import metadata as importlib_metadata
 from pathlib import Path
@@ -282,10 +281,18 @@ class GpuPlan:
     warnings: list[str] = field(default_factory=list)
 
 
-def freest_gpu_index(snapshot: Sequence[GpuInfo] | None = None) -> int | None:
-    """Device index of the GPU with the most free VRAM (None when none visible)."""
-    snap = gpu_snapshot() if snapshot is None else snapshot
-    return max(snap, key=lambda g: g.mem_free_b).index if snap else None
+def freest_gpu_index() -> int | None:
+    """Visible device index with the most free VRAM (None when none visible).
+
+    Asks torch, not rocm-smi: torch's indices respect `HIP_VISIBLE_DEVICES`,
+    so the answer is a device this process can actually open.
+    """
+    import torch
+
+    if not torch.cuda.is_available():
+        return None
+    free = [(torch.cuda.mem_get_info(i)[0], i) for i in range(torch.cuda.device_count())]
+    return max(free)[1] if free else None
 
 
 def select_gpus(*, requested: str | list[int] = "auto") -> GpuPlan:

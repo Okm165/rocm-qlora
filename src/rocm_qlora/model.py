@@ -55,7 +55,7 @@ def load_tokenizer(cfg: Config, *, prefer_prepared: bool = True) -> PreTrainedTo
     from transformers import AutoTokenizer
 
     prepared = Path(cfg.model.prepared_dir)
-    source = str(prepared) if prefer_prepared and prepared.exists() else cfg.model.name
+    source = str(prepared) if prefer_prepared and prepared_checkpoint_exists(cfg) else cfg.model.name
     tokenizer = AutoTokenizer.from_pretrained(source, trust_remote_code=cfg.model.trust_remote_code)
     if tokenizer.pad_token is None:  # generic guard; Qwen checkpoints ship both
         tokenizer.pad_token = tokenizer.eos_token

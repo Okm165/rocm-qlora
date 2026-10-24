@@ -245,7 +245,7 @@ def _resolve_resume(args: argparse.Namespace) -> Path | None:
 def _worker_extra_args(args: argparse.Namespace, resume_checkpoint: Path | None) -> list[str]:
     """CLI flags forwarded to the training worker."""
     extra = ["--dry-run"] if args.dry_run else []
-    if args.max_steps:
+    if args.max_steps is not None:  # 0 = no step limit, a valid override
         extra += ["--max-steps", str(args.max_steps)]
     if resume_checkpoint:
         extra += ["--resume", str(resume_checkpoint)]
@@ -418,9 +418,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     """Parse arguments and dispatch to the selected command."""
-    # Point the torch wheel's libdrm at the system ASIC-ID table (silences a
-    # per-GPU stderr flood at HIP init; workers inherit it via build_worker_env).
-    os.environ.setdefault("AMDGPU_ASIC_ID_TABLE_PATHS", "/usr/share/libdrm")
+    # Point the torch wheel's libdrm at the system ASIC-ID table when it is
+    # installed (silences a per-GPU stderr flood at HIP init; workers inherit
+    # it via build_worker_env).
+    if Path("/usr/share/libdrm").is_dir():
+        os.environ.setdefault("AMDGPU_ASIC_ID_TABLE_PATHS", "/usr/share/libdrm")
     parser = build_parser()
     args = parser.parse_args(argv)
     try:

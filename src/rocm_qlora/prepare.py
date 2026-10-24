@@ -316,7 +316,7 @@ def _surgery_device() -> str:
     if index is None:
         raise RuntimeError(
             "prepare needs a visible GPU for the quantization surgery "
-            "(rocm-smi reported none — run `rocm-qlora doctor` to see why)"
+            "(no GPU is visible to torch — run `rocm-qlora doctor` to see why)"
         )
     return f"cuda:{index}"
 

@@ -220,11 +220,14 @@ def probe_hip_ipc(python_exe: str | None = None, timeout: float = 120.0) -> HipI
 
 
 def matmul_benchmark(dtype_name: str = "bfloat16", size: int = 8192, iters: int = 20, warmup: int = 5) -> MatmulBench:
-    """bf16/fp16 matmul TFLOPS on GPU 0 — a quick sanity check of the stack."""
+    """bf16/fp16 matmul TFLOPS on the freest GPU — a quick sanity check of the stack."""
     import torch
 
+    index = freest_gpu_index()
+    if index is None:
+        raise RuntimeError("no GPU visible to torch — cannot run the matmul benchmark")
     dtype = {"bfloat16": torch.bfloat16, "float16": torch.float16}[dtype_name]
-    device = "cuda"
+    device = f"cuda:{index}"
     a = torch.randn(size, size, device=device, dtype=dtype)
     b = torch.randn(size, size, device=device, dtype=dtype)
     for _ in range(warmup):
@@ -258,7 +261,7 @@ def probe_bnb_smoke() -> BnbSmoke:
 
         index = freest_gpu_index()
         if index is None:
-            raise RuntimeError("no GPU visible to rocm-smi — cannot run the bitsandbytes smoke")
+            raise RuntimeError("no GPU visible to torch — cannot run the bitsandbytes smoke")
         device = f"cuda:{index}"
         torch.manual_seed(0)
         lin = torch.nn.Linear(512, 256, bias=False).to(device, dtype=torch.float16)

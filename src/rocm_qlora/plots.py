@@ -15,6 +15,7 @@ from __future__ import annotations
 import contextlib
 import json
 import math
+import re
 import tomllib
 from collections.abc import Generator, Sequence
 from pathlib import Path
@@ -605,7 +606,7 @@ def write_report(run_dir: str | Path) -> Path:
     cfg = _read_config(run_dir)
     # The run_end record is authoritative; a crashed run has none, and the
     # directory name is the one place its dry-run flag survives.
-    dry_run = summary.dry_run or "-dryrun" in run_dir.name  # make_run_dir may suffix a collision
+    dry_run = summary.dry_run or re.search(r"-dryrun(-\d+)?$", run_dir.name) is not None
 
     lines = [
         f"# Run report — {run_dir.name}\n",

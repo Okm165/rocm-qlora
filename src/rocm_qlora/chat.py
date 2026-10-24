@@ -60,11 +60,16 @@ def _load(
     trust_remote_code = cfg.model.trust_remote_code if cfg else False
     model_cls = resolve_model_class(str(base_dir), trust_remote_code=trust_remote_code)
     attn = resolve_attn_impl(cfg) if cfg else "sdpa"
-    console.print(f"[dim]loading base {base_dir} (4-bit) …[/dim]")
+    from .hardware import freest_gpu_index
+
+    index = freest_gpu_index()
+    if index is None:
+        raise SystemExit("chat: no GPU visible to torch")
+    console.print(f"[dim]loading base {base_dir} (4-bit) on GPU {index} …[/dim]")
     model = model_cls.from_pretrained(
         str(base_dir),
         dtype=compute_dtype(cfg) if cfg else torch.bfloat16,
-        device_map={"": "cuda:0"},
+        device_map={"": f"cuda:{index}"},
         attn_implementation=attn,
         trust_remote_code=trust_remote_code,
     )

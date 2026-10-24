@@ -4,7 +4,8 @@ Everything here touches a third-party runtime deliberately, so it lives apart
 from the worker's phases:
 
 * ``skip_redundant_init_sync`` — monkeypatches DDP's init broadcast away (a
-  ~4.9 GiB transient at 27B; redundant because every rank loads the same
+  a full parameter walk at trainer construction; redundant because every rank
+  loads the same
   checkpoint and seeds identically). It warns loudly if torch renames the
   binding.
 * ``install_diagnostics`` — env-gated (``ROCM_QLORA_DETECT_ANOMALY``,
@@ -63,10 +64,13 @@ def _install_grad_finite_checks(model: torch.nn.Module, log: Callable[[str], Non
     import torch
 
     def make_hook(param_name: str):
-        def hook(grad: torch.Tensor):
-            # Post-accumulate hooks run for leaf tensors after their gradient is
-            # accumulated, so `grad` is always a tensor here.
-            if not bool(torch.isfinite(grad).all()):
+        def hook(param: torch.Tensor):
+            # torch 2.13 calls post-accumulate hooks with the *parameter*
+            # (verified: the argument is the tensor itself, not its .grad), so
+            # the gradient has to be read off it — checking the argument would
+            # test the weights instead and never fire.
+            grad = param.grad
+            if grad is not None and not bool(torch.isfinite(grad).all()):
                 raise RuntimeError(
                     f"non-finite gradient in '{param_name}' — aborting before the optimizer step "
                     "(ROCM_QLORA_GRAD_CHECK=1). See docs/05-troubleshooting.md"

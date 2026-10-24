@@ -7,7 +7,6 @@ reads to pick attention settings and AOTriton flags.
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from rich.console import Console
@@ -162,7 +161,9 @@ def _doctor_probes(args: argparse.Namespace) -> DoctorVerdict:
 def cmd_doctor(args: argparse.Namespace) -> int:
     """Run the environment doctor; writes .context/doctor-latest.json."""
 
-    context_dir = Path(".context")
+    from .launcher import DOCTOR_VERDICT  # one path for writer and reader
+
+    context_dir = DOCTOR_VERDICT.parent
     context_dir.mkdir(parents=True, exist_ok=True)
 
     console.rule(f"[bold cyan]rocm-qlora doctor[/bold cyan] · v{__version__}")
@@ -190,6 +191,6 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     verdict["created"] = timestamp_slug()
     verdict["host"] = {"ram": mem, "cpu": cpu}
     verdict["packages"] = versions
-    write_json(context_dir / "doctor-latest.json", verdict)
-    console.print(f"[dim]saved: {context_dir / 'doctor-latest.json'}[/dim]")
+    write_json(DOCTOR_VERDICT, verdict)
+    console.print(f"[dim]saved: {DOCTOR_VERDICT}[/dim]")
     return 0

@@ -239,7 +239,6 @@ class _TrainingData(NamedTuple):
     original_chat_template: str | dict[str, Any] | None
     train_ds: Dataset
     eval_ds: Dataset | None
-    n_train: int
 
 
 def _load_training_data(cfg: Config, args: WorkerArgs, *, ui: Rank0UI | None, logger: logging.Logger) -> _TrainingData:
@@ -269,7 +268,7 @@ def _load_training_data(cfg: Config, args: WorkerArgs, *, ui: Rank0UI | None, lo
         _print_dataset_status(ui.console, cfg, stats, profile, n_train, len(eval_ds) if eval_ds is not None else 0)
         logger.info("dataset ready: %d train / %s eval", n_train, len(eval_ds) if eval_ds is not None else 0)
 
-    return _TrainingData(tokenizer, original_chat_template, train_ds, eval_ds, n_train)
+    return _TrainingData(tokenizer, original_chat_template, train_ds, eval_ds)
 
 
 def _resolve_attention(cfg: Config, logger: logging.Logger) -> tuple[str, list[str]]:
@@ -403,8 +402,14 @@ def _train_and_save(
     """Phase 4: train (resumable), save adapter + inference template."""
     import torch
 
+    from .metrics import EventRecord
+
     if args.resume:
         logger.info("resuming from checkpoint: %s", args.resume)
+        if ui is not None:  # ui exists exactly on rank 0
+            # Record the fact in the stream: the run dir's metrics start at the
+            # resumed step, and this says where that step came from.
+            ui.writer.write(EventRecord(type="event", level="info", event="resumed", detail=str(args.resume)))
     trainer.train(resume_from_checkpoint=args.resume)
 
     if ui is not None:  # ui exists exactly on rank 0

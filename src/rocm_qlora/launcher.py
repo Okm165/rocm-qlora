@@ -131,11 +131,17 @@ def apply_sdpa_verdict() -> list[str]:
     mode = "on" if os.environ.get("TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL") == "1" else "off"
     import torch
 
+    def probe_failed(backend: str) -> bool:
+        # A hand-edited or truncated verdict must not crash the worker: only a
+        # well-formed entry with ok=False disables a backend.
+        entry = backends.get(f"{backend}_{mode}")
+        return isinstance(entry, dict) and entry.get("ok") is False
+
     disabled: list[str] = []
-    if backends.get(f"flash_{mode}", {}).get("ok") is False and torch.backends.cuda.flash_sdp_enabled():
+    if probe_failed("flash") and torch.backends.cuda.flash_sdp_enabled():
         torch.backends.cuda.enable_flash_sdp(False)
         disabled.append("flash")
-    if backends.get(f"efficient_{mode}", {}).get("ok") is False and torch.backends.cuda.mem_efficient_sdp_enabled():
+    if probe_failed("efficient") and torch.backends.cuda.mem_efficient_sdp_enabled():
         torch.backends.cuda.enable_mem_efficient_sdp(False)
         disabled.append("mem_efficient")
     return disabled

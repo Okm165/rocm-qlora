@@ -303,9 +303,7 @@ class MetricsCallback(TrainerCallback):
         violation = health_violation(record)
         if violation is not None:
             event, message = violation
-            self.writer.write(
-                EventRecord(type="event", level="error", event=event, step=record["step"], detail=message)
-            )
+            self._write(EventRecord(type="event", level="error", event=event, step=record["step"], detail=message))
             raise RuntimeError(message)
         grad = record.get("grad_norm")
         norms = [as_float(r["grad_norm"]) for r in select(self.records, "train") if r.get("grad_norm") is not None]

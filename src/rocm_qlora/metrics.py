@@ -329,9 +329,10 @@ def summarize(records: Sequence[MetricsRecord]) -> RunSummary:
     run_ends = select(records, "run_end")
     if run_ends:
         s.dry_run = bool(run_ends[-1].get("dry_run", False))
-        total = run_ends[-1].get("total_seconds")
-        # Streams from older code may predate the field; the None branch is live.
-        s.total_seconds = float(total) if total is not None else None  # pyright: ignore[reportUnnecessaryComparison]
+        # total_seconds has been in every run_end record since the first
+        # metrics version (checked against every stream in .outputs); only
+        # dry_run is a later addition, hence the .get above.
+        s.total_seconds = float(run_ends[-1]["total_seconds"])
     return s
 
 
