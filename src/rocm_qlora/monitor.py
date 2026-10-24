@@ -656,14 +656,14 @@ class MetricsCallback(TrainerCallback):
             if med > 1e-3 and grad > 10 * med and record["step"] - self._warned_grad_spike_at > 50:
                 self._warned_grad_spike_at = record["step"]
                 self._write(
-                    {
-                        "type": "event",
-                        "level": "warn",
-                        "event": "grad_spike",
-                        "step": record["step"],
-                        "value": grad,
-                        "median": med,
-                    }
+                    EventRecord(
+                        type="event",
+                        level="warn",
+                        event="grad_spike",
+                        step=record["step"],
+                        value=grad,
+                        median=med,
+                    )
                 )
                 if self.console:
                     self.console.print(

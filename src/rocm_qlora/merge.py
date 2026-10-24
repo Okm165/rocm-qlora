@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 
 def _choose_merge_device(model_bytes: int, ram: HostMemory, console: Console) -> Any:
-    """CPU when host RAM fits the model twice over, else shard across GPUs."""
+    """CPU when host RAM fits the model with ~2.2x headroom, else shard across GPUs."""
     if ram.get("available_gib", 0) * 2**30 > model_bytes * 2.2:
         console.print(
             f"[dim]merging on CPU ({human_bytes(model_bytes)} model, {ram['available_gib']:.0f} GiB RAM free)[/dim]"
