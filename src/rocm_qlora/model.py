@@ -118,10 +118,13 @@ def load_model_for_training(cfg: Config, *, local_rank: int = 0, attn: str | Non
     """
     import torch
 
-    model_cls = resolve_model_class(
-        cfg.model.prepared_dir if Path(cfg.model.prepared_dir).exists() else cfg.model.name,
-        trust_remote_code=cfg.model.trust_remote_code,
-    )
+    prepared = Path(cfg.model.prepared_dir)
+    if not (prepared / "config.json").exists():
+        raise RuntimeError(
+            f"prepared checkpoint not found at {prepared} — run "
+            f"`rocm-qlora prepare --config <config>` first (docs/01 explains why it exists)"
+        )
+    model_cls = resolve_model_class(str(prepared), trust_remote_code=cfg.model.trust_remote_code)
     kwargs: dict[str, Any] = {
         "dtype": compute_dtype(cfg),
         "device_map": {"": f"cuda:{local_rank}"},

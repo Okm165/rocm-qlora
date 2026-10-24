@@ -603,13 +603,16 @@ def write_report(run_dir: str | Path) -> Path:
     records = read_metrics(run_dir)
     summary = summarize(records)
     cfg = _read_config(run_dir)
+    # The run_end record is authoritative; a crashed run has none, and the
+    # directory name is the one place its dry-run flag survives.
+    dry_run = summary.dry_run or run_dir.name.endswith("-dryrun")
 
     lines = [
         f"# Run report — {run_dir.name}\n",
         (
             f"*Model:* `{cfg.get('model', {}).get('name') or '?'}` · "
             f"*dataset:* `{cfg.get('data', {}).get('path') or '?'}` · "
-            f"*GPUs:* {summary.world_size} · *dry run:* {summary.dry_run}\n"
+            f"*GPUs:* {summary.world_size} · *dry run:* {dry_run}\n"
         ),
         *_headline_table(summary),
         *_epoch_table(select(records, "epoch_end"), records),
