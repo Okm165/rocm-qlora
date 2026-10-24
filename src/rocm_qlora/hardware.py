@@ -104,7 +104,7 @@ def gpu_snapshot(timeout: float = 10.0) -> list[GpuInfo]:
         return []
 
     gpus: list[GpuInfo] = []
-    for key in sorted(raw.keys()):
+    for key in raw:
         if not key.startswith("card"):
             continue
         idx = _to_int(key.replace("card", ""))
@@ -124,7 +124,8 @@ def gpu_snapshot(timeout: float = 10.0) -> list[GpuInfo]:
                 util_pct=_to_float(_first_key(d, "GPU use (%)", "GPU Use (%)")),
             )
         )
-    return gpus
+    # sorted by device index — "card10" would sort before "card2" lexicographically
+    return sorted(gpus, key=lambda g: g.index)
 
 
 class GpuProcess(TypedDict):

@@ -81,7 +81,8 @@ about learning.
 Typical edge temperatures: idle ~45 °C, training 55–75 °C is typical,
 85 °C is warm-but-fine, 95 °C+ is throttle territory (the model clock will
 drop and throughput.png will show it). Package power peaks ~355 W; a GPU
-pinned at max power *and* >90 °C wants better airflow.
+pinned at max power *and* >90 °C wants better airflow. The chart draws one
+line at **90 °C** — the same threshold the run's `!` warning fires at.
 
 ## epochs.png — per-epoch bars
 

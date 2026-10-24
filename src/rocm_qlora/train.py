@@ -581,25 +581,23 @@ def _finalize_run(
     dry_run: bool,
 ) -> None:
     """Rank-0 end of run: run_end event, charts, report, wrap-up."""
+    from .monitor import RunEndRecord
     from .plots import render_charts, write_report
 
     records = metrics_callback.records if metrics_callback else []
     summary = _assemble_summary(adapter_dir, records, start_time=start_time)
-    if ui.writer:
-        from .monitor import RunEndRecord
-
-        run_end: RunEndRecord = {
-            "type": "run_end",
-            "total_seconds": summary.total_seconds,
-            "steps": summary.steps,
-            "best_loss": summary.best_loss,
-            "best_eval_loss": summary.best_eval_loss,
-            "tokens_seen": summary.tokens_seen,
-            "world_size": world_size,
-            "dry_run": dry_run,
-        }
-        ui.writer.write(run_end)
-        ui.writer.close()
+    run_end: RunEndRecord = {
+        "type": "run_end",
+        "total_seconds": summary.total_seconds,
+        "steps": summary.steps,
+        "best_loss": summary.best_loss,
+        "best_eval_loss": summary.best_eval_loss,
+        "tokens_seen": summary.tokens_seen,
+        "world_size": world_size,
+        "dry_run": dry_run,
+    }
+    ui.writer.write(run_end)
+    ui.writer.close()
 
     render_charts(
         run_dir,
