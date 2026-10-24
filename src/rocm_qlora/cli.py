@@ -73,15 +73,20 @@ def _load_config(args: argparse.Namespace) -> Config:
 
 def _resolve_resume_checkpoint(path: str) -> Path | None:
     """Resolve a run dir / adapter dir / checkpoint dir to the latest checkpoint."""
+    from transformers.trainer import TRAINER_STATE_NAME
+    from transformers.trainer_utils import PREFIX_CHECKPOINT_DIR, get_last_checkpoint
+
     p = Path(path)
     if not p.exists():
         return None
-    if (p / "trainer_state.json").exists():
+    if (p / TRAINER_STATE_NAME).exists():
         return p  # already a checkpoint directory
-    candidates = sorted(p.glob("adapter/checkpoint-*")) or sorted(p.glob("checkpoint-*"))
-    if not candidates:
-        return None
-    return max(candidates, key=lambda c: int(c.name.rsplit("-", 1)[-1]))
+    for base in (p / "adapter", p):
+        if any(base.glob(f"{PREFIX_CHECKPOINT_DIR}-*")):
+            last = get_last_checkpoint(str(base))  # transformers' own "latest" rule
+            if last is not None:
+                return Path(last)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -376,11 +381,11 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("train", help="run QLoRA training")
     add_common(p)
     p.add_argument("--gpus", default=None, help="'auto' (default) or comma-separated ids, e.g. 0,2")
-    p.add_argument("--dist", choices=["auto", "single", "ddp"], default=None)
-    p.add_argument("--run-name", default=None)
-    p.add_argument("--seed", type=int, default=None)
-    p.add_argument("--max-length", type=int, default=None)
-    p.add_argument("--max-steps", type=int, default=None)
+    p.add_argument("--dist", choices=["auto", "single"], default=None, help="auto (all visible GPUs) or single (one)")
+    p.add_argument("--run-name", default=None, help="override run.name (used in the run-dir name)")
+    p.add_argument("--seed", type=int, default=None, help="override run.seed")
+    p.add_argument("--max-length", type=int, default=None, help="override data.max_length")
+    p.add_argument("--max-steps", type=int, default=None, help="stop after N optimizer steps (debug/short runs)")
     p.add_argument("--dry-run", action="store_true", help="3 steps on 8 examples — validate the pipeline")
     p.add_argument(
         "--resume",
@@ -399,13 +404,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--run", default=None, help="run directory (adapter + config are read from it)")
     p.add_argument("--base", default=None, help="override base model (prepared dir)")
     p.add_argument("--adapter", default=None, help="override adapter directory")
-    p.add_argument("--max-new-tokens", type=int, default=1024)
-    p.add_argument("--temperature", type=float, default=0.6)
+    p.add_argument("--max-new-tokens", type=int, default=1024, help="generation cap per reply")
+    p.add_argument("--temperature", type=float, default=0.6, help="sampling temperature (0 = greedy)")
     p.set_defaults(func=cmd_chat)
 
     p = sub.add_parser("merge", help="merge adapter into a bf16 model")
     p.add_argument("--run", required=True)
-    p.add_argument("--out", default=None)
+    p.add_argument("--out", default=None, help="output directory (default: <run dir>/merged)")
     p.set_defaults(func=cmd_merge)
 
     return parser

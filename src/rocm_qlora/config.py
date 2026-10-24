@@ -205,10 +205,10 @@ class EnvConfig(_Section):
 
 
 class DistConfig(_Section):
-    #: "auto" (every visible GPU) | "ddp" (same) | "single" (first GPU)
-    mode: Literal["auto", "ddp", "single"] = "auto"
-    #: "auto" uses every visible GPU; else e.g. [0, 2].
-    gpus: str | list[int] = "auto"
+    #: "auto" (every visible GPU, data-parallel) | "single" (the first one only).
+    mode: Literal["auto", "single"] = "auto"
+    #: "auto" uses every visible GPU; else explicit ids, e.g. [0, 2].
+    gpus: Literal["auto"] | list[int] = "auto"
 
     @field_validator("gpus")
     @classmethod
@@ -279,7 +279,9 @@ class Config(_Section):
         merged = self.to_dict()
         for dotted, value in overrides.items():
             if value is None:
-                continue
+                # An explicit `--set key=null` (or a TOML null) is a mistake, not
+                # a request to keep the current value.
+                raise ConfigError(f"Override '{dotted}' is null — give it a value")
             node: dict[str, Any] = merged
             parts = dotted.split(".")
             for part in parts[:-1]:

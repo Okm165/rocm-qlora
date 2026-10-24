@@ -24,7 +24,6 @@ launcher consults it to decide:
 from __future__ import annotations
 
 import os
-import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -168,8 +167,10 @@ def build_worker_env(cfg: Config, gpu_ids: list[int]) -> dict[str, str]:
     env.setdefault("NCCL_IB_DISABLE", "1")  # sensible default on machines without InfiniBand
     env.setdefault("NCCL_DEBUG", "WARN")
     # The torch wheel's libdrm prints "(null): No such file or directory" per
-    # GPU at HIP init unless the ASIC-ID table path points at the system one.
-    env.setdefault("AMDGPU_ASIC_ID_TABLE_PATHS", "/usr/share/libdrm")
+    # GPU at HIP init unless the ASIC-ID table path points at the system one —
+    # set it only when that table is actually installed.
+    if Path("/usr/share/libdrm").is_dir():
+        env.setdefault("AMDGPU_ASIC_ID_TABLE_PATHS", "/usr/share/libdrm")
     # Fix hash randomization before the interpreter starts (reproducible order).
     env.setdefault("PYTHONHASHSEED", str(cfg.run.seed))
     if cfg.env.hip_alloc_conf:
@@ -205,12 +206,6 @@ def make_run_dir(cfg: Config, *, dry_run: bool = False) -> Path:
     return run_dir
 
 
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("", 0))
-        return s.getsockname()[1]
-
-
 def launch_worker(cfg: Config, run_dir: Path, gpu_ids: list[int], *, extra_args: list[str] | None = None) -> int:
     """Spawn the training worker(s); returns the process exit code.
 
@@ -226,10 +221,9 @@ def launch_worker(cfg: Config, run_dir: Path, gpu_ids: list[int], *, extra_args:
             sys.executable,
             "-m",
             "torch.distributed.run",
-            "--standalone",
+            "--standalone",  # torchrun's standalone mode assigns its own free port
             "--nnodes=1",
             f"--nproc_per_node={len(gpu_ids)}",
-            f"--master_port={_free_port()}",
             "--module",
             "rocm_qlora.train",
             *args,
@@ -245,9 +239,9 @@ def launch_worker(cfg: Config, run_dir: Path, gpu_ids: list[int], *, extra_args:
 def preflight_gpus(cfg: Config) -> GpuPlan:
     """Choose GPUs for this run and collect human-readable context."""
     requested = cfg.dist.gpus
-    mode = cfg.dist.mode
-    if mode == "single" and isinstance(requested, str):
-        requested = [0]
+    if cfg.dist.mode == "single":
+        # One GPU: the first requested one, or GPU 0.
+        requested = [requested[0]] if isinstance(requested, list) else [0]
 
     plan = select_gpus(requested=requested)
     # Note about other VRAM consumers (e.g. a running inference server).
@@ -257,11 +251,16 @@ def preflight_gpus(cfg: Config) -> GpuPlan:
         if who:
             plan.warnings.append(f"GPU {g} is currently shared with: {', '.join(who)}")
     # The SDPA guard needs probe results; without them nothing is disabled.
-    verdict = load_doctor_verdict()
-    if not (verdict or {}).get("sdpa"):
+    sdpa = (load_doctor_verdict() or {}).get("sdpa") or {}
+    if not sdpa:
         plan.warnings.append(
             "no SDPA probe verdict in .context/doctor-latest.json — every attention backend stays enabled "
             "(the mem-efficient backward is the known intermittent-NaN source, docs/05); run `rocm-qlora doctor`"
+        )
+    elif not any(key.startswith(("flash_", "efficient_", "math_")) for key in (sdpa.get("backends") or {})):
+        plan.warnings.append(
+            "the SDPA verdict has no per-backend results (probe format changed?) — no backend will be disabled; "
+            "run `rocm-qlora doctor`"
         )
     return plan
 
