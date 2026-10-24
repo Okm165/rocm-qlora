@@ -37,7 +37,7 @@ rendered into your terminal at runtime.
   records of one thing each (config snapshot, environment fingerprint).
 * **No fit prediction.** The launcher reports visible GPUs, free VRAM and
   the processes holding them, then launches. A run either fits or OOMs —
-  the measured 24 GB budget is in `docs/02`, the knobs to react with in
+  the measured per-GPU budget is in `docs/02`, the knobs to react with in
   `docs/05`.
 * **Configs explain themselves.** Every knob is commented where you set
   it (`configs/*.toml`); the reasoning behind the values is `docs/03`.
@@ -47,7 +47,10 @@ rendered into your terminal at runtime.
   react with are in `docs/02`/`docs/06`.
 * **Loud guards, no silent rot.** Numerically broken training (NaN or
   exactly-zero loss, NaN `grad_norm`) aborts with a named `error` event
-  and a doc pointer instead of continuing (`docs/05`).
+  and a doc pointer instead of continuing (`docs/05`). The same rule covers
+  everything else: a missing SDPA probe verdict warns at preflight, a second
+  run in one directory and a `prepare` without a visible GPU fail loudly,
+  and unknown numbers (tokens, wall time) render as n/a — never as zero.
 
 ## Requirements
 
