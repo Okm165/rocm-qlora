@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000)](https://github.com/astral-sh/ruff)
 
-A **thin, teaching-first wrapper** around the standard 2026 stack
+A **thin, readable wrapper** around the standard 2026 stack
 (`transformers` + `TRL` + `PEFT` + `bitsandbytes`) for fine-tuning LLMs on
 **AMD ROCm (gfx1100 / RDNA3, ROCm 7.1)**.
 
@@ -52,7 +52,8 @@ rendered into your terminal at runtime.
 * Python 3.12 via [uv](https://docs.astral.sh/uv/) — the interpreter and the
   whole stack (torch, TRL, PEFT, bitsandbytes, Triton) are pinned in
   `pyproject.toml` / `uv.lock`
-* Disk: ~20 GB for the 27B checkpoint; host RAM only matters for `prepare`
+* Disk: ~20 GB for the 27B checkpoint; host RAM matters for `prepare` (stages
+  the checkpoint to re-quantize) and `merge` (holds the bf16 result)
 
 ## Quickstart
 
@@ -90,7 +91,7 @@ uv run rocm-qlora train  --config configs/toy.toml --dry-run
 | config | model | notes |
 |---|---|---|
 | `configs/qwen3.8-27b.toml` | `unsloth/Qwen3.8-27B-unsloth-bnb-4bit` | the heavy config: 27B dense hybrid (Gated DeltaNet + full attention), ~21–24 GB/GPU measured (batch 1; peaks near the 24 GB ceiling) |
-| `configs/qwen3-8b.toml` | `Qwen/Qwen3-8B` | comfortable fallback, ~8 GB/GPU, downloads on first use |
+| `configs/qwen3-8b.toml` | `Qwen/Qwen3-8B` | comfortable fallback, ~8 GB/GPU (derived from the parameter count — this config has not been run on this box), downloads on first use |
 | `configs/toy.toml` | `Qwen/Qwen3.5-0.8B` | same architecture family as 3.8; pipeline rehearsal |
 
 ### Why `prepare` exists (the 27B memory story)
