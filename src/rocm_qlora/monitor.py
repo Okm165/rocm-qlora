@@ -399,7 +399,6 @@ class MetricsCallback(TrainerCallback):
         console: Console,
         sampler: GpuSampler,
         writer: MetricsWriter,
-        total_tokens_estimate: int = 0,
         world_size: int = 1,
         chart_renderer: Callable[..., None],
     ) -> None:
@@ -408,7 +407,6 @@ class MetricsCallback(TrainerCallback):
         self.console = console
         self.sampler = sampler
         self.writer = writer
-        self.total_tokens_estimate = total_tokens_estimate
         self.world_size = max(1, world_size)
         # Injected by train.py: keeps `monitor` out of the `plots` import cycle
         # while deferring matplotlib to the first render.

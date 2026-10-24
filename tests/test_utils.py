@@ -13,7 +13,6 @@ from rocm_qlora.utils import (
     human_duration,
     linear_slope,
     percentile,
-    safe_div,
     timestamp_slug,
 )
 
@@ -64,10 +63,7 @@ def test_linear_slope_drops_none_and_nan():
     assert math.isnan(linear_slope([float("nan"), float("nan")]))
 
 
-def test_safe_div_and_as_float():
-    assert math.isnan(safe_div(1.0, 0.0))
-    assert safe_div(6.0, 3.0) == 2.0
-    assert safe_div(1.0, 0.0, default=-1.0) == -1.0
+def test_as_float_narrows_optionals():
     assert as_float(2.5) == 2.5
     try:
         as_float(None)

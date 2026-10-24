@@ -293,7 +293,6 @@ class _TrainingData(NamedTuple):
     train_ds: Dataset
     eval_ds: Dataset | None
     n_train: int
-    total_tokens_estimate: int
 
 
 def _load_training_data(cfg: Config, args: WorkerArgs, *, ui: Rank0UI | None, logger: logging.Logger) -> _TrainingData:
@@ -318,13 +317,12 @@ def _load_training_data(cfg: Config, args: WorkerArgs, *, ui: Rank0UI | None, lo
         eval_ds = None
 
     n_train = len(train_ds)
-    total_tokens_estimate = int(profile.total_tokens * (n_train / max(1, profile.n_total)))
 
     if ui is not None:  # ui exists exactly on rank 0
         _print_dataset_status(ui.console, cfg, stats, profile, n_train, len(eval_ds) if eval_ds is not None else 0)
         logger.info("dataset ready: %d train / %s eval", n_train, len(eval_ds) if eval_ds is not None else 0)
 
-    return _TrainingData(tokenizer, original_chat_template, train_ds, eval_ds, n_train, total_tokens_estimate)
+    return _TrainingData(tokenizer, original_chat_template, train_ds, eval_ds, n_train)
 
 
 def _resolve_attention(cfg: Config, logger: logging.Logger) -> tuple[str, list[str]]:
@@ -402,7 +400,7 @@ def _render_charts(*args: Any, **kwargs: Any) -> None:
     render_charts(*args, **kwargs)
 
 
-def _make_callback(cfg: Config, run_dir: Path, data: _TrainingData, *, ui: Rank0UI, world_size: int) -> MetricsCallback:
+def _make_callback(cfg: Config, run_dir: Path, *, ui: Rank0UI, world_size: int) -> MetricsCallback:
     """The rank-0 observability callback (charts render in a side thread)."""
     from .monitor import MetricsCallback
 
@@ -412,7 +410,6 @@ def _make_callback(cfg: Config, run_dir: Path, data: _TrainingData, *, ui: Rank0
         console=ui.console,
         sampler=ui.sampler,
         writer=ui.writer,
-        total_tokens_estimate=data.total_tokens_estimate,
         world_size=world_size,
         chart_renderer=_render_charts,
     )
@@ -440,7 +437,7 @@ def _build_trainer(
             f"{cfg.optim.grad_accum} (accum) × {world_size} (GPUs) = [bold]{eff}[/bold] sequences/step[/dim]"
         )
 
-    metrics_callback = _make_callback(cfg, run_dir, data, ui=ui, world_size=world_size) if ui is not None else None
+    metrics_callback = _make_callback(cfg, run_dir, ui=ui, world_size=world_size) if ui is not None else None
     callbacks = [metrics_callback] if metrics_callback is not None else []
 
     if world_size > 1:

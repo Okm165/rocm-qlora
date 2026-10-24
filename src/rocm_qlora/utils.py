@@ -138,11 +138,6 @@ def as_float(value: float | None) -> float:
     return value
 
 
-def safe_div(a: float, b: float, default: float = float("nan")) -> float:  # pyright: ignore[reportCallInDefaultInitializer]  # NaN sentinel
-    """Division that returns a fallback on zero denominators."""
-    return a / b if b else default
-
-
 def percentile(values: Sequence[float], q: float) -> float:
     """Linear-interpolated percentile (numpy semantics, q in [0, 100])."""
     if not values:
