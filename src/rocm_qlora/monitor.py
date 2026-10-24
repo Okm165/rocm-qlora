@@ -130,6 +130,26 @@ class ChartMeta(TypedDict, total=False):
     warmup_end_step: int | None
 
 
+def chart_meta(
+    records: Sequence[MetricsRecord], *, run_name: str, model: str, max_grad_norm: float, warmup_ratio: float = 0.0
+) -> ChartMeta:
+    """Chart annotations for a full render, reconstructed from the stream.
+
+    The live callback annotates with the current step and warmup end; a final
+    or post-hoc render must rebuild both from the records, or the delivered
+    charts lose the warmup shading and the step watermark.
+    """
+    meta: ChartMeta = {"run_name": run_name, "model": model, "max_grad_norm": max_grad_norm}
+    train = select(records, "train")
+    if train:
+        meta["step"] = f"step {train[-1]['step']}"
+    starts = [e for e in select(records, "event") if e.get("event") == "train_start"]
+    max_steps = starts[-1].get("max_steps") if starts else None
+    if warmup_ratio and max_steps:  # same arithmetic as MetricsCallback.on_train_begin
+        meta["warmup_end_step"] = int(max_steps * warmup_ratio)
+    return meta
+
+
 #: One line of ``metrics.jsonl`` — the union of every record shape.
 MetricsRecord = TrainRecord | EvalRecord | EpochEndRecord | EventRecord | RunEndRecord
 

@@ -26,6 +26,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from .monitor import (
+    METRICS_FILENAME,
     ChartMeta,
     EpochEndRecord,
     EvalRecord,
@@ -33,6 +34,7 @@ from .monitor import (
     MetricsRecord,
     RunSummary,
     TrainRecord,
+    chart_meta,
     ema,
     read_metrics,
     rolling_median,
@@ -574,15 +576,18 @@ def _read_config(run_dir: Path) -> dict[str, Any]:
 
 
 def replot(run_dir: str | Path) -> list[Path]:
-    """Regenerate every chart from metrics.jsonl (post-hoc / crashed runs)."""
+    """Regenerate every chart from the metrics stream (post-hoc / crashed runs)."""
     run_dir = Path(run_dir)
     records = read_metrics(run_dir)
     cfg = _read_config(run_dir)
-    meta: ChartMeta = {
-        "run_name": run_dir.name,
-        "model": str(cfg.get("model", {}).get("name", "")).split("/")[-1],
-        "max_grad_norm": cfg.get("optim", {}).get("max_grad_norm", 1.0),
-    }
+    optim = cfg.get("optim", {})
+    meta = chart_meta(
+        records,
+        run_name=run_dir.name,
+        model=str(cfg.get("model", {}).get("name", "")).split("/")[-1],
+        max_grad_norm=optim.get("max_grad_norm", 1.0),
+        warmup_ratio=optim.get("warmup_ratio", 0.0),
+    )
     return render_charts(run_dir, records=records, meta=meta)
 
 
@@ -689,7 +694,7 @@ def _continue_section(run_dir: Path) -> list[str]:
     """Artifact paths + the follow-up commands (chat, merge)."""
     return [
         "## Where everything is\n",
-        f"- metrics (JSONL): `{run_dir / 'metrics.jsonl'}`",
+        f"- metrics (JSONL): `{run_dir / METRICS_FILENAME}`",
         f"- adapter: `{run_dir / 'adapter'}`",
         f"- charts: `{run_dir / 'charts'}`",
         f"- config snapshot: `{run_dir / 'config.resolved.toml'}`",

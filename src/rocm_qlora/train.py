@@ -193,7 +193,9 @@ def _rank0_ui(cfg: Config, run_dir: Path, *, enabled: bool) -> Rank0UI | None:
 
     console = Console()
     sampler = GpuSampler(cfg.logging.gpu_sample_seconds)
-    writer = MetricsWriter(run_dir / "metrics.jsonl")
+    from .monitor import METRICS_FILENAME
+
+    writer = MetricsWriter(run_dir / METRICS_FILENAME)
     return Rank0UI(console, sampler, writer)
 
 
@@ -578,7 +580,7 @@ def _finalize_run(
     dry_run: bool,
 ) -> None:
     """Rank-0 end of run: run_end event, charts, report, wrap-up."""
-    from .monitor import RunEndRecord
+    from .monitor import RunEndRecord, chart_meta
     from .plots import render_charts, write_report
 
     records = metrics_callback.records if metrics_callback else []
@@ -594,11 +596,13 @@ def _finalize_run(
     render_charts(
         run_dir,
         records=records,
-        meta={
-            "run_name": run_dir.name,
-            "model": cfg.model.name.split("/")[-1],
-            "max_grad_norm": cfg.optim.max_grad_norm,
-        },
+        meta=chart_meta(
+            records,
+            run_name=run_dir.name,
+            model=cfg.model.name.split("/")[-1],
+            max_grad_norm=cfg.optim.max_grad_norm,
+            warmup_ratio=cfg.optim.warmup_ratio,
+        ),
     )
     write_report(run_dir)
 
