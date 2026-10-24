@@ -2,9 +2,10 @@
 
 Validation is the library's job: unknown keys are rejected, types are
 enforced, and ranges/literal sets live next to the fields that own them.
-The resolved config is snapshotted into the run directory as TOML + JSON, so
-a run is reproducible from its own output folder. CLI overrides are applied
-on top of the file, and validation always runs last.
+The resolved config is snapshotted into the run directory as
+``config.resolved.toml``, so a run is reproducible from its own output
+folder. CLI overrides are applied on top of the file, and validation always
+runs last.
 
 The comments in ``configs/*.toml`` are the user-facing documentation; this
 module is the contract.
@@ -240,7 +241,7 @@ class Config(_Section):
         return self.model_dump()
 
     def snapshot(self, run_dir: str | Path) -> None:
-        """Write resolved config into the run directory (TOML + JSON)."""
+        """Write the resolved config into the run directory (config.resolved.toml)."""
         run_dir = Path(run_dir)
         write_text(run_dir / "config.resolved.toml", tomli_w.dumps(self.to_dict()))
 
