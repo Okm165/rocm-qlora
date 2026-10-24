@@ -497,7 +497,7 @@ def _report_failure(run_dir: Path, writer: MetricsWriter, error: Exception) -> N
 
     from .monitor import EventRecord
 
-    writer.write(EventRecord(type="event", level="error", event="abort", error=str(error)))
+    writer.write(EventRecord(type="event", level="error", event="abort", detail=str(error)))
     writer.close()
     Console().print(
         f"[bold red]run aborted:[/bold red] {error}\n"

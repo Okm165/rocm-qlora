@@ -56,15 +56,18 @@ class GpuInfo:
 
 
 class GpuMetric(TypedDict):
-    """One GPU's sampled state inside a train record."""
+    """One GPU's sampled state inside a train record.
+
+    Only the fields a chart reads: VRAM (used/total) for `vram.png`, edge
+    temperature and package power for `gpu_health.png`. `index` identifies the
+    series. Junction temperature and utilization are not charted.
+    """
 
     index: int
     mem_used_gb: float
     mem_total_gb: float
     temp_edge_c: float | None
-    temp_junction_c: float | None
     power_w: float | None
-    util_pct: float | None
 
 
 def _first_key(d: dict[str, Any], *needles: str) -> Any:

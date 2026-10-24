@@ -100,27 +100,19 @@ def resolve_model_class(model_name: str):
 # ---------------------------------------------------------------------------
 
 
-class QuantizationMeta(TypedDict):
-    """The ``quantization`` section of finetune_meta.json."""
-
-    quant_type: str
-    double_quant: bool
-    quant_storage: str
-    compute_dtype: str
-
-
 class FinetuneMeta(TypedDict):
     """`finetune_meta.json` in a prepared checkpoint: what `prepare` wrote.
 
     ``total_params`` is exact (counted from the tensors); the rest is
-    provenance. Older checkpoints may miss keys — readers stay tolerant.
+    provenance. The quantization settings are not duplicated here — the
+    checkpoint's ``config.json`` carries them. Older checkpoints may miss
+    keys — readers stay tolerant.
     """
 
     total_params: float
     source: NotRequired[str]
     requantized: NotRequired[list[str]]
     created: NotRequired[str]
-    quantization: NotRequired[QuantizationMeta]
 
 
 @dataclass
@@ -321,19 +313,15 @@ def _prepare_meta(model: PreTrainedModel, cfg: Config, requantized: list[str]) -
     """What ``prepare`` did to this checkpoint: exact total + provenance.
 
     ``named_parameters()`` deduplicates shared tensors, so a tied
-    embed/lm_head weight is counted once.
+    embed/lm_head weight is counted once. The quantization settings are not
+    duplicated here — the checkpoint's own ``config.json`` carries them and is
+    authoritative at load time.
     """
     return {
         "total_params": float(sum(_logical_numel(p) for p in model.parameters())),
         "source": cfg.model.name,
         "requantized": requantized,
         "created": now_iso(),
-        "quantization": {
-            "quant_type": cfg.quantization.quant_type,
-            "double_quant": cfg.quantization.double_quant,
-            "quant_storage": cfg.quantization.quant_storage,
-            "compute_dtype": cfg.model.dtype,
-        },
     }
 
 

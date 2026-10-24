@@ -44,7 +44,8 @@ def test_prepare_meta_counts_tied_weights_once():
     assert meta["total_params"] == float(sum(p.numel() for p in model.parameters()))
     assert meta["source"] == cfg.model.name
     assert meta["requantized"] == ["layers.0.q_proj"]
-    assert meta["quantization"]["quant_type"] == cfg.quantization.quant_type
+    # the quantization settings live in the checkpoint's own config.json, not here
+    assert "quantization" not in meta
 
 
 def test_parameter_report_buckets_by_peft_module_name():

@@ -42,22 +42,26 @@ METRICS_FILENAME = "metrics.jsonl"
 
 
 class TrainRecord(TypedDict):
-    """A per-step training record (``type == "train"``)."""
+    """A per-step training record (``type == "train"``).
+
+    Only facts that cannot be derived from another record in the stream:
+    ``loss_ema``/``eta_s``/``vram_peak_gb`` are computed live for the progress
+    line (the charts rebuild the EMA from ``loss``, the VRAM peak is
+    ``max(gpu[].mem_used_gb)``, and an ETA cannot be recomputed after the
+    fact).
+    """
 
     type: Literal["train"]
     step: int
     epoch: float
     loss: float
-    loss_ema: float | None
     lr: float | None
     grad_norm: float | None
     tok_per_s: float | None
     tokens_seen: int | None
-    eta_s: float | None
-    vram_peak_gb: float | None
     gpu: list[GpuMetric]
     world_size: NotRequired[int]  # added by MetricsCallback._write
-    ts: NotRequired[str]  # added by MetricsWriter.write
+    ts: NotRequired[str]  # human provenance: when the step happened
 
 
 class EvalRecord(TypedDict):
@@ -65,7 +69,6 @@ class EvalRecord(TypedDict):
 
     type: Literal["eval"]
     step: int
-    epoch: float
     eval_loss: float
     world_size: NotRequired[int]
     ts: NotRequired[str]
@@ -93,7 +96,6 @@ class EventRecord(TypedDict):
     step: NotRequired[int]
     epoch: NotRequired[int]
     detail: NotRequired[str]
-    error: NotRequired[str]
     total_params: NotRequired[float]
     trainable: NotRequired[float]
     attn: NotRequired[str]
@@ -116,7 +118,7 @@ class RunEndRecord(TypedDict):
     type: Literal["run_end"]
     total_seconds: float
     dry_run: bool
-    world_size: NotRequired[int]  # stamped on every record by MetricsCallback._write
+    world_size: NotRequired[int]  # the generic _write stamp would add it; _finalize_run writes directly
     ts: NotRequired[str]
 
 
@@ -300,9 +302,9 @@ def summarize(records: Sequence[MetricsRecord]) -> RunSummary:
         rates = [as_float(r["tok_per_s"]) for r in train if r.get("tok_per_s")]
         if rates:
             s.avg_tok_per_s = sum(rates) / len(rates)
-        vrams = [as_float(r["vram_peak_gb"]) for r in train if r.get("vram_peak_gb")]
-        if vrams:
-            s.peak_vram_gb = max(vrams)
+        samples = [as_float(g["mem_used_gb"]) for r in train for g in r["gpu"]]
+        if samples:
+            s.peak_vram_gb = max(samples)
     if evals:
         el = [r["eval_loss"] for r in evals]
         if el:
@@ -388,15 +390,14 @@ class GpuSampler:
 
 
 def _gpu_records(gpus: Sequence[GpuInfo]) -> list[GpuMetric]:
+    """Project sampled GPU state onto the record fields the charts read."""
     return [
         GpuMetric(
             index=g.index,
             mem_used_gb=g.mem_used_gb,
             mem_total_gb=g.mem_total_gb,
             temp_edge_c=g.temp_edge_c,
-            temp_junction_c=g.temp_junction_c,
             power_w=g.power_w,
-            util_pct=g.util_pct,
         )
         for g in gpus
     ]
@@ -474,12 +475,17 @@ class MetricsCallback(TrainerCallback):
             for warning in warnings:
                 self.console.print(f"[yellow]! {warning}[/yellow]")
 
-    def _print_progress(self, record: TrainRecord) -> None:
-        """One compact status line per logged step (the live view, as text)."""
+    def _print_progress(self, record: TrainRecord, *, loss_ema: float | None, eta_s: float | None) -> None:
+        """One compact status line per logged step (the live view, as text).
+
+        ``loss_ema``/``eta_s`` are live-only (the charts rebuild the EMA from
+        ``loss``; an ETA cannot be recomputed after the fact); the VRAM peak
+        is read straight off the record's GPU samples.
+        """
         parts = [
             f"step {record['step']}/{self.max_steps}",
             f"loss {fmt_float(record['loss'])}",
-            f"EMA {fmt_float(record['loss_ema'])} {trend_arrow(self._loss_series)}",
+            f"EMA {fmt_float(loss_ema)} {trend_arrow(self._loss_series)}",
         ]
         if record.get("lr") is not None:
             parts.append(f"lr {record['lr']:.2e}")
@@ -487,10 +493,10 @@ class MetricsCallback(TrainerCallback):
             parts.append(f"grad {fmt_float(record['grad_norm'], 2)}")
         if record.get("tok_per_s"):
             parts.append(f"{fmt_int(record['tok_per_s'])} tok/s")
-        if record.get("vram_peak_gb") is not None:
-            parts.append(f"VRAM {record['vram_peak_gb']:.1f} GB")
-        if record.get("eta_s") is not None:
-            parts.append(f"ETA {fmt_eta(record['eta_s'])}")
+        if record["gpu"]:
+            parts.append(f"VRAM {max(g['mem_used_gb'] for g in record['gpu']):.1f} GB")
+        if eta_s is not None:
+            parts.append(f"ETA {fmt_eta(eta_s)}")
         self.console.print("[dim]" + " · ".join(parts) + "[/dim]")
         self._print_health_warnings(record)
 
@@ -540,43 +546,46 @@ class MetricsCallback(TrainerCallback):
         if "loss" not in logs:
             return
 
-        record = self._track_step(time.monotonic(), logs, state)
+        record, loss_ema, eta_s = self._track_step(time.monotonic(), logs, state)
         self._write(record)
         self._health_checks(record)
-        self._print_progress(record)
+        self._print_progress(record, loss_ema=loss_ema, eta_s=eta_s)
 
         if state.global_step - self._last_snapshot_step >= self.cfg.logging.chart_snapshot_steps:
             self._last_snapshot_step = state.global_step
             self._schedule_snapshot()
 
-    def _track_step(self, now: float, logs: dict[str, Any], state: TrainerState) -> TrainRecord:
-        """Assemble one train record from the tracker helpers."""
+    def _track_step(
+        self, now: float, logs: dict[str, Any], state: TrainerState
+    ) -> tuple[TrainRecord, float | None, float | None]:
+        """Assemble one train record plus the progress line's live-only values.
+
+        Returns ``(record, loss_ema, eta_s)`` — the EMA and ETA are shown live
+        but not persisted (see ``TrainRecord``).
+        """
         step_time_avg = self._track_step_timing(now)
         tokens, tok_per_s = self._track_tokens(now, logs)
         loss, loss_ema = self._track_loss(logs)
-        gpu_recs, vram_peak = self._track_vram(state.global_step)
+        gpu_recs = self._track_vram(state.global_step)
         remaining = max(0, self.max_steps - state.global_step)
+        eta_s = step_time_avg * remaining if step_time_avg is not None else None
         record: TrainRecord = {
             "type": "train",
             "step": state.global_step,
             "epoch": round(float(state.epoch or 0), 4),
             "loss": loss,
-            "loss_ema": loss_ema,
             "lr": logs.get("learning_rate"),
             "grad_norm": logs.get("grad_norm"),
             "tok_per_s": tok_per_s,
             "tokens_seen": tokens,
-            "eta_s": step_time_avg * remaining if step_time_avg is not None else None,
-            "vram_peak_gb": vram_peak,
             "gpu": gpu_recs,
         }
-        return record
+        return record, loss_ema, eta_s
 
     def _record_eval(self, state: TrainerState, eval_loss: float) -> None:
         record: EvalRecord = {
             "type": "eval",
             "step": state.global_step,
-            "epoch": round(float(state.epoch or 0), 4),
             "eval_loss": float(eval_loss),
         }
         self._write(record)
@@ -616,12 +625,13 @@ class MetricsCallback(TrainerCallback):
         smoothed = ema(self._loss_series, span=20)
         return loss, (smoothed[-1] if smoothed else None)
 
-    def _track_vram(self, step: int) -> tuple[list[GpuMetric], float | None]:
+    def _track_vram(self, step: int) -> list[GpuMetric]:
+        """GPU samples for this step (busiest GPU also feeds the leak series)."""
         gpu_recs = _gpu_records(self.sampler.latest())
-        vram_peak = max((g["mem_used_gb"] for g in gpu_recs), default=None)
-        if vram_peak is not None:
-            self._gpu_mem_series.append((step, vram_peak))
-        return gpu_recs, vram_peak
+        peak = max((g["mem_used_gb"] for g in gpu_recs), default=None)
+        if peak is not None:
+            self._gpu_mem_series.append((step, peak))
+        return gpu_recs
 
     def _health_checks(self, record: TrainRecord) -> None:
         """Hard-stop on numerically broken training (see `health_violation`)."""
@@ -673,15 +683,6 @@ class MetricsCallback(TrainerCallback):
         self._epoch_losses = []
         with contextlib.suppress(Exception):
             self._chart_renderer(self.run_dir, records=self.records, meta=self._chart_meta(), live=False)
-        self._write(
-            EventRecord(
-                type="event",
-                level="info",
-                event="epoch_end",
-                epoch=self._epoch_index,
-                step=state.global_step,
-            )
-        )
 
     def _schedule_snapshot(self) -> None:
         if self._snapshot_thread and self._snapshot_thread.is_alive():

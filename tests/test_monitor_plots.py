@@ -25,13 +25,10 @@ def synth_records(n=60, epochs=3):
             "step": i,
             "epoch": round((i - 1) / per_epoch, 2),
             "loss": loss,
-            "loss_ema": loss,
             "lr": 1e-4 * max(0.01, 1 - i / n),
             "grad_norm": 0.5 + 0.1 * math.sin(i),
             "tok_per_s": 800.0,
             "tokens_seen": i * 4096,
-            "eta_s": (n - i) * 2.0,
-            "vram_peak_gb": 19.5,
             "world_size": 3,
             "gpu": [
                 {
@@ -40,14 +37,13 @@ def synth_records(n=60, epochs=3):
                     "mem_total_gb": 24.0,
                     "temp_edge_c": 60 + g,
                     "power_w": 250,
-                    "util_pct": 90,
                 }
                 for g in range(3)
             ],
         }
         records.append(rec)
         if i % per_epoch == 0:
-            records.append({"type": "eval", "step": i, "epoch": i / per_epoch, "eval_loss": loss + 0.1})
+            records.append({"type": "eval", "step": i, "eval_loss": loss + 0.1})
             records.append(
                 {
                     "type": "epoch_end",
@@ -116,7 +112,7 @@ def test_metrics_roundtrip_and_summary(tmp_path):
     assert summary.steps == 60
     assert summary.first_loss > summary.last_loss
     assert summary.best_eval_loss is not None
-    assert summary.peak_vram_gb == 19.5
+    assert summary.peak_vram_gb == 19.2  # max mem_used_gb across the samples
     # world size comes from any record; dry-run + wall time from the run_end marker
     assert summary.world_size == 3
     assert summary.dry_run is True
