@@ -127,7 +127,6 @@ class FinetuneMeta(TypedDict):
 @dataclass
 class PrepareResult:
     out_dir: Path
-    source: str
     requantized: list[str]
     seconds: float
     total_params: float
@@ -205,7 +204,6 @@ def prepare_checkpoint(cfg: Config, *, force: bool = False, log: Callable[[str],
     log(f"Prepared checkpoint ready ({_dir_size_gb(out_dir):.1f} GB on disk, {seconds / 60:.1f} min)")
     return PrepareResult(
         out_dir=out_dir,
-        source=cfg.model.name,
         requantized=requantized,
         seconds=seconds,
         total_params=meta["total_params"],
@@ -220,7 +218,6 @@ def _cached_prepare_result(out_dir: Path, meta_path: Path, *, force: bool) -> Pr
     meta = json.loads(meta_path.read_text())
     return PrepareResult(
         out_dir=out_dir,
-        source=meta.get("source", "?"),
         requantized=meta.get("requantized", []),
         seconds=0.0,
         total_params=float(meta.get("total_params", 0.0)),

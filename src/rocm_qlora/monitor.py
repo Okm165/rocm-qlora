@@ -100,11 +100,9 @@ class EventRecord(TypedDict):
     trainable: NotRequired[float]
     attn: NotRequired[str]
     sdpa_disabled: NotRequired[list[str]]
-    message: NotRequired[str]
     value: NotRequired[float]
     median: NotRequired[float]
     max_steps: NotRequired[int]
-    phase: NotRequired[str]
     world_size: NotRequired[int]
     ts: NotRequired[str]
 
