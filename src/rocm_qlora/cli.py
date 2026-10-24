@@ -32,7 +32,7 @@ from .utils import fmt_int, human_bytes, human_duration, timestamp_slug, write_j
 if TYPE_CHECKING:
     from .data import DataProfile, DatasetStats, Percentiles, TokenProfile
     from .explain import ExplainerBook
-    from .hardware import CpuInfo, GpuInfo, HostMemory, ModelGeometry, TorchRuntime
+    from .hardware import CpuInfo, GpuInfo, HipIpcProbe, HostMemory, MatmulBench, ModelGeometry, SdpaProbe, TorchRuntime
     from .launcher import BnbSmoke, DoctorVerdict
 
 DEFAULT_CONFIG = "configs/qwen3.8-27b.toml"
@@ -184,6 +184,64 @@ def _doctor_software_tables(versions: dict[str, str], runtime: TorchRuntime) -> 
     console.print(rtable)
 
 
+def _probe_sdpa() -> SdpaProbe:
+    """SDPA backend probe + table; returns the ``sdpa`` verdict section."""
+    from .hardware import probe_sdpa
+
+    console.print("[dim]probing SDPA backends (fresh subprocess per backend, ~30-60 s)…[/dim]")
+    sdpa = probe_sdpa()
+    table = Table(title="SDPA backend probe")
+    table.add_column("backend", style="dim")
+    table.add_column("AOTriton env on", justify="center")
+    table.add_column("env off", justify="center")
+    for backend in ("flash", "efficient", "math"):
+        on = sdpa["backends"].get(f"{backend}_on", {})
+        off = sdpa["backends"].get(f"{backend}_off", {})
+        table.add_row(
+            backend,
+            "[green]✓[/green]" if on.get("ok") else f"[red]✗[/red] [dim]{str(on.get('error', ''))[:40]}[/dim]",
+            "[green]✓[/green]" if off.get("ok") else "[red]✗[/red]",
+        )
+    console.print(table)
+    console.print(f"[bold]verdict:[/bold] {sdpa['verdict']} → attn_implementation={sdpa['attn_implementation']}")
+    return sdpa
+
+
+def _probe_bnb() -> BnbSmoke:
+    """bitsandbytes 4-bit smoke (train + decode shapes) + report."""
+    result = _doctor_bnb_smoke()
+    status = "[green]✓[/green]" if result.get("ok") else f"[red]✗[/red] {result.get('error', '')}"
+    console.print(f"bitsandbytes 4-bit smoke (train + decode shapes): {status}")
+    if result.get("decode_nan"):
+        console.print("[red]decode-shape NaN detected — upgrade bitsandbytes (ROCm GEMV fix) before using `chat`[/red]")
+    return result
+
+
+def _probe_hip_ipc() -> HipIpcProbe:
+    """RCCL IPC-handle probe + report."""
+    from .hardware import probe_hip_ipc
+
+    ipc = probe_hip_ipc()
+    if ipc.get("ipc_ok"):
+        console.print("RCCL IPC handles (hipIpcGetMemHandle, dma-buf mode): [green]✓[/green] → P2P collectives enabled")
+    else:
+        console.print(
+            f"RCCL IPC handles: [red]✗[/red] {ipc.get('error', '')} — "
+            "training will fall back to shared-memory collectives; set NCCL_P2P_DISABLE=1 in [env.extra] to silence"
+        )
+    return ipc
+
+
+def _bench_matmul() -> MatmulBench:
+    """bf16 matmul TFLOPS on GPU 0 + report."""
+    from .hardware import matmul_benchmark
+
+    console.print("[dim]bf16 matmul benchmark (8192³)…[/dim]")
+    bench = matmul_benchmark()
+    console.print(f"[bold]{bench['tflops']:.1f} TFLOPS[/bold] bf16 (8192³, {bench['seconds'] * 1000:.0f} ms/matmul)")
+    return bench
+
+
 def _doctor_probes(args: argparse.Namespace) -> DoctorVerdict:
     """SDPA / bitsandbytes / RCCL-IPC probes (+ optional matmul bench).
 
@@ -191,58 +249,11 @@ def _doctor_probes(args: argparse.Namespace) -> DoctorVerdict:
     """
     verdict: DoctorVerdict = {}
     if not args.fast:
-        from .hardware import probe_sdpa
-
-        console.print("[dim]probing SDPA backends (fresh subprocess per backend, ~30-60 s)…[/dim]")
-        sdpa = probe_sdpa()
-        verdict["sdpa"] = sdpa
-        stable = Table(title="SDPA backend probe")
-        stable.add_column("backend", style="dim")
-        stable.add_column("AOTriton env on", justify="center")
-        stable.add_column("env off", justify="center")
-        for backend in ("flash", "efficient", "math"):
-            on = sdpa["backends"].get(f"{backend}_on", {})
-            off = sdpa["backends"].get(f"{backend}_off", {})
-            stable.add_row(
-                backend,
-                "[green]✓[/green]" if on.get("ok") else f"[red]✗[/red] [dim]{str(on.get('error', ''))[:40]}[/dim]",
-                "[green]✓[/green]" if off.get("ok") else "[red]✗[/red]",
-            )
-        console.print(stable)
-        console.print(f"[bold]verdict:[/bold] {sdpa['verdict']} → attn_implementation={sdpa['attn_implementation']}")
-
-        bnb_result = _doctor_bnb_smoke()
-        verdict["bnb_smoke"] = bnb_result
-        status = "[green]✓[/green]" if bnb_result.get("ok") else f"[red]✗[/red] {bnb_result.get('error', '')}"
-        console.print(f"bitsandbytes 4-bit smoke (train + decode shapes): {status}")
-        if bnb_result.get("decode_nan"):
-            console.print(
-                "[red]decode-shape NaN detected — upgrade bitsandbytes (ROCm GEMV fix) before using `chat`[/red]"
-            )
-
-        from .hardware import probe_hip_ipc
-
-        ipc = probe_hip_ipc()
-        verdict["hip_ipc"] = ipc
-        if ipc.get("ipc_ok"):
-            console.print(
-                "RCCL IPC handles (hipIpcGetMemHandle, dma-buf mode): [green]✓[/green] → P2P collectives enabled"
-            )
-        else:
-            console.print(
-                f"RCCL IPC handles: [red]✗[/red] {ipc.get('error', '')} — "
-                "training will fall back to shared-memory collectives; set NCCL_P2P_DISABLE=1 in [env.extra] to silence"
-            )
-
+        verdict["sdpa"] = _probe_sdpa()
+        verdict["bnb_smoke"] = _probe_bnb()
+        verdict["hip_ipc"] = _probe_hip_ipc()
     if args.bench:
-        from .hardware import matmul_benchmark
-
-        console.print("[dim]bf16 matmul benchmark (8192³)…[/dim]")
-        bench = matmul_benchmark()
-        verdict["bench"] = bench
-        console.print(
-            f"[bold]{bench['tflops']:.1f} TFLOPS[/bold] bf16 (8192³, {bench['seconds'] * 1000:.0f} ms/matmul)"
-        )
+        verdict["bench"] = _bench_matmul()
     return verdict
 
 
@@ -349,7 +360,7 @@ def _print_dataset_table(cfg: Config, stats: DatasetStats) -> None:
     table.add_row("examples", fmt_int(stats.n_examples))
     table.add_row("turns/example", ", ".join(f"{k}: {v}" for k, v in stats.turns_per_example.items()))
     table.add_row("roles", ", ".join(f"{k}: {v}" for k, v in stats.role_counts.items()))
-    cp = stats.char_percentiles("assistant")
+    cp = stats.char_percentiles()
     table.add_row(
         "assistant chars",
         f"p50={cp.p50:.0f} p90={cp.p90:.0f} p95={cp.p95:.0f} p99={cp.p99:.0f} p100={cp.p100:.0f}",

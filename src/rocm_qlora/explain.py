@@ -130,20 +130,6 @@ EXPLAINERS: dict[str, Explainer] = {
             ),
             links=("docs/04-reading-the-plots.md",),
         ),
-        Explainer(
-            key="next_steps",
-            title="After training: chat, merge, GGUF",
-            body=(
-                "A run leaves a **LoRA adapter** next to the frozen base model. Three ways "
-                "to use it:\n\n"
-                "1. `rocm-qlora chat --run <dir>` — talk to it (fastest sanity check)\n"
-                "2. `rocm-qlora merge --run <dir>` — fold into a bf16 model for serving\n"
-                "3. convert the merged model to **GGUF** for `llama.cpp` (recipe in the run "
-                "report)\n\n"
-                "Keep the adapter: it weighs little, composes, and can be re-merged later."
-            ),
-            links=("README.md",),
-        ),
     ]
 }
 

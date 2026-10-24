@@ -637,7 +637,7 @@ def _finalize_run(
     )
     write_report(run_dir)
 
-    _print_wrapup(ui.console, ui.book, run_dir, summary, dry_run=dry_run)
+    _print_wrapup(ui.console, run_dir, summary, dry_run=dry_run)
 
 
 # ---------------------------------------------------------------------------
@@ -653,7 +653,7 @@ def _short_path(path: Path) -> str:
         return str(path)
 
 
-def _print_wrapup(console: Console, book: ExplainerBook, run_dir: Path, summary: RunSummary, *, dry_run: bool) -> None:
+def _print_wrapup(console: Console, run_dir: Path, summary: RunSummary, *, dry_run: bool) -> None:
     """Run-complete panel: headline numbers + next-step hints."""
     from rich.panel import Panel
 
@@ -684,7 +684,6 @@ def _print_wrapup(console: Console, book: ExplainerBook, run_dir: Path, summary:
     console.print(Panel(table, title="[bold green]run complete[/bold green]", border_style="green"))
     if dry_run:
         console.print("[yellow]This was a dry run (3 steps). Launch without --dry-run for the real thing.[/yellow]")
-    book.show("next_steps")
     short = _short_path(run_dir)
     console.print("[dim]next:[/dim]")
     console.print(f"  [bold]rocm-qlora chat   --run {short}[/bold]")

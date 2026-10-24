@@ -211,13 +211,6 @@ def loss_curve(
         ax.set_ylabel("cross-entropy loss (nats/token)")
         ax.set_title(title)
         ax.legend(loc="upper right")
-        ax.annotate(
-            f"first {fmt_float(losses[0])}  →  last {fmt_float(losses[-1])}",
-            xy=(0.01, 0.02),
-            xycoords="axes fraction",
-            fontsize=9,
-            color=COLORS["dim"],
-        )
         _watermark(fig, meta)
 
 
@@ -368,10 +361,6 @@ def eval_curve(records: Sequence[MetricsRecord], out_path: str | Path, *, meta: 
             es = [r["step"] for r in evals]
             el = [r["eval_loss"] for r in evals]
             ax.plot(es, el, "o--", color=COLORS["eval"], lw=1.8, ms=7, label="eval (holdout)")
-            for x, y in zip(es, el, strict=False):
-                ax.annotate(
-                    f"{y:.3f}", (x, y), xytext=(4, 6), textcoords="offset points", fontsize=8, color=COLORS["eval"]
-                )
         ax.set_xlabel("optimizer step")
         ax.set_ylabel("loss (nats/token)")
         ax.set_title("Train vs eval")
@@ -392,27 +381,6 @@ def epoch_bars(records: Sequence[MetricsRecord], out_path: str | Path, *, meta: 
         x = list(range(len(labels)))
         ax.bar([i - 0.18 for i in x], train_means, width=0.36, color=COLORS["loss_ema"], label="train (epoch mean)")
         ax.bar([i + 0.18 for i in x], eval_losses, width=0.36, color=COLORS["eval"], label="eval (holdout)")
-        for i, (t, e) in enumerate(zip(train_means, eval_losses, strict=False)):
-            if not math.isnan(t):
-                ax.annotate(
-                    f"{t:.3f}",
-                    (i - 0.18, t),
-                    xytext=(0, 2),
-                    textcoords="offset points",
-                    ha="center",
-                    fontsize=8,
-                    color=COLORS["fg"],
-                )
-            if not math.isnan(e):
-                ax.annotate(
-                    f"{e:.3f}",
-                    (i + 0.18, e),
-                    xytext=(0, 2),
-                    textcoords="offset points",
-                    ha="center",
-                    fontsize=8,
-                    color=COLORS["fg"],
-                )
         ax.set_xticks(x, labels)
         ax.set_ylabel("loss (nats/token)")
         ax.set_title("Per-epoch losses")

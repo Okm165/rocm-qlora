@@ -83,13 +83,12 @@ class DatasetStats:
     role_counts: dict[str, int]
     turns_per_example: dict[int, int]
     assistant_chars: list[int]
-    user_chars: list[int]
     think_blocks: int  # assistant turns containing  thinking...</think>
     think_complete: int  # ...with a matching closing tag
 
-    def char_percentiles(self, which: str = "assistant") -> Percentiles:
-        """Character-length percentiles of assistant (or user) turns."""
-        return _percentiles(self.assistant_chars if which == "assistant" else self.user_chars)
+    def char_percentiles(self) -> Percentiles:
+        """Character-length percentiles of the assistant turns."""
+        return _percentiles(self.assistant_chars)
 
 
 def load_sharegpt(
@@ -103,7 +102,6 @@ def load_sharegpt(
     role_counts: dict[str, int] = {}
     turns_hist: dict[int, int] = {}
     assistant_chars: list[int] = []
-    user_chars: list[int] = []
     think_blocks = think_complete = 0
 
     for i, item in enumerate(raw):
@@ -119,8 +117,6 @@ def load_sharegpt(
                     think_blocks += 1
                     if "</think" in content:
                         think_complete += 1
-            elif role == "user":
-                user_chars.append(len(content))
         if "assistant" not in roles_here or "user" not in roles_here:
             raise DatasetError(f"{path}: example {i} must contain both user and assistant turns")
         turns_hist[len(messages)] = turns_hist.get(len(messages), 0) + 1
@@ -131,7 +127,6 @@ def load_sharegpt(
         role_counts=role_counts,
         turns_per_example=dict(sorted(turns_hist.items())),
         assistant_chars=sorted(assistant_chars),
-        user_chars=sorted(user_chars),
         think_blocks=think_blocks,
         think_complete=think_complete,
     )
@@ -178,7 +173,6 @@ def _validated_messages(path: Path, i: int, item: Any, messages_field: str) -> l
 @dataclass
 class TokenProfile:
     lengths: list[int]  # tokens per example (sorted)
-    max_length: int
     n_truncated: int
     n_total: int
     total_tokens: int
@@ -239,7 +233,6 @@ def profile_tokens(
     lengths.sort()
     return TokenProfile(
         lengths=lengths,
-        max_length=max_length,
         n_truncated=sum(1 for length in lengths if length > max_length),
         n_total=len(lengths),
         total_tokens=sum(lengths),
