@@ -41,12 +41,13 @@ def _fold_adapter(cfg: Config, adapter_dir: Path, console: Console) -> PreTraine
     from peft import PeftModel
 
     console.print("[dim]loading prepared 4-bit checkpoint on the GPUs…[/dim]")
-    model_cls = resolve_model_class(cfg.model.prepared_dir)
+    model_cls = resolve_model_class(cfg.model.prepared_dir, trust_remote_code=cfg.model.trust_remote_code)
     model = model_cls.from_pretrained(
         cfg.model.prepared_dir,
         dtype=compute_dtype(cfg),
         device_map="balanced",
         max_memory=_gpu_memory_budget(),
+        trust_remote_code=cfg.model.trust_remote_code,
     )
     console.print("[dim]folding LoRA weights into the quantized model…[/dim]")
     model = PeftModel.from_pretrained(model, str(adapter_dir))

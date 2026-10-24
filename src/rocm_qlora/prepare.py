@@ -166,7 +166,7 @@ def _load_source_model(cfg: Config, log: Callable[[str], None]):
     import torch
 
     log(f"Loading source checkpoint {cfg.model.name!r} into host RAM (fp16)…")
-    model_cls = resolve_model_class(cfg.model.name)
+    model_cls = resolve_model_class(cfg.model.name, trust_remote_code=cfg.model.trust_remote_code)
     model = model_cls.from_pretrained(
         cfg.model.name,
         dtype=torch.float16,

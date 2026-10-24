@@ -43,21 +43,27 @@ def quant_storage_dtype(cfg: Config):
 
 
 def load_tokenizer(cfg: Config) -> PreTrainedTokenizerBase:
-    """Tokenizer from the prepared checkpoint (or the hub source)."""
+    """Tokenizer from the prepared checkpoint when it exists, else the hub source.
+
+    `prepare` saves the tokenizer into the prepared directory, so everything
+    after it (train, merge, chat) works without touching the hub.
+    """
     from transformers import AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained(cfg.model.name, trust_remote_code=cfg.model.trust_remote_code)
+    prepared = Path(cfg.model.prepared_dir)
+    source = str(prepared) if prepared.exists() else cfg.model.name
+    tokenizer = AutoTokenizer.from_pretrained(source, trust_remote_code=cfg.model.trust_remote_code)
     if tokenizer.pad_token is None:  # generic guard; Qwen checkpoints ship both
         tokenizer.pad_token = tokenizer.eos_token
     return tokenizer
 
 
-def resolve_model_class(model_name: str):
+def resolve_model_class(model_name: str, *, trust_remote_code: bool = False):
     """Pick the right Auto class for a checkpoint (VLM vs text-only)."""
     import transformers
     from transformers import AutoConfig
 
-    config = AutoConfig.from_pretrained(model_name)
+    config = AutoConfig.from_pretrained(model_name, trust_remote_code=trust_remote_code)
     archs = getattr(config, "architectures", []) or []
     # Multimodal checkpoints (e.g. Qwen3.8-27B) use the *ForConditionalGeneration
     # class; text-only checkpoints (e.g. Qwen3-8B) use AutoModelForCausalLM.
@@ -112,7 +118,10 @@ def load_model_for_training(cfg: Config, *, local_rank: int = 0, attn: str | Non
     """
     import torch
 
-    model_cls = resolve_model_class(cfg.model.prepared_dir if Path(cfg.model.prepared_dir).exists() else cfg.model.name)
+    model_cls = resolve_model_class(
+        cfg.model.prepared_dir if Path(cfg.model.prepared_dir).exists() else cfg.model.name,
+        trust_remote_code=cfg.model.trust_remote_code,
+    )
     kwargs: dict[str, Any] = {
         "dtype": compute_dtype(cfg),
         "device_map": {"": f"cuda:{local_rank}"},

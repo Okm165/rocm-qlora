@@ -47,12 +47,15 @@ def _load(
         raise SystemExit("chat: provide --run <dir> or --base <prepared-model-dir>")
 
     tokenizer_src = adapter_dir if adapter_dir and Path(adapter_dir).exists() else base_dir
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_src)
+    tokenizer = AutoTokenizer.from_pretrained(
+        tokenizer_src, trust_remote_code=cfg.model.trust_remote_code if cfg else False
+    )
 
     from .launcher import resolve_attn_impl
     from .model import compute_dtype, resolve_model_class
 
-    model_cls = resolve_model_class(str(base_dir))
+    trust_remote_code = cfg.model.trust_remote_code if cfg else False
+    model_cls = resolve_model_class(str(base_dir), trust_remote_code=trust_remote_code)
     attn = resolve_attn_impl(cfg) if cfg else "sdpa"
     console.print(f"[dim]loading base {base_dir} (4-bit) …[/dim]")
     model = model_cls.from_pretrained(
@@ -60,6 +63,7 @@ def _load(
         dtype=compute_dtype(cfg) if cfg else torch.bfloat16,
         device_map={"": "cuda:0"},
         attn_implementation=attn,
+        trust_remote_code=trust_remote_code,
     )
     if adapter_dir and Path(adapter_dir).exists():
         console.print(f"[dim]attaching adapter {adapter_dir} …[/dim]")
