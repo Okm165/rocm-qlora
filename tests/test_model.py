@@ -112,3 +112,32 @@ def test_prepared_checkpoint_requires_the_finish_marker(tmp_path):
     assert prepared_checkpoint_exists(cfg) is False
     (tmp_path / "finetune_meta.json").write_text("{}")
     assert prepared_checkpoint_exists(cfg) is True
+
+
+def test_logical_numel_refuses_a_quantized_parameter_without_state():
+    """A Params4bit without quant_state cannot be counted: say so, never guess."""
+    import bitsandbytes as bnb
+    import pytest
+    import torch
+
+    from rocm_qlora.model import logical_numel
+
+    packed = bnb.nn.Params4bit(torch.zeros(8, 1, dtype=torch.uint8))  # quant_state is None
+    with pytest.raises(RuntimeError, match="quant_state"):
+        logical_numel(packed)
+
+
+def test_cached_prepare_result_requires_the_same_source(tmp_path):
+    """A config pointed at a different base model rebuilds instead of reusing."""
+    from rocm_qlora.prepare import _cached_prepare_result
+    from rocm_qlora.utils import write_json
+
+    cfg = Config.from_dict({"model": {"name": "org/a", "prepared_dir": str(tmp_path)}})
+    meta = tmp_path / "finetune_meta.json"
+    (tmp_path / "config.json").write_text("{}")
+    write_json(meta, {"source": "org/a", "total_params": 1.0, "requantized": [], "created": "now"})
+
+    assert _cached_prepare_result(cfg, tmp_path, meta, force=False) is not None
+    other = Config.from_dict({"model": {"name": "org/b", "prepared_dir": str(tmp_path)}})
+    assert _cached_prepare_result(other, tmp_path, meta, force=False) is None
+    assert _cached_prepare_result(cfg, tmp_path, meta, force=True) is None

@@ -195,3 +195,14 @@ def test_summarize_does_not_let_nan_decide_the_best():
     assert s.best_loss == 1.2 and s.best_step == 2
     assert s.peak_vram_gb == 21.0
     assert s.last_loss != s.last_loss  # NaN: the last step was the broken one
+
+
+def test_metrics_writer_reopens_after_close_for_a_late_event(tmp_path):
+    """The crash path: _finalize_run closes the stream, then _report_failure writes."""
+    path = tmp_path / "metrics.jsonl"
+    writer = MetricsWriter(path)
+    writer.write({"type": "train", "step": 1, "loss": 1.0})
+    writer.close()
+    writer.write({"type": "event", "level": "error", "event": "abort", "detail": "late failure"})
+    writer.close()
+    assert [r["type"] for r in read_metrics(path)] == ["train", "event"]

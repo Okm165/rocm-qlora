@@ -158,7 +158,8 @@ def load_model_for_training(cfg: Config, *, local_rank: int = 0, attn: str | Non
     elif getattr(model.config, "vision_config", None) is not None:
         warnings.warn(
             "vision_config is set but no 'model.visual' module was found — the vision tower stays in the "
-            "model (add its name to the drop list in model.load_model_for_training)",
+            "model, and LoRA's target modules will adapt it too; teach load_model_for_training this "
+            "checkpoint's tower path",
             stacklevel=2,
         )
     return model

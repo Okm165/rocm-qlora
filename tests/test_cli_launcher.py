@@ -154,3 +154,34 @@ def test_max_length_hint_rounds_up_past_p99(monkeypatch):
     monkeypatch.setattr(cli.console, "print", lambda *a, **k: printed.append(str(a[0])))
     cli._print_max_length_hint(Config.from_dict({}), Percentiles(400.0, 900.0, 1100.0, 1425.0, 2000.0))
     assert "1536" in printed[0]
+
+
+def test_apply_sdpa_verdict_disables_only_flagged_backends(monkeypatch):
+    """The NaN guard: a probe-flagged backend is disabled; a malformed entry is not."""
+    import torch
+
+    from rocm_qlora import launcher
+
+    monkeypatch.setenv("TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL", "1")
+    monkeypatch.setattr(
+        launcher,
+        "load_doctor_verdict",
+        lambda: {"sdpa": {"backends": {"flash_on": {"ok": True}, "efficient_on": {"ok": False}}}},
+    )
+    flash_before = torch.backends.cuda.flash_sdp_enabled()
+    mem_before = torch.backends.cuda.mem_efficient_sdp_enabled()
+    try:
+        assert launcher.apply_sdpa_verdict() == ["mem_efficient"]
+        assert torch.backends.cuda.mem_efficient_sdp_enabled() is False
+        assert torch.backends.cuda.flash_sdp_enabled() is True
+    finally:
+        torch.backends.cuda.enable_flash_sdp(flash_before)
+        torch.backends.cuda.enable_mem_efficient_sdp(mem_before)
+
+    # a hand-edited or truncated entry must neither crash nor disable anything
+    monkeypatch.setattr(
+        launcher,
+        "load_doctor_verdict",
+        lambda: {"sdpa": {"backends": {"flash_on": "oops", "efficient_on": {"ok": True}}}},
+    )
+    assert launcher.apply_sdpa_verdict() == []
