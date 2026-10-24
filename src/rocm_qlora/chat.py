@@ -27,8 +27,6 @@ from .config import Config
 if TYPE_CHECKING:
     from transformers import GenerationConfig, PreTrainedModel, PreTrainedTokenizerBase
 
-DEFAULT_TEMPLATE_KWARGS: dict[str, Any] = {"enable_thinking": True}
-
 
 def _load(
     run_dir: Path | None, base_override: str | None, adapter_override: str | None, console: Console

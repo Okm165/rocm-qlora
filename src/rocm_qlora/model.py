@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from torch import nn
     from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
-    from .hardware import FinetuneMeta
+    from .hardware import FinetuneMeta, HostMemory
 
 # ---------------------------------------------------------------------------
 # Small helpers
@@ -580,7 +580,7 @@ def parameter_report(model: PreTrainedModel) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _choose_merge_device(model_bytes: int, ram: dict[str, Any], console: Console) -> Any:
+def _choose_merge_device(model_bytes: int, ram: HostMemory, console: Console) -> Any:
     """CPU when host RAM fits the model twice over, else shard across GPUs."""
     if ram.get("available_gib", 0) * 2**30 > model_bytes * 2.2:
         console.print(

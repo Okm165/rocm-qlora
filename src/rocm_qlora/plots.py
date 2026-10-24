@@ -16,7 +16,7 @@ import json
 import math
 from collections.abc import Generator, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import matplotlib
 
@@ -146,12 +146,16 @@ def _epoch_lines(ax: Axes, train: Sequence[TrainRecord]) -> None:
         prev_epoch = epoch
 
 
-def _gpu_field(train: Sequence[TrainRecord], gi: int, field: str) -> list[float]:
+#: The GPU-metric keys the charts read from each train record.
+GpuField = Literal["mem_used_gb", "temp_edge_c", "power_w"]
+
+
+def _gpu_field(train: Sequence[TrainRecord], gi: int, field: GpuField) -> list[float]:
     """One GPU-metric series across steps (NaN where the GPU is absent)."""
     out: list[float] = []
     for rec in train:
         gpus = rec.get("gpu") or []
-        value = (gpus[gi] or {}).get(field) if gi < len(gpus) else None
+        value = gpus[gi].get(field) if gi < len(gpus) else None
         out.append(float(value) if value is not None else float("nan"))
     return out
 

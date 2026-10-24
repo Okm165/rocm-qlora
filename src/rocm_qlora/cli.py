@@ -31,7 +31,7 @@ from .utils import fmt_int, human_bytes, human_duration, timestamp_slug, write_j
 if TYPE_CHECKING:
     from .data import DatasetStats, TokenProfile
     from .explain import ExplainerBook
-    from .hardware import GpuInfo, ModelGeometry
+    from .hardware import GpuInfo, HostMemory, ModelGeometry
     from .launcher import BnbSmoke, DoctorVerdict
 
 DEFAULT_CONFIG = "configs/qwen3.8-27b.toml"
@@ -136,7 +136,7 @@ def _resolve_resume_checkpoint(path: str) -> Path | None:
 # ---------------------------------------------------------------------------
 
 
-def _doctor_host_panel(mem: dict[str, Any], cpu: dict[str, Any]) -> None:
+def _doctor_host_panel(mem: HostMemory, cpu: dict[str, Any]) -> None:
     """Host summary panel (CPU/RAM/kernel/driver/disk)."""
     from .hardware import disk_free_gb, kernel_version, rocm_driver_version
 

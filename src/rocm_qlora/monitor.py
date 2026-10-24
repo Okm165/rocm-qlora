@@ -47,6 +47,18 @@ METRICS_FILENAME = "metrics.jsonl"
 # ---------------------------------------------------------------------------
 
 
+class GpuMetric(TypedDict):
+    """One GPU's sampled state inside a train record."""
+
+    index: int
+    mem_used_gb: float
+    mem_total_gb: float
+    temp_edge_c: float | None
+    temp_junction_c: float | None
+    power_w: float | None
+    util_pct: float | None
+
+
 class TrainRecord(TypedDict):
     """A per-step training record (``type == "train"``)."""
 
@@ -63,7 +75,7 @@ class TrainRecord(TypedDict):
     elapsed_s: float
     eta_s: float | None
     vram_peak_gb: float | None
-    gpu: list[dict[str, Any]]
+    gpu: list[GpuMetric]
     world_size: NotRequired[int]  # added by MetricsCallback._write
     ts: NotRequired[str]  # added by MetricsWriter.write
 
@@ -367,17 +379,17 @@ class GpuSampler:
         self._stop.set()
 
 
-def _gpu_records(gpus: Sequence[GpuInfo]) -> list[dict[str, Any]]:
+def _gpu_records(gpus: Sequence[GpuInfo]) -> list[GpuMetric]:
     return [
-        {
-            "index": g.index,
-            "mem_used_gb": g.mem_used_gb,
-            "mem_total_gb": g.mem_total_gb,
-            "temp_edge_c": g.temp_edge_c,
-            "temp_junction_c": g.temp_junction_c,
-            "power_w": g.power_w,
-            "util_pct": g.util_pct,
-        }
+        GpuMetric(
+            index=g.index,
+            mem_used_gb=g.mem_used_gb,
+            mem_total_gb=g.mem_total_gb,
+            temp_edge_c=g.temp_edge_c,
+            temp_junction_c=g.temp_junction_c,
+            power_w=g.power_w,
+            util_pct=g.util_pct,
+        )
         for g in gpus
     ]
 
@@ -408,7 +420,7 @@ class DashboardState:
     total_tokens_estimate: int = 0
     elapsed_s: float = 0.0
     eta_s: float | None = None
-    gpus: list[dict[str, Any]] = field(default_factory=list)
+    gpus: list[GpuMetric] = field(default_factory=list)
     health: list[str] = field(default_factory=list)
     phase: str = "starting"
     eval_loss: float | None = None
@@ -730,7 +742,7 @@ class MetricsCallback(TrainerCallback):
         smoothed = ema(self._loss_series, span=20)
         return loss, (smoothed[-1] if smoothed else None)
 
-    def _track_vram(self) -> tuple[list[dict[str, Any]], float | None]:
+    def _track_vram(self) -> tuple[list[GpuMetric], float | None]:
         gpu_recs = _gpu_records(self.sampler.latest())
         vram_peak = max((g["mem_used_gb"] for g in gpu_recs), default=None)
         if vram_peak is not None:
@@ -747,7 +759,7 @@ class MetricsCallback(TrainerCallback):
         tok_per_s: float | None,
         record: TrainRecord,
         eta: float | None,
-        gpu_recs: list[dict[str, Any]],
+        gpu_recs: list[GpuMetric],
     ) -> None:
         if self.dashboard is None:  # caller guards; this narrows the type
             return

@@ -116,7 +116,16 @@ def gpu_snapshot(timeout: float = 10.0) -> list[GpuInfo]:
     return gpus
 
 
-def gpu_processes(timeout: float = 10.0) -> list[dict[str, Any]]:
+class GpuProcess(TypedDict):
+    """One process holding GPU memory (parsed from ``rocm-smi --showpids``)."""
+
+    pid: int
+    name: str
+    gpus: str  # comma-separated device ids, as rocm-smi prints them
+    vram_b: int
+
+
+def gpu_processes(timeout: float = 10.0) -> list[GpuProcess]:
     """Processes holding GPU memory (parses the `--showpids` text table).
 
     Used by preflight to explain *why* free VRAM is low, e.g. a running
@@ -126,7 +135,7 @@ def gpu_processes(timeout: float = 10.0) -> list[dict[str, Any]]:
         proc = subprocess.run(["rocm-smi", "--showpids"], capture_output=True, text=True, timeout=timeout)
     except Exception:
         return []
-    out: list[dict[str, Any]] = []
+    out: list[GpuProcess] = []
     for line in proc.stdout.splitlines():
         parts = line.split()
         if len(parts) >= 4 and parts[0].isdigit():
@@ -146,7 +155,14 @@ def gpu_processes(timeout: float = 10.0) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
-def host_memory() -> dict[str, float]:
+class HostMemory(TypedDict):
+    """Total/available host RAM in GiB."""
+
+    total_gib: float
+    available_gib: float
+
+
+def host_memory() -> HostMemory:
     """Total/available host RAM in GiB (psutil if available, else /proc)."""
     try:
         import psutil
