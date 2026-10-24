@@ -199,7 +199,9 @@ class MetricsCallback(TrainerCallback):
         self.max_steps = state.max_steps
         self._t0 = time.monotonic()
         if self.cfg.optim.warmup_ratio and state.max_steps:
-            self.warmup_end_step = int(state.max_steps * self.cfg.optim.warmup_ratio)
+            # The library's own rule (a ratio below 1 becomes ceil(steps * ratio));
+            # chart_meta derives the same value for post-hoc renders.
+            self.warmup_end_step = args.get_warmup_steps(state.max_steps)
         self._write(EventRecord(type="event", level="info", event="train_start", max_steps=state.max_steps))
 
     @override

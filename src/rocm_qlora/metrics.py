@@ -137,9 +137,11 @@ def chart_meta(
 ) -> ChartMeta:
     """Chart annotations for a full render, reconstructed from the stream.
 
-    The live callback annotates with the current step and warmup end; a final
-    or post-hoc render must rebuild both from the records, or the delivered
-    charts lose the warmup shading and the step watermark.
+    The live callback annotates with the current step and the trainer's warmup
+    end; a final or post-hoc render rebuilds both from the records (last step;
+    ``max_steps`` from train_start with the ratio) — the trainer's own rule is
+    ``ceil(max_steps * ratio)`` (``TrainingArguments.get_warmup_steps``), and
+    flooring it would shade one step short.
     """
     meta: ChartMeta = {"run_name": run_name, "model": model, "max_grad_norm": max_grad_norm}
     train = select(records, "train")
@@ -147,8 +149,8 @@ def chart_meta(
         meta["step"] = f"step {train[-1]['step']}"
     starts = [e for e in select(records, "event") if e.get("event") == "train_start"]
     max_steps = starts[-1].get("max_steps") if starts else None
-    if warmup_ratio and max_steps:  # same arithmetic as MetricsCallback.on_train_begin
-        meta["warmup_end_step"] = int(max_steps * warmup_ratio)
+    if warmup_ratio and max_steps:
+        meta["warmup_end_step"] = math.ceil(max_steps * warmup_ratio)
     return meta
 
 
@@ -298,17 +300,20 @@ def summarize(records: Sequence[MetricsRecord]) -> RunSummary:
     events = select(records, "event")
 
     if train:
-        finite = [(r["step"], r["loss"]) for r in train]
+        losses = [(r["step"], r["loss"]) for r in train]
         s.steps = int(train[-1]["step"])
+        # first/last stay raw (a NaN at the end is the abort being visible);
+        # "best" must not be decided by a non-finite value.
+        s.first_loss, s.last_loss = losses[0][1], losses[-1][1]
+        finite = [(step, loss) for step, loss in losses if math.isfinite(loss)]
         if finite:
-            s.first_loss, s.last_loss = finite[0][1], finite[-1][1]
             s.best_step, s.best_loss = min(finite, key=lambda t: t[1])
         seen = train[-1].get("tokens_seen")
         s.tokens_seen = int(seen) if seen is not None else None
         rates = [as_float(r["tok_per_s"]) for r in train if r.get("tok_per_s")]
         if rates:
             s.avg_tok_per_s = sum(rates) / len(rates)
-        samples = [as_float(g["mem_used_gb"]) for r in train for g in r["gpu"]]
+        samples = [v for v in (as_float(g["mem_used_gb"]) for r in train for g in r["gpu"]) if math.isfinite(v)]
         if samples:
             s.peak_vram_gb = max(samples)
     if evals:
@@ -337,7 +342,7 @@ def health_violation(record: TrainRecord) -> tuple[str, str] | None:
     * **loss exactly 0.0** — the fused loss divides masked positions in as
       zeros, so a collapsed or all-masked batch reports exactly zero while the
       EMA keeps "improving".
-    * **finite loss with NaN grad_norm** — the forward was fine, the backward
+    * **finite loss with a non-finite grad_norm (NaN or ±Inf)** — the forward
       poisoned the gradients; the next optimizer step would write NaN into
       every weight (seen in a real 27B run at step 6: loss 1.07, grad NaN).
     """

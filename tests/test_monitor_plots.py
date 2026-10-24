@@ -8,6 +8,7 @@ import pytest
 
 from rocm_qlora.metrics import (
     MetricsWriter,
+    chart_meta,
     ema,
     read_metrics,
     rolling_median,
@@ -52,7 +53,6 @@ def synth_records(n=60, epochs=3):
                     "epoch": i // per_epoch,
                     "step": i,
                     "train_loss_mean": loss,
-                    "eval_loss": loss + 0.1,
                     "elapsed_s": i * 2.0,
                 }
             )
@@ -164,3 +164,35 @@ def test_render_charts_and_report(tmp_path):
     text = report.read_text()
     assert "Headline numbers" in text and "loss.png" in text
     assert "*GPUs:* 3" in text and "*dry run:* True" in text
+
+
+def test_chart_meta_uses_the_trainers_warmup_rule():
+    """ceil(max_steps * ratio) — flooring it would shade one step short."""
+    records = synth_records(n=6, epochs=1)
+    records.append({"type": "event", "level": "info", "event": "train_start", "max_steps": 252})
+    meta = chart_meta(records, run_name="r", model="m", max_grad_norm=0.3, warmup_ratio=0.03)
+    assert meta["warmup_end_step"] == 8  # ceil(7.56) = the trainer's value; floor gives 7
+    assert meta["step"] == "step 6"
+
+
+def test_summarize_does_not_let_nan_decide_the_best():
+    """A NaN record is the abort being visible: last_loss keeps it, best_loss skips it."""
+    records = [
+        {
+            "type": "train",
+            "step": step,
+            "epoch": 0.0,
+            "loss": loss,
+            "lr": 1e-4,
+            "grad_norm": 1.0,
+            "tok_per_s": 800.0,
+            "tokens_seen": step * 100,
+            "gpu": [{"index": 0, "mem_used_gb": mem, "mem_total_gb": 24.0, "temp_edge_c": 60, "power_w": 250}],
+        }
+        # the abort case: the NaN step is the last record in the stream
+        for step, loss, mem in ((1, 1.5, 20.0), (2, 1.2, 21.0), (3, float("nan"), float("nan")))
+    ]
+    s = summarize(records)
+    assert s.best_loss == 1.2 and s.best_step == 2
+    assert s.peak_vram_gb == 21.0
+    assert s.last_loss != s.last_loss  # NaN: the last step was the broken one
