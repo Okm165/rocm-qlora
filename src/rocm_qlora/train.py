@@ -519,16 +519,11 @@ def _report_failure(
         writer.write(EventRecord(type="event", level="error", event="abort", error=str(error)))
         writer.close()
     from rich.console import Console
-    from rich.panel import Panel
 
     Console().print(
-        Panel(
-            f"[bold red]Run aborted:[/bold red] {error}\n\n"
-            f"Full logs: {run_dir / 'logs'}\n"
-            "Troubleshooting guide: docs/05-troubleshooting.md",
-            title="[red]failure[/red]",
-            border_style="red",
-        )
+        f"[bold red]run aborted:[/bold red] {error}\n"
+        f"  logs: {run_dir / 'logs'}\n"
+        "  troubleshooting: docs/05-troubleshooting.md"
     )
 
 

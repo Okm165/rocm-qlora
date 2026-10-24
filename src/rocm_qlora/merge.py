@@ -68,7 +68,6 @@ def merge_run(run_dir: str | Path, *, out_dir: str | Path | None = None, console
     the model is sharded across the available GPUs (``device_map="balanced"``).
     """
     from rich.console import Console
-    from rich.panel import Panel
 
     console = console or Console()
     run_dir = Path(run_dir)
@@ -91,12 +90,8 @@ def merge_run(run_dir: str | Path, *, out_dir: str | Path | None = None, console
 
     size = sum(f.stat().st_size for f in out.rglob("*") if f.is_file())
     console.print(
-        Panel(
-            f"merged model: [bold]{out}[/bold] ({human_bytes(size)})\n\n"
-            "[dim]GGUF export for llama.cpp: docs/06-27b-runbook.md (step 6).[/dim]",
-            title="[bold green]merge complete[/bold green]",
-            border_style="green",
-        )
+        f"[green]merge complete:[/green] {out} ({human_bytes(size)})\n"
+        "  [dim]GGUF export for llama.cpp: docs/06-27b-runbook.md (step 6).[/dim]"
     )
     return out
 

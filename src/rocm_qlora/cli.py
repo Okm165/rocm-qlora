@@ -21,7 +21,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from rich.console import Console
-from rich.panel import Panel
 from rich.table import Table
 
 from . import __version__
@@ -167,13 +166,8 @@ def cmd_data(args: argparse.Namespace) -> int:
 
     out_dir = _write_profile_chart(cfg, profile)
 
-    console.print(
-        Panel(
-            render_preview(tokenizer, examples[0], messages_field=cfg.data.messages_field),
-            title="first example",
-            border_style="blue",
-        )
-    )
+    console.print("[dim]first example as the model sees it:[/dim]")
+    console.print(render_preview(tokenizer, examples[0], messages_field=cfg.data.messages_field), markup=False)
     console.print(f"[dim]saved: {out_dir}[/dim]")
     return 0
 
@@ -210,13 +204,9 @@ def _ensure_prepared(cfg: Config, args: argparse.Namespace) -> bool:
     if (prepared / "config.json").exists():
         return True
     console.print(
-        Panel(
-            f"The prepared checkpoint [bold]{prepared}[/bold] does not exist yet.\n\n"
-            f"Run first:  [bold]uv run rocm-qlora prepare --config {args.config}[/bold]\n\n"
-            "[dim]docs/01 + docs/02 explain what prepare does and why.[/dim]",
-            title="[yellow]prepare required[/yellow]",
-            border_style="yellow",
-        )
+        f"[yellow]prepare required:[/yellow] the prepared checkpoint [bold]{prepared}[/bold] does not exist yet.\n"
+        f"  run first: [bold]uv run rocm-qlora prepare --config {args.config}[/bold]\n"
+        "  [dim]docs/01 + docs/02 explain what prepare does and why.[/dim]"
     )
     return False
 
@@ -244,13 +234,9 @@ def _worker_extra_args(args: argparse.Namespace, resume_checkpoint: Path | None)
 
 
 def _print_launch_failure(run_dir: Path, returncode: int) -> None:
-    """Failure panel for a non-zero worker exit."""
+    """Failure line for a non-zero worker exit."""
     console.print(
-        Panel(
-            f"training exited with code {returncode}\nlogs: {run_dir / 'logs'} · see docs/05-troubleshooting.md",
-            title="[red]failure[/red]",
-            border_style="red",
-        )
+        f"[red]training failed (exit {returncode})[/red] · logs: {run_dir / 'logs'} · docs/05-troubleshooting.md"
     )
 
 
@@ -419,7 +405,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return args.func(args)
     except ConfigError as exc:
-        console.print(Panel(str(exc), title="[red]configuration error[/red]", border_style="red"))
+        console.print(f"[red]configuration error:[/red]\n{exc}")
         return 2
     except KeyboardInterrupt:
         console.print("\n[yellow]interrupted — run artifacts were preserved in .outputs/[/yellow]")

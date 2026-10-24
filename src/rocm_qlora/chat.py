@@ -18,7 +18,6 @@ from typing import TYPE_CHECKING, Any, cast
 
 from rich.console import Console
 from rich.markdown import Markdown
-from rich.panel import Panel
 from rich.prompt import Prompt
 
 from .config import Config
@@ -78,15 +77,8 @@ def _split_thinking(text: str) -> tuple[str | None, str]:
 
 
 def _print_banner(console: Console) -> None:
-    """One-time command cheat-sheet panel."""
-    console.print(
-        Panel(
-            "Type a question. Commands: [bold]/think on|off[/bold] · [bold]/temp X[/bold] · "
-            "[bold]/max N[/bold] · [bold]/reset[/bold] · [bold]/exit[/bold]",
-            title="[bold]rocm-qlora chat[/bold]",
-            border_style="cyan",
-        )
-    )
+    """One-time command cheat-sheet line."""
+    console.print("[dim]commands: /think on|off · /temp X · /max N · /reset · /exit[/dim]")
 
 
 def _apply_command(
@@ -155,13 +147,11 @@ def _generate_reply(
 
 
 def _render_reply(console: Console, text: str, new_tokens: int, dt: float) -> None:
-    """Thinking panel (when present) + Markdown answer + timing footer."""
+    """Thinking block (when present) + Markdown answer + timing footer."""
     reasoning, answer = _split_thinking(text)
     if reasoning:
-        console.print(Panel(reasoning, title="[dim]thinking[/dim]", border_style="grey37", padding=(0, 1)))
-    console.print(
-        Panel(Markdown(answer or "(empty)"), title="[bold green]assistant[/bold green]", border_style="green")
-    )
+        console.print(reasoning, style="dim", markup=False)
+    console.print(Markdown(answer or "(empty)"))
     console.print(f"[dim]{new_tokens} tokens · {new_tokens / dt:.1f} tok/s · {dt:.1f}s[/dim]")
 
 

@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from rich.console import Console
-from rich.panel import Panel
 from rich.table import Table
 
 from . import __version__
@@ -26,18 +25,18 @@ console = Console()
 
 
 def _doctor_host_panel(mem: HostMemory, cpu: CpuInfo) -> None:
-    """Host summary panel (CPU/RAM/kernel/driver/disk)."""
+    """Host summary table (CPU/RAM/kernel/driver/disk)."""
     from .hardware import disk_free_gb, kernel_version, rocm_driver_version
 
-    host = Table.grid(padding=(0, 2))
-    host.add_column(style="dim", justify="right")
-    host.add_column()
+    host = Table(title="host")
+    host.add_column("property", style="dim")
+    host.add_column("value")
     host.add_row("CPU", f"{cpu.get('model', '?')} ({cpu.get('cores')} threads)")
     host.add_row("RAM", f"{mem['total_gib']:.0f} GiB total · {mem['available_gib']:.0f} GiB available")
     host.add_row("kernel", kernel_version())
     host.add_row("amdgpu driver", rocm_driver_version() or "n/a")
     host.add_row("disk free", human_bytes(disk_free_gb(".") * 1e9))
-    console.print(Panel(host, title="host", border_style="blue"))
+    console.print(host)
 
 
 def _doctor_gpu_table(gpus: list[GpuInfo]) -> None:
