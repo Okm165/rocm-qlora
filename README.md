@@ -82,7 +82,7 @@ uv run rocm-qlora merge --run .outputs/runs/<id>  # bf16 merge → GGUF for llam
 uv run rocm-qlora report --run .outputs/runs/<id> # regenerate charts + report
 ```
 
-Validate the whole pipeline in ~4 minutes with the toy model (same hybrid
+Validate the whole pipeline in ~2 minutes with the toy model (same hybrid
 architecture, tiny weights):
 
 ```bash

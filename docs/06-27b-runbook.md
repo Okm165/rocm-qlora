@@ -15,7 +15,7 @@ uv run rocm-qlora doctor
 #    changes; quantizes on the freest GPU, so a GPU must be visible)
 uv run rocm-qlora prepare --config configs/qwen3.8-27b.toml
 
-# 2. dry run — 3 steps on 8 examples (~3 min): proves load → step → save → charts
+# 2. dry run — 3 steps on 8 examples (measured ~2.5 min): proves load → step → save → charts
 uv run rocm-qlora train --config configs/qwen3.8-27b.toml --dry-run
 
 # 3. the real run (measured: 87 min for 252 steps at ~21 s/step)
@@ -43,7 +43,7 @@ llama-quantize model-f16.gguf model-Q4_K_M.gguf Q4_K_M
 | steps | `examples ÷ effective batch` per epoch × 3 epochs (effective batch = 1 × 4 accum × GPUs — it scales with the GPU count) |
 | wall time | measured 87 min (252 steps at ~21 s/step + 3 evals, 2026-10-23 run) |
 | VRAM | starts ~21 GB (step 1: 21.1/20.8/21.0 per GPU), peaks ~25.6 of the card's 25.75 GB (24 GiB) — weights 17.7 GB, the rest is LoRA + activations + allocator slack |
-| eval | the 5% holdout at each epoch end (~2–3 min each) |
+| eval | the 5% holdout at each epoch end — measured ~28 s each |
 | artifacts | `charts/` refresh every 10 steps; `metrics.jsonl` has one record per step |
 
 ## What to watch (progress line + charts)
