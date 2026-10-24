@@ -24,6 +24,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from .monitor import (
+    ChartMeta,
     EpochEndRecord,
     EvalRecord,
     EventRecord,
@@ -94,7 +95,7 @@ def _save(fig: Figure, out_path: str | Path) -> None:
     plt.close(fig)
 
 
-def _watermark(fig: Figure, meta: dict[str, Any] | None) -> None:
+def _watermark(fig: Figure, meta: ChartMeta | None) -> None:
     if not meta:
         return
     text = " · ".join(str(v) for v in [meta.get("run_name"), meta.get("step"), meta.get("model")] if v)
@@ -119,7 +120,7 @@ def _chart(out_path: str | Path, *args: Any, **kwargs: Any) -> Generator[tuple[F
         _save(fig, out_path)
 
 
-def _warmup_span(ax: Axes, meta: dict[str, Any] | None, first_step: int) -> None:
+def _warmup_span(ax: Axes, meta: ChartMeta | None, first_step: int) -> None:
     """Shade the warmup window when the run recorded it."""
     end = meta.get("warmup_end_step") if meta else None
     if not end:
@@ -186,7 +187,7 @@ def loss_curve(
     records: Sequence[MetricsRecord],
     out_path: str | Path,
     *,
-    meta: dict[str, Any] | None = None,
+    meta: ChartMeta | None = None,
     eval_records: Sequence[EvalRecord] = (),
     title: str = "Training loss",
 ) -> None:
@@ -245,7 +246,7 @@ def _vram_series(ax: Axes, train: Sequence[TrainRecord]) -> None:
         )
 
 
-def lr_schedule(records: Sequence[MetricsRecord], out_path: str | Path, *, meta: dict[str, Any] | None = None) -> None:
+def lr_schedule(records: Sequence[MetricsRecord], out_path: str | Path, *, meta: ChartMeta | None = None) -> None:
     """Learning-rate schedule chart."""
     train = [r for r in select(records, "train") if r.get("lr") is not None]
     with _chart(out_path, figsize=(10, 3.2)) as (fig, ax):
@@ -260,7 +261,7 @@ def lr_schedule(records: Sequence[MetricsRecord], out_path: str | Path, *, meta:
         _watermark(fig, meta)
 
 
-def grad_norm(records: Sequence[MetricsRecord], out_path: str | Path, *, meta: dict[str, Any] | None = None) -> None:
+def grad_norm(records: Sequence[MetricsRecord], out_path: str | Path, *, meta: ChartMeta | None = None) -> None:
     """Gradient-norm chart with the clipping threshold."""
     train = [r for r in select(records, "train") if r.get("grad_norm") is not None]
     with _chart(out_path, figsize=(10, 3.4)) as (fig, ax):
@@ -289,7 +290,7 @@ def grad_norm(records: Sequence[MetricsRecord], out_path: str | Path, *, meta: d
         _watermark(fig, meta)
 
 
-def throughput(records: Sequence[MetricsRecord], out_path: str | Path, *, meta: dict[str, Any] | None = None) -> None:
+def throughput(records: Sequence[MetricsRecord], out_path: str | Path, *, meta: ChartMeta | None = None) -> None:
     """Tokens/s chart."""
     train = [r for r in select(records, "train") if r.get("tok_per_s")]
     with _chart(out_path, figsize=(10, 3.4)) as (fig, ax):
@@ -317,7 +318,7 @@ def throughput(records: Sequence[MetricsRecord], out_path: str | Path, *, meta: 
         _watermark(fig, meta)
 
 
-def vram(records: Sequence[MetricsRecord], out_path: str | Path, *, meta: dict[str, Any] | None = None) -> None:
+def vram(records: Sequence[MetricsRecord], out_path: str | Path, *, meta: ChartMeta | None = None) -> None:
     """VRAM-per-GPU chart."""
     train = [r for r in select(records, "train") if r.get("gpu")]
     with _chart(out_path, figsize=(10, 3.6)) as (fig, ax):
@@ -332,7 +333,7 @@ def vram(records: Sequence[MetricsRecord], out_path: str | Path, *, meta: dict[s
         _watermark(fig, meta)
 
 
-def gpu_health(records: Sequence[MetricsRecord], out_path: str | Path, *, meta: dict[str, Any] | None = None) -> None:
+def gpu_health(records: Sequence[MetricsRecord], out_path: str | Path, *, meta: ChartMeta | None = None) -> None:
     """GPU temperature/power chart."""
     train = [r for r in select(records, "train") if r.get("gpu")]
     with _chart(out_path, 2, 1, figsize=(10, 5), sharex=True) as (fig, (ax_t, ax_p)):
@@ -365,7 +366,7 @@ def gpu_health(records: Sequence[MetricsRecord], out_path: str | Path, *, meta: 
         _watermark(fig, meta)
 
 
-def epoch_bars(records: Sequence[MetricsRecord], out_path: str | Path, *, meta: dict[str, Any] | None = None) -> None:
+def epoch_bars(records: Sequence[MetricsRecord], out_path: str | Path, *, meta: ChartMeta | None = None) -> None:
     """Per-epoch train/eval loss bars."""
     epochs = select(records, "epoch_end")
     with _chart(out_path, figsize=(8, 4)) as (fig, ax):
@@ -434,7 +435,7 @@ def dashboard(
     records: Sequence[MetricsRecord],
     out_path: str | Path,
     *,
-    meta: dict[str, Any] | None = None,
+    meta: ChartMeta | None = None,
     eval_records: Sequence[EvalRecord] = (),
 ) -> None:
     """2×2 live snapshot: loss, lr, throughput, VRAM."""
@@ -502,7 +503,7 @@ def _coverage_panel(ax: Axes, srt: Sequence[int], max_length: int) -> None:
 
 
 def token_length_hist(
-    lengths: Sequence[int], out_path: str | Path, *, max_length: int, meta: dict[str, Any] | None = None
+    lengths: Sequence[int], out_path: str | Path, *, max_length: int, meta: ChartMeta | None = None
 ) -> None:
     """Data-profile chart: token length distribution + coverage at the cap."""
     with _chart(out_path, 1, 2, figsize=(13, 4.2)) as (fig, (ax, ax2)):
@@ -521,7 +522,7 @@ def token_length_hist(
 
 
 def render_charts(
-    run_dir: str | Path, *, records: Sequence[MetricsRecord], meta: dict[str, Any] | None = None, live: bool = False
+    run_dir: str | Path, *, records: Sequence[MetricsRecord], meta: ChartMeta | None = None, live: bool = False
 ) -> list[Path]:
     """Render the chart set into ``<run>/charts`` (``live`` = cheap subset)."""
     run_dir = Path(run_dir)
@@ -569,7 +570,7 @@ def replot(run_dir: str | Path) -> list[Path]:
     cfg = {}
     with contextlib.suppress(Exception):
         cfg = read_json(run_dir / "config.resolved.json")
-    meta = {
+    meta: ChartMeta = {
         "run_name": run_dir.name,
         "model": str(cfg.get("model", {}).get("name", "")).split("/")[-1],
         "max_grad_norm": cfg.get("optim", {}).get("max_grad_norm", 1.0),

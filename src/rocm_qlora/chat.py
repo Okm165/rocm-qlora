@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 def _load(
     run_dir: Path | None, base_override: str | None, adapter_override: str | None, console: Console
-) -> tuple[Any, PreTrainedTokenizerBase]:
+) -> tuple[PreTrainedModel, PreTrainedTokenizerBase]:
     import torch
     from peft import PeftModel
     from transformers import AutoTokenizer
@@ -66,7 +66,7 @@ def _load(
         console.print(f"[dim]attaching adapter {adapter_dir} …[/dim]")
         model = PeftModel.from_pretrained(model, adapter_dir)
     model.eval()
-    return model, tokenizer
+    return cast("PreTrainedModel", model), tokenizer
 
 
 def _split_thinking(text: str) -> tuple[str | None, str]:
@@ -206,6 +206,6 @@ def run_chat(
 
         history.append({"role": "user", "content": user})
         prompt = _build_prompt(tokenizer, history, think)
-        text, new_tokens, dt = _generate_reply(cast("PreTrainedModel", model), tokenizer, prompt, gen)
+        text, new_tokens, dt = _generate_reply(model, tokenizer, prompt, gen)
         _render_reply(console, text, new_tokens, dt)
         history.append({"role": "assistant", "content": text})

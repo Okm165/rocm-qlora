@@ -123,6 +123,16 @@ class RunEndRecord(TypedDict):
     ts: NotRequired[str]
 
 
+class ChartMeta(TypedDict, total=False):
+    """Annotation context for chart rendering (see ``plots.render_charts``)."""
+
+    run_name: str
+    model: str
+    step: str
+    max_grad_norm: float
+    warmup_end_step: int | None
+
+
 #: One line of ``metrics.jsonl`` — the union of every record shape.
 MetricsRecord = TrainRecord | EvalRecord | EpochEndRecord | EventRecord | RunEndRecord
 
@@ -454,7 +464,7 @@ class MetricsCallback(TrainerCallback):
                 lines.append(f"[yellow]! VRAM grew {growth:.1f} GB since step 10 — possible leak[/yellow]")
         return lines
 
-    def _chart_meta(self) -> dict[str, Any]:
+    def _chart_meta(self) -> ChartMeta:
         return {
             "run_name": self.cfg.run.name,
             "model": self.cfg.model.name.split("/")[-1],

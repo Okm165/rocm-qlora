@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     from .dashboard import RichDashboard
     from .data import ChatMessage, DatasetStats, TokenProfile
     from .explain import ExplainerBook
+    from .model import ParameterReport
     from .monitor import GpuSampler, MetricsCallback, MetricsRecord, MetricsWriter, RunSummary
 
 # ---------------------------------------------------------------------------
@@ -371,7 +372,9 @@ def _build_model(
     return model
 
 
-def _show_model_panel(ui: _Rank0UI, attn: str, disabled: list[str], report: dict[str, Any], *, world_size: int) -> None:
+def _show_model_panel(
+    ui: _Rank0UI, attn: str, disabled: list[str], report: ParameterReport, *, world_size: int
+) -> None:
     """Rank-0 model summary panel and model_loaded event."""
     from rich.panel import Panel
 

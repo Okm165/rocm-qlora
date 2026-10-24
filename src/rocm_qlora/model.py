@@ -28,7 +28,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from .config import Config
 from .utils import now_iso, write_json
@@ -549,7 +549,16 @@ def attach_lora(model: PreTrainedModel, cfg: Config):
     return get_peft_model(model, lora)
 
 
-def parameter_report(model: PreTrainedModel) -> dict[str, Any]:
+class ParameterReport(TypedDict):
+    """`parameter_report`'s result: totals + per-suffix trainable breakdown."""
+
+    total: int
+    trainable: int
+    pct: float
+    by_suffix: dict[str, int]
+
+
+def parameter_report(model: PreTrainedModel) -> ParameterReport:
     """Total vs trainable parameters + a per-suffix breakdown for teaching."""
     from collections import Counter
 
