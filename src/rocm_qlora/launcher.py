@@ -249,6 +249,13 @@ def preflight_gpus(cfg: Config) -> GpuPlan:
         who = [f"{p['name']} (pid {p['pid']}, {p['vram_b'] / 1e9:.1f} GB)" for p in holders if str(g) in str(p["gpus"])]
         if who:
             plan.warnings.append(f"GPU {g} is currently shared with: {', '.join(who)}")
+    # The SDPA guard needs probe results; without them nothing is disabled.
+    verdict = load_doctor_verdict()
+    if not (verdict or {}).get("sdpa"):
+        plan.warnings.append(
+            "no SDPA probe verdict in .context/doctor-latest.json — every attention backend stays enabled "
+            "(the mem-efficient backward is the known intermittent-NaN source, docs/05); run `rocm-qlora doctor`"
+        )
     return plan
 
 

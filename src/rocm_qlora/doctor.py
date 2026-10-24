@@ -31,7 +31,7 @@ from .utils import human_bytes, timestamp_slug, write_json
 
 if TYPE_CHECKING:
     from .launcher import DoctorVerdict
-    from .probes import BnbSmoke, HipIpcProbe, MatmulBench, SdpaProbe, probe_bnb_smoke
+    from .probes import BnbSmoke, HipIpcProbe, MatmulBench, SdpaProbe
 
 console = Console()
 
@@ -108,6 +108,8 @@ def _probe_sdpa() -> SdpaProbe:
 
 def _probe_bnb() -> BnbSmoke:
     """bitsandbytes 4-bit smoke (train + decode shapes) + report."""
+    from .probes import probe_bnb_smoke
+
     result = probe_bnb_smoke()
     status = "[green]✓[/green]" if result.get("ok") else f"[red]✗[/red] {result.get('error', '')}"
     console.print(f"bitsandbytes 4-bit smoke (train + decode shapes): {status}")
@@ -178,6 +180,12 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     verdict = _doctor_probes(args)
 
     # --- write artifacts ------------------------------------------------------
+    if args.fast:
+        # `--fast` skips the probes, and the launcher's SDPA guard reads their
+        # results from doctor-latest.json — writing a probe-less verdict here
+        # would silently disarm it. Leave the file to a full `doctor` run.
+        console.print("[dim]--fast: no probes, so doctor-latest.json is left untouched[/dim]")
+        return 0
     verdict["created"] = timestamp_slug()
     verdict["host"] = {"ram": mem, "cpu": cpu}
     verdict["packages"] = versions
