@@ -12,6 +12,7 @@ Package layout (each module explains itself — see module docstrings):
     launcher.py   GPU selection + worker environment + torchrun orchestration
     sft.py        project config -> trl.SFTConfig mapping
     train.py      the training worker: phases + orchestration
+    patches.py    the deliberate third-party patches (DDP init skip, diagnostics)
     metrics.py    metrics JSONL: records, writer/reader, summaries, health guard
     callback.py   the training-time callback: progress lines, charts, GPU sampling
     plots.py      every matplotlib chart + the Markdown run report

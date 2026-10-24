@@ -187,8 +187,9 @@ src/rocm_qlora/
   hardware.py           rocm-smi parsing · GPU selection
   probes.py             SDPA / HIP-IPC / bnb-smoke / matmul GPU probes
   launcher.py           GPU choice, worker env, torchrun orchestration
-  sft.py                config → SFTConfig mapping (checkpoint cadence, warmup)
+  sft.py                config → SFTConfig mapping (checkpoint cadence, warmup ratio)
   train.py              the training worker (one process per GPU)
+  patches.py            deliberate third-party patches (DDP init skip, NaN diagnostics)
   doctor.py             environment + hardware report (.context artifacts)
   chat.py               interactive sanity check
   utils.py              formatting / timing / JSON helpers
