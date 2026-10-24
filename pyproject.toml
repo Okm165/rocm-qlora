@@ -147,3 +147,10 @@ filterwarnings = ["ignore:.*torch.jit.script_method.*is deprecated.*:Deprecation
 markers = [
     "gpu: tests that require a working ROCm GPU (skipped by default)",
 ]
+
+# -----------------------------------------------------------------------------
+# Source distribution: the usable workspace (configs, docs, POC scripts travel
+# with it; the wheel is just the importable package).
+# -----------------------------------------------------------------------------
+[tool.uv.build-backend]
+source-include = ["configs/**", "docs/**", "scripts/**"]
