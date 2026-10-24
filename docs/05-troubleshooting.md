@@ -151,8 +151,8 @@ allocator config, suspect corruption, not the data.
 
 ## Training never starts / hangs before step 1
 
-* First `trainer.train()` step includes Triton kernel warmup on this stack —
-  give it ~30 s.
+* The first `trainer.train()` step includes kernel warmup on this stack —
+  measured ~19 s (later steps ~16–23 s at 27B, batch 1 × 1536).
 * If it hangs >2 min: check `logs/rank-0.log`; a barrier deadlock usually
   means one rank died earlier (look at all rank logs, not just 0).
 * HF Hub throttling during model load: `export HF_HUB_DISABLE_XET=1` (known
