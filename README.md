@@ -65,6 +65,10 @@ uv run rocm-qlora prepare --config configs/qwen3.8-27b.toml # NF4 checkpoint (on
 uv run rocm-qlora train --config configs/qwen3.8-27b.toml
 ```
 
+Any knob can be overridden per run — `--set optim.lr=5e-5`, `--set
+data.max_length=1280`, `--set model.attn=eager` — without editing the config
+(see `--help`; docs/03 has the reasoning for each value).
+
 Then:
 
 ```bash
