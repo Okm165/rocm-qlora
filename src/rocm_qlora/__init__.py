@@ -12,7 +12,8 @@ Package layout (each module explains itself — see module docstrings):
     launcher.py   GPU selection + worker environment + torchrun orchestration
     sft.py        project config -> trl.SFTConfig mapping
     train.py      the training worker (runs inside torchrun ranks)
-    monitor.py    metrics JSONL, live rich dashboard, health guards, summaries
+    monitor.py    metrics JSONL, health guards, summaries (headless-safe)
+    dashboard.py  the live rich terminal dashboard (rank 0 only)
     plots.py      every matplotlib chart + the Markdown run report
     explain.py    contextual explainer panels (deduplicated per run)
     doctor.py     environment + hardware report (.context artifacts)

@@ -40,9 +40,10 @@ if TYPE_CHECKING:
     from transformers import PreTrainedModel, PreTrainedTokenizerBase
     from trl import SFTTrainer
 
+    from .dashboard import RichDashboard
     from .data import ChatMessage, DatasetStats, TokenProfile
     from .explain import ExplainerBook
-    from .monitor import GpuSampler, MetricsCallback, MetricsRecord, MetricsWriter, RichDashboard, RunSummary
+    from .monitor import GpuSampler, MetricsCallback, MetricsRecord, MetricsWriter, RunSummary
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -180,8 +181,9 @@ def _rank0_ui(cfg: Config, run_dir: Path, world_size: int, *, enabled: bool) -> 
         return None
     from rich.console import Console
 
+    from .dashboard import RichDashboard
     from .explain import ExplainerBook
-    from .monitor import GpuSampler, MetricsWriter, RichDashboard
+    from .monitor import GpuSampler, MetricsWriter
 
     console = Console()
     book = ExplainerBook(console, enabled=cfg.run.explainers)
