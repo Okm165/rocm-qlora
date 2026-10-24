@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from rocm_qlora.config import Config, ConfigError, dumps_toml
+from rocm_qlora.config import Config, ConfigError
 
 
 def test_defaults_load():
@@ -50,11 +50,11 @@ def test_overrides_apply_and_validate():
 
 def test_snapshot_roundtrip_toml(tmp_path):
     cfg = Config.from_dict({"run": {"name": "x"}, "data": {"max_length": 2048}})
-    text = dumps_toml(cfg.to_dict())
+    cfg.snapshot(tmp_path)
+    text = (tmp_path / "config.resolved.toml").read_text()
     assert "[run]" in text and "[optim]" in text
     # a snapshot must be re-parseable
-    (tmp_path / "c.toml").write_text(text)
-    cfg2 = Config.from_toml(tmp_path / "c.toml")
+    cfg2 = Config.from_toml(tmp_path / "config.resolved.toml")
     assert cfg2.data.max_length == 2048
     assert cfg2.run.name == "x"
 

@@ -19,6 +19,8 @@ from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any, Literal, get_type_hints
 
+import tomli_w
+
 from .utils import write_json, write_text
 
 # ---------------------------------------------------------------------------
@@ -214,7 +216,7 @@ class Config:
         """Write resolved config into the run directory (TOML + JSON)."""
         run_dir = Path(run_dir)
         write_json(run_dir / "config.resolved.json", self.to_dict())
-        write_text(run_dir / "config.resolved.toml", dumps_toml(self.to_dict()))
+        write_text(run_dir / "config.resolved.toml", tomli_w.dumps(self.to_dict()))
 
     # -- loading ------------------------------------------------------------
 
@@ -375,37 +377,3 @@ def _build(cls: type, raw: Mapping[str, Any], prefix: str) -> Any:
         else:
             kwargs[name] = value
     return cls(**kwargs)
-
-
-def dumps_toml(data: Mapping[str, Any]) -> str:
-    """Minimal deterministic TOML writer for snapshots (flat-ish structures)."""
-    lines: list[str] = []
-
-    def fmt(v: Any) -> str:
-        """Format one config value for display."""
-        if isinstance(v, bool):
-            return "true" if v else "false"
-        if isinstance(v, str):
-            return '"' + v.replace("\\", "\\\\").replace('"', '\\"') + '"'
-        if isinstance(v, (int, float)):
-            return repr(v)
-        if isinstance(v, list):
-            return "[" + ", ".join(fmt(x) for x in v) + "]"
-        if v is None:
-            return '""  # null'
-        return repr(v)
-
-    def emit_table(prefix: str, node: Mapping[str, Any]) -> None:
-        """Render the resolved config as a rich table."""
-        scalars = {k: v for k, v in node.items() if not isinstance(v, Mapping)}
-        tables = {k: v for k, v in node.items() if isinstance(v, Mapping)}
-        if prefix:
-            lines.append(f"[{prefix}]")
-        for k, v in scalars.items():
-            lines.append(f"{k} = {fmt(v)}")
-        lines.append("")
-        for k, v in tables.items():
-            emit_table(f"{prefix}.{k}" if prefix else k, v)
-
-    emit_table("", data)
-    return "\n".join(lines).strip() + "\n"
