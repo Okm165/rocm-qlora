@@ -128,9 +128,10 @@ def test_metrics_roundtrip_and_summary(tmp_path):
     assert summary.first_loss > summary.last_loss
     assert summary.best_eval_loss is not None
     assert summary.peak_vram_gb == 19.5
-    # world size + dry-run come from the stream itself (run_end record)
+    # world size + dry-run + wall time come from the stream itself (run_end record)
     assert summary.world_size == 3
     assert summary.dry_run is True
+    assert summary.total_seconds == 120.0
 
 
 def test_truncated_last_line_tolerated(tmp_path):

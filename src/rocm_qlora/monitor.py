@@ -238,8 +238,9 @@ def trend_arrow(values: Sequence[float | None], window: int = 25, eps: float = 1
 class RunSummary:
     """End-of-run numbers, derived from the metrics stream.
 
-    ``total_seconds`` and ``adapter_dir`` are the two facts the records do not
-    carry; the worker fills them live for the wrap-up lines.
+    ``adapter_dir`` is the one fact the records do not carry; the worker fills
+    it live for the wrap-up lines. ``total_seconds`` comes from the run_end
+    record — a live wrap-up passes it in instead (the record is written after).
     """
 
     steps: int = 0
@@ -293,6 +294,7 @@ def summarize(records: Sequence[MetricsRecord]) -> RunSummary:
     run_ends = select(records, "run_end")
     if run_ends:
         s.dry_run = bool(run_ends[-1].get("dry_run", False))
+        s.total_seconds = float(run_ends[-1].get("total_seconds", 0.0))
     return s
 
 
