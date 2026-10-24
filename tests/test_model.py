@@ -1,11 +1,11 @@
-"""Parameter accounting tests — the atomic classification the VRAM estimator trusts."""
+"""Parameter accounting tests: the prepared-checkpoint meta and the model panel report."""
 
 from __future__ import annotations
 
 import torch.nn as nn
 
 from rocm_qlora.config import Config
-from rocm_qlora.model import model_parameter_meta
+from rocm_qlora.model import _prepare_meta, parameter_report
 
 
 class _Fake27BShape(nn.Module):
@@ -34,16 +34,27 @@ def _model() -> _Fake27BShape:
     return model
 
 
-def test_model_parameter_meta_buckets():
-    """embed > lm_head > vision > quantized > nonquant, plus lora_units accounting."""
+def test_prepare_meta_counts_tied_weights_once():
+    """A tied embed/lm_head is one tensor; merge sizes the bf16 output from this total."""
     model = _model()
-    meta = model_parameter_meta(model, Config.from_dict({}))
+    model.lm_head.weight = model.embed_tokens.weight
+    cfg = Config.from_dict({})
+    meta = _prepare_meta(model, cfg, requantized=["layers.0.q_proj"])
 
-    assert meta["embed_params"] == 64 * 32
-    assert meta["lm_head_params"] == 64 * 32
-    assert meta["vision_params"] == 32 * 32 + 32  # weight + bias
-    assert meta["quantized_params"] == 0.0  # no bnb layers on this CPU-only stand-in
     assert meta["total_params"] == float(sum(p.numel() for p in model.parameters()))
-    # 3 blocks x {q,v,o}_proj x (in_features + out_features)
-    assert meta["lora_units"] == 3 * 3 * (32 + 32)
-    assert meta["hidden_size"] == 32 and meta["n_layers"] == 3 and meta["vocab_size"] == 64
+    assert meta["source"] == cfg.model.name
+    assert meta["requantized"] == ["layers.0.q_proj"]
+    assert meta["quantization"]["quant_type"] == cfg.quantization.quant_type
+
+
+def test_parameter_report_buckets_by_peft_module_name():
+    """PEFT's `...q_proj.lora_A.weight` buckets under q_proj, not under lora_A."""
+    model = _model()
+    for param in model.parameters():
+        param.requires_grad_(False)
+    model.layers[0].q_proj.lora_A = nn.Linear(32, 4, bias=False)  # type: ignore[attr-defined]
+    model.layers[0].q_proj.lora_B = nn.Linear(4, 32, bias=False)  # type: ignore[attr-defined]
+
+    report = parameter_report(model)
+    assert report["trainable"] == 32 * 4 + 4 * 32
+    assert report["by_module"] == {"q_proj": 32 * 4 + 4 * 32}

@@ -61,7 +61,6 @@ dev = [
     # basedpyright = the type checker. Gate: `uv run basedpyright` must report
     # 0 errors (warnings are strict-mode noise from untyped third-party libs).
     "basedpyright>=1.40",
-    "pytest-cov>=7.1.0",
 ]
 
 # -----------------------------------------------------------------------------
@@ -138,9 +137,6 @@ triton-rocm = { index = "pytorch-rocm" }
 # Older torch ROCm wheels used this package name; kept so version bumps of
 # the torch pin do not break resolution.
 pytorch-triton-rocm = { index = "pytorch-rocm" }
-
-[tool.coverage.run]
-source = ["src/rocm_qlora"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

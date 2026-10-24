@@ -77,7 +77,7 @@ host RAM before quantizing (~55 GB for 27B — times the number of DDP ranks).
 left in 16-bit (`in_proj_qkv`, the vision tower — worth ~5 GB/GPU, the
 difference between fitting and OOM on 24 GB cards), keeps `lm_head` 16-bit
 (TRL's fused loss slices the raw weight tensor), and records **exact**
-parameter accounting for the VRAM estimator and the run preflight. The
+parameter accounting (used by `merge` to size the bf16 output). The
 per-item 24 GB budget is in `docs/02-amd-rocm-notes.md`; in short: ~21 GB
 measured at step 1, sawtoothing toward ~24 (docs/06).
 
@@ -153,7 +153,6 @@ src/rocm_qlora/
   plots.py              all matplotlib charts + Markdown report
   hardware.py           rocm-smi parsing · GPU selection
   probes.py             SDPA / RCCL-IPC / matmul probes
-  vram.py               model geometry · transparent VRAM estimator
   launcher.py           GPU choice, worker env, torchrun orchestration
   sft.py                config → SFTConfig mapping (checkpoint cadence, warmup)
   train.py              the training worker (one process per GPU)

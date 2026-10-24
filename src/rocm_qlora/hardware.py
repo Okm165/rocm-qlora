@@ -1,11 +1,12 @@
-"""Hardware discovery and memory math for AMD ROCm systems.
+"""Hardware discovery for AMD ROCm systems.
 
 * ``gpu_snapshot`` / ``gpu_processes`` — rocm-smi output, parsed tolerantly.
-* ``estimate_training_vram`` — a transparent, printed decomposition.
+* ``select_gpus`` — the GPUs for a run: the requested ones, or every visible
+  one. Free VRAM is reported as a fact; the run either fits or OOMs, and
+  docs/02 (measured budget) + docs/05 (knobs) are what to react with.
 * ``probe_sdpa`` — which attention backends actually launch on this stack
   (a fresh subprocess per backend: a failed RDNA3 kernel launch can surface
   as a *deferred* error and contaminate the process).
-* ``select_gpus`` — pick GPUs whose free VRAM fits the estimate.
 
 Everything here is safe to import without torch installed; torch is imported
 lazily where needed.
@@ -317,50 +318,27 @@ def torch_runtime_info() -> TorchRuntime:
 class GpuPlan:
     gpus: list[int]
     free_gb: dict[int, float]
-    needed_gb: float
     warnings: list[str] = field(default_factory=list)
 
 
-def select_gpus(needed_gb: float, *, requested: str | list[int] = "auto", safety_factor: float = 1.10) -> GpuPlan:
-    """Pick GPUs whose *free* VRAM can hold the estimated footprint."""
+def select_gpus(*, requested: str | list[int] = "auto") -> GpuPlan:
+    """The GPUs for this run: the requested ones, or every visible one.
+
+    No size is guessed. If the choice is too small for the model, the run
+    OOMs and the user reacts with the measured budget (docs/02) and the
+    knobs in docs/05.
+    """
     snap = gpu_snapshot()
     free = {g.index: g.mem_free_gb for g in snap}
-    warnings: list[str] = []
-    need = needed_gb * safety_factor
 
     if isinstance(requested, list):
-        chosen = list(requested)
-        for gpu in chosen:
-            if gpu not in free:
-                warnings.append(f"GPU {gpu} not visible to rocm-smi")
-            elif free[gpu] < need:
-                warnings.append(
-                    f"GPU {gpu}: {free[gpu]:.1f} GB free < {need:.1f} GB needed "
-                    f"(safety ×{safety_factor:.2f}) — expect OOM"
-                )
-        return GpuPlan(gpus=chosen, free_gb=free, needed_gb=need, warnings=warnings)
+        warnings = [f"GPU {gpu} not visible to rocm-smi" for gpu in requested if gpu not in free]
+        return GpuPlan(gpus=list(requested), free_gb=free, warnings=warnings)
 
     if not free:
         raise RuntimeError("No GPUs detected by rocm-smi")
-
-    fitting = sorted([g for g, f in free.items() if f >= need])
-    if fitting:
-        # Prefer using all fitting GPUs — data-parallel throughput is free.
-        return GpuPlan(gpus=fitting, free_gb=free, needed_gb=need, warnings=warnings)
-
-    # Nothing fits: report every GPU and the processes holding it.
-    holders = gpu_processes()
-    for g in free:
-        who = ", ".join(f"{p['name']}(pid {p['pid']})" for p in holders if str(g) in str(p["gpus"]))
-        warnings.append(
-            f"GPU {g}: {free[g]:.1f} GB free of {snap[g].mem_total_gb:.0f} GB" + (f" — held by: {who}" if who else "")
-        )
-    raise RuntimeError(
-        f"No GPU has {need:.1f} GB free VRAM (need = estimate {needed_gb:.1f} GB × "
-        f"safety {safety_factor:.2f}).\n" + "\n".join(warnings) + "\n"
-        "Options: free VRAM (stop other GPU processes), lower data.max_length or "
-        "optim.per_device_batch_size, or use fewer/other GPUs via dist.gpus."
-    )
+    # Every visible GPU — data-parallel throughput is free.
+    return GpuPlan(gpus=sorted(free), free_gb=free)
 
 
 def disk_free_gb(path: str | Path) -> float:

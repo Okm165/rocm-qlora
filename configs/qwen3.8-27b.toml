@@ -104,6 +104,5 @@ HSA_USE_SVM = "0"
 ROCM_QLORA_LOG_LEVEL = "DEBUG"
 
 [dist]
-mode = "auto"           # DDP across every GPU that fits
+mode = "auto"           # DDP across every visible GPU
 gpus = "auto"
-safety_factor = 1.10

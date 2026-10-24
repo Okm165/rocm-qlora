@@ -108,7 +108,9 @@ GC threshold only. Do **not** enable `expandable_segments:True`: tried on
 ## The 24 GB budget for a 27B model
 
 The math that makes 27B QLoRA fit on 24 GB cards (per GPU, DDP). The
-"why" column carries measured reality:
+"why" column carries measured reality. The tool does **not** predict this
+number: the preflight reports free VRAM as a fact, and a run either fits or
+OOMs — this table (plus the knobs in docs/05) is what to react with:
 
 | item | GB | why |
 |---|---|---|

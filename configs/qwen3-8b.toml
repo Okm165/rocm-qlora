@@ -69,4 +69,3 @@ omp_num_threads = 8
 [dist]
 mode = "auto"
 gpus = "auto"
-safety_factor = 1.10

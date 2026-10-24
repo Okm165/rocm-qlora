@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import subprocess
 
+import pytest
+
 from rocm_qlora import hardware
 from rocm_qlora.hardware import GpuInfo
 
@@ -58,28 +60,30 @@ def test_gpu_processes_parsing(monkeypatch):
     assert procs[0]["vram_b"] == 49975758848
 
 
-def test_select_gpus_auto_picks_fitting(monkeypatch):
+def test_select_gpus_auto_takes_every_visible(monkeypatch):
     snap = [
-        GpuInfo(index=0, mem_total_b=24_000_000_000, mem_used_b=3_000_000_000),  # 21 free
-        GpuInfo(index=1, mem_total_b=24_000_000_000, mem_used_b=20_000_000_000),  # 4 free
-        GpuInfo(index=2, mem_total_b=24_000_000_000, mem_used_b=2_000_000_000),  # 22 free
+        GpuInfo(index=0, mem_total_b=24_000_000_000, mem_used_b=3_000_000_000),
+        GpuInfo(index=2, mem_total_b=24_000_000_000, mem_used_b=2_000_000_000),
     ]
     monkeypatch.setattr(hardware, "gpu_snapshot", lambda *a, **k: snap)
-    monkeypatch.setattr(hardware, "gpu_processes", lambda *a, **k: [])
-    plan = hardware.select_gpus(15.0)
+    plan = hardware.select_gpus()
     assert plan.gpus == [0, 2]
+    assert plan.free_gb[0] == pytest.approx(21.0)
+    assert plan.warnings == []
 
 
-def test_select_gpus_raises_with_holders(monkeypatch):
+def test_select_gpus_requested_list_warns_about_invisible(monkeypatch):
     snap = [GpuInfo(index=0, mem_total_b=24_000_000_000, mem_used_b=20_000_000_000)]
     monkeypatch.setattr(hardware, "gpu_snapshot", lambda *a, **k: snap)
-    monkeypatch.setattr(
-        hardware,
-        "gpu_processes",
-        lambda *a, **k: [{"pid": 1, "name": "inference-server", "gpus": "0", "vram_b": 20_000_000_000}],
-    )
+    plan = hardware.select_gpus(requested=[0, 3])
+    assert plan.gpus == [0, 3]  # honored as requested; the OOM is the user's to hit
+    assert any("GPU 3 not visible" in w for w in plan.warnings)
+
+
+def test_select_gpus_raises_without_gpus(monkeypatch):
+    monkeypatch.setattr(hardware, "gpu_snapshot", lambda *a, **k: [])
     try:
-        hardware.select_gpus(15.0)
+        hardware.select_gpus()
         raise AssertionError("expected RuntimeError")
     except RuntimeError as exc:
-        assert "inference-server" in str(exc)
+        assert "No GPUs" in str(exc)

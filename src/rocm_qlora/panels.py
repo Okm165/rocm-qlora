@@ -124,7 +124,7 @@ def show_model_panel(ui: Rank0UI, attn: str, disabled: list[str], report: Parame
     table = kv_table()
     table.add_row("total params", fmt_int(report["total"]))
     table.add_row("trainable (LoRA)", f"{fmt_int(report['trainable'])}  ({report['pct']:.3f}%)")
-    breakdown = " · ".join(f"{k}: {fmt_int(v)}" for k, v in list(report["by_suffix"].items())[:8])
+    breakdown = " · ".join(f"{k}: {fmt_int(v)}" for k, v in list(report["by_module"].items())[:8])
     table.add_row("by module", breakdown)
     attn_note = f"{attn}  (doctor-verified where available)"
     if disabled:

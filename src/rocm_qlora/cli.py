@@ -31,7 +31,6 @@ from .utils import fmt_int, human_bytes, human_duration, timestamp_slug, write_j
 
 if TYPE_CHECKING:
     from .data import DataProfile, DatasetStats, Percentiles, TokenProfile
-    from .vram import ModelGeometry
 
 DEFAULT_CONFIG = "configs/qwen3.8-27b.toml"
 console = Console()
@@ -70,49 +69,6 @@ def _load_config(args: argparse.Namespace) -> Config:
     if overrides:
         cfg = cfg.with_overrides(overrides)
     return cfg
-
-
-def _load_geometry(cfg: Config) -> ModelGeometry | None:
-    """Model geometry: exact from prepare's meta, else fetched config.json."""
-    from .vram import geometry_from_finetune_meta, geometry_from_hf_config
-
-    meta = Path(cfg.model.prepared_dir) / "finetune_meta.json"
-    if meta.exists():
-        geom = geometry_from_finetune_meta(meta)
-        if geom:
-            return geom
-    try:
-        from huggingface_hub import hf_hub_download
-
-        p = hf_hub_download(cfg.model.name, "config.json")
-        return geometry_from_hf_config(Path(p))
-    except Exception:
-        return None
-
-
-def _print_vram_estimate(cfg: Config, geom: ModelGeometry) -> float:
-    """Print the VRAM decomposition table; returns the estimated total (GB)."""
-    from .vram import estimate_training_vram
-
-    est = estimate_training_vram(
-        geom,
-        lora_r=cfg.lora.r,
-        max_length=cfg.data.max_length,
-        batch_size=cfg.optim.per_device_batch_size,
-        grad_checkpointing=cfg.optim.gradient_checkpointing,
-        optimizer=cfg.optim.optimizer,
-        loss_type=cfg.optim.loss_type,
-    )
-    table = Table(title="VRAM estimate (per GPU, one training process)", show_lines=False)
-    table.add_column("component", style="dim")
-    table.add_column("GB", justify="right")
-    for name, value in est.breakdown().items():
-        style = "bold" if name == "TOTAL" else ""
-        table.add_row(name, f"{value:.1f}", style=style)
-    console.print(table)
-    for note in est.notes:
-        console.print(f"[dim]· {note}[/dim]")
-    return est.total_gb
 
 
 def _resolve_resume_checkpoint(path: str) -> Path | None:
@@ -280,15 +236,6 @@ def _ensure_prepared(cfg: Config, args: argparse.Namespace) -> bool:
     return False
 
 
-def _plan_vram(cfg: Config) -> float:
-    """VRAM estimate for the preflight; falls back to 30 GB without geometry."""
-    geom = _load_geometry(cfg)
-    if geom is None:
-        console.print("[yellow]could not load model geometry — skipping the VRAM estimate[/yellow]")
-        return 30.0
-    return _print_vram_estimate(cfg, geom)
-
-
 def _resolve_resume(args: argparse.Namespace) -> Path | None:
     """Resolve --resume to a checkpoint dir; None when absent or not found."""
     if not args.resume:
@@ -336,13 +283,16 @@ def cmd_train(args: argparse.Namespace) -> int:
     if not _ensure_prepared(cfg, args):
         return 2
 
-    needed = _plan_vram(cfg)
-    plan = preflight_gpus(cfg, needed)
+    plan = preflight_gpus(cfg)
     for warning in plan.warnings:
         console.print(f"[yellow]! {warning}[/yellow]")
     console.print(
         f"[bold]GPUs for this run:[/bold] {plan.gpus} "
         f"(free: {', '.join(f'{g}: {plan.free_gb.get(g, float("nan")):.1f} GB' for g in plan.gpus)})"
+    )
+    console.print(
+        "[dim]fit is not predicted here — the run fits or OOMs; "
+        "docs/02 has the measured 24 GB budget, docs/05 the knobs to react with.[/dim]"
     )
 
     if args.dry_run:

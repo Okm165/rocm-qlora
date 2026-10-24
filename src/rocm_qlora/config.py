@@ -205,12 +205,10 @@ class EnvConfig(_Section):
 
 
 class DistConfig(_Section):
-    #: "auto" (all GPUs that fit) | "ddp" (same) | "single" (first GPU)
+    #: "auto" (every visible GPU) | "ddp" (same) | "single" (first GPU)
     mode: Literal["auto", "ddp", "single"] = "auto"
-    #: "auto" picks the GPUs with enough free VRAM; else e.g. [0, 2].
+    #: "auto" uses every visible GPU; else e.g. [0, 2].
     gpus: str | list[int] = "auto"
-    #: Required free VRAM = estimate × safety_factor.
-    safety_factor: Annotated[float, Field(ge=1.0)] = 1.10
 
     @field_validator("gpus")
     @classmethod

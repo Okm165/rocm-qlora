@@ -8,7 +8,6 @@ Package layout (each module explains itself — see module docstrings):
     merge.py      adapter -> bf16 merge (ready for GGUF export)
     hardware.py   ROCm/GPU discovery, rocm-smi parsing, GPU selection
     probes.py     SDPA / RCCL-IPC / matmul probes (fresh subprocess each)
-    vram.py       model geometry + the transparent VRAM estimator
     launcher.py   GPU selection + worker environment + torchrun orchestration
     sft.py        project config -> trl.SFTConfig mapping
     train.py      the training worker: phases + orchestration

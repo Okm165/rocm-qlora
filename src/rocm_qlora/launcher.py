@@ -240,14 +240,14 @@ def launch_worker(cfg: Config, run_dir: Path, gpu_ids: list[int], *, extra_args:
 # ---------------------------------------------------------------------------
 
 
-def preflight_gpus(cfg: Config, needed_gb: float) -> GpuPlan:
+def preflight_gpus(cfg: Config) -> GpuPlan:
     """Choose GPUs for this run and collect human-readable context."""
     requested = cfg.dist.gpus
     mode = cfg.dist.mode
     if mode == "single" and isinstance(requested, str):
         requested = [0]
 
-    plan = select_gpus(needed_gb, requested=requested, safety_factor=cfg.dist.safety_factor)
+    plan = select_gpus(requested=requested)
     # Note about other VRAM consumers (e.g. a running inference server).
     holders = gpu_processes()
     for g in plan.gpus:

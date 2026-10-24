@@ -28,17 +28,14 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypedDict, cast
+from typing import TYPE_CHECKING, Any, NotRequired, TypedDict, cast
 
 from .config import Config
 from .utils import now_iso, write_json
 
 if TYPE_CHECKING:
-    import torch
     from torch import nn
     from transformers import PreTrainedModel, PreTrainedTokenizerBase
-
-    from .vram import FinetuneMeta
 
 # ---------------------------------------------------------------------------
 # Small helpers
@@ -102,6 +99,29 @@ def resolve_model_class(model_name: str):
 # ---------------------------------------------------------------------------
 # Preparation (download + surgery + save)
 # ---------------------------------------------------------------------------
+
+
+class QuantizationMeta(TypedDict):
+    """The ``quantization`` section of finetune_meta.json."""
+
+    quant_type: str
+    double_quant: bool
+    quant_storage: str
+    compute_dtype: str
+
+
+class FinetuneMeta(TypedDict):
+    """`finetune_meta.json` in a prepared checkpoint: what `prepare` wrote.
+
+    ``total_params`` is exact (counted from the tensors); the rest is
+    provenance. Older checkpoints may miss keys — readers stay tolerant.
+    """
+
+    total_params: float
+    source: NotRequired[str]
+    requantized: NotRequired[list[str]]
+    created: NotRequired[str]
+    quantization: NotRequired[QuantizationMeta]
 
 
 @dataclass
@@ -296,22 +316,23 @@ def _write_quantization_config(model: PreTrainedModel, cfg: Config) -> None:
 
 
 def _prepare_meta(model: PreTrainedModel, cfg: Config, requantized: list[str]) -> FinetuneMeta:
-    """Exact parameter accounting + provenance for the VRAM estimator."""
-    meta = model_parameter_meta(model, cfg)
-    meta.update(
-        {
-            "source": cfg.model.name,
-            "requantized": requantized,
-            "created": now_iso(),
-            "quantization": {
-                "quant_type": cfg.quantization.quant_type,
-                "double_quant": cfg.quantization.double_quant,
-                "quant_storage": cfg.quantization.quant_storage,
-                "compute_dtype": cfg.model.dtype,
-            },
-        }
-    )
-    return meta
+    """What ``prepare`` did to this checkpoint: exact total + provenance.
+
+    ``named_parameters()`` deduplicates shared tensors, so a tied
+    embed/lm_head weight is counted once.
+    """
+    return {
+        "total_params": float(sum(_logical_numel(p) for p in model.parameters())),
+        "source": cfg.model.name,
+        "requantized": requantized,
+        "created": now_iso(),
+        "quantization": {
+            "quant_type": cfg.quantization.quant_type,
+            "double_quant": cfg.quantization.double_quant,
+            "quant_storage": cfg.quantization.quant_storage,
+            "compute_dtype": cfg.model.dtype,
+        },
+    }
 
 
 def _save_prepared(model: PreTrainedModel, out_dir: Path, *, log: Callable[[str], None]) -> None:
@@ -371,16 +392,6 @@ def _dir_size_gb(path: Path) -> float:
 # ---------------------------------------------------------------------------
 
 
-def _match_target(name: str, target_modules: str | list[str]) -> bool:
-    if ".visual." in name:
-        return False  # vision tower is never adapted for text training
-    if name.endswith("lm_head") or name == "lm_head":
-        return False  # never adapt the output head
-    if target_modules == "all-linear":
-        return True
-    return any(name.endswith(suffix) for suffix in target_modules)
-
-
 def _logical_numel(param: nn.Parameter) -> int:
     """True parameter count of a tensor.
 
@@ -393,65 +404,6 @@ def _logical_numel(param: nn.Parameter) -> int:
     if param.dtype == torch.uint8 and getattr(param, "quant_state", None) is not None:
         return param.numel() * 2
     return param.numel()
-
-
-def _classify_param(
-    param: torch.nn.Parameter,
-    module: nn.Module,
-    name: str,
-    *,
-    embed_module: nn.Module | None,
-    head: nn.Module | None,
-) -> str:
-    """Which accounting bucket one parameter belongs to (checked in this order)."""
-    if embed_module is not None and param is getattr(embed_module, "weight", None):
-        return "embed"
-    if head is not None and param is getattr(head, "weight", None):
-        return "lm_head"
-    if "visual" in name:
-        return "vision"
-    import bitsandbytes as bnb
-
-    if isinstance(module, bnb.nn.Linear4bit):
-        return "quantized"
-    return "nonquant"
-
-
-def model_parameter_meta(model: PreTrainedModel, cfg: Config) -> FinetuneMeta:
-    """Exact parameter counts for the VRAM estimator + teaching output."""
-    import bitsandbytes as bnb
-    import torch
-
-    total = 0
-    lora_units = 0.0
-    buckets = {"embed": 0, "lm_head": 0, "vision": 0, "quantized": 0, "nonquant": 0}
-    embed_module = model.get_input_embeddings()
-    head = getattr(model, "lm_head", None)
-    for name, module in model.named_modules():
-        for param in module.parameters(recurse=False):
-            n = _logical_numel(param)
-            total += n
-            buckets[_classify_param(param, module, name, embed_module=embed_module, head=head)] += n
-        if (
-            "visual" not in name
-            and isinstance(module, (bnb.nn.Linear4bit, torch.nn.Linear))
-            and _match_target(name, cfg.lora.target_modules)
-        ):
-            lora_units += module.in_features + module.out_features
-    text_cfg = getattr(model.config, "text_config", model.config)
-    return {
-        "name": cfg.model.name,
-        "total_params": float(total),
-        "embed_params": float(buckets["embed"]),
-        "lm_head_params": float(buckets["lm_head"]),
-        "quantized_params": float(buckets["quantized"]),
-        "nonquant_16bit_params": float(buckets["nonquant"]),
-        "vision_params": float(buckets["vision"]),  # dropped after load; counted for completeness
-        "lora_units": float(lora_units),
-        "hidden_size": int(getattr(text_cfg, "hidden_size", 0) or 0),
-        "n_layers": int(getattr(text_cfg, "num_hidden_layers", 0) or 0),
-        "vocab_size": int(getattr(text_cfg, "vocab_size", 0) or 0),
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -550,30 +502,33 @@ def attach_lora(model: PreTrainedModel, cfg: Config):
 
 
 class ParameterReport(TypedDict):
-    """`parameter_report`'s result: totals + per-suffix trainable breakdown."""
+    """`parameter_report`'s result: totals + per-module trainable breakdown."""
 
     total: int
     trainable: int
     pct: float
-    by_suffix: dict[str, int]
+    by_module: dict[str, int]
 
 
 def parameter_report(model: PreTrainedModel) -> ParameterReport:
-    """Total vs trainable parameters + a per-suffix breakdown for teaching."""
+    """Total vs trainable parameters + a per-module breakdown of the trainable ones."""
     from collections import Counter
 
     total = sum(_logical_numel(p) for p in model.parameters())  # logical count (NF4 packs 2/byte)
     trainable = 0
-    by_suffix: Counter[str] = Counter()
+    by_module: Counter[str] = Counter()
     for name, param in model.named_parameters():
         if not param.requires_grad:
             continue
         trainable += param.numel()
-        suffix = name.split(".")[-2] if name.endswith(".weight") else name.split(".")[-1]
-        by_suffix[suffix] += param.numel()
+        parts = name.split(".")
+        # PEFT names the adapter tensors `...<module>.lora_A[.name].weight`
+        lora_at = [i for i, p in enumerate(parts) if p in ("lora_A", "lora_B")]
+        module = parts[lora_at[0] - 1] if lora_at else (parts[-2] if parts[-1] == "weight" else parts[-1])
+        by_module[module] += param.numel()
     return {
         "total": total,
         "trainable": trainable,
         "pct": 100.0 * trainable / max(1, total),
-        "by_suffix": dict(by_suffix.most_common(12)),
+        "by_module": dict(by_module.most_common(12)),
     }
