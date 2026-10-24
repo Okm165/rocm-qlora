@@ -144,9 +144,6 @@ addopts = "-q"
 # torch's own torch.jit.script_method deprecation (reached via bnb ->
 # torch.compile) is emitted 14x at import; hide only that message.
 filterwarnings = ["ignore:.*torch.jit.script_method.*is deprecated.*:DeprecationWarning"]
-markers = [
-    "gpu: tests that require a working ROCm GPU (skipped by default)",
-]
 
 # -----------------------------------------------------------------------------
 # Source distribution: the usable workspace (configs, docs, POC scripts travel

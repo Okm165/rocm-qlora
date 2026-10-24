@@ -294,10 +294,13 @@ def _write_quantization_config(model: PreTrainedModel, cfg: Config) -> None:
 
     The stored config is authoritative at load time (it lists exactly which
     modules are NOT quantized), so derive the skip list from *reality*:
-    every plain Linear that survived surgery, by its module suffix.
+    every plain Linear that survived surgery, by its module suffix. The dict
+    comes from `BitsAndBytesConfig` itself, so a key this project misspells
+    fails here instead of being silently ignored at load time.
     """
     import bitsandbytes as bnb
     import torch
+    from transformers import BitsAndBytesConfig
 
     remaining = sorted(
         {
@@ -306,15 +309,14 @@ def _write_quantization_config(model: PreTrainedModel, cfg: Config) -> None:
             if isinstance(m, torch.nn.Linear) and not isinstance(m, bnb.nn.Linear4bit)
         }
     )
-    model.config.quantization_config = {
-        "load_in_4bit": True,
-        "quant_method": "bitsandbytes",
-        "bnb_4bit_quant_type": cfg.quantization.quant_type,
-        "bnb_4bit_use_double_quant": cfg.quantization.double_quant,
-        "bnb_4bit_compute_dtype": cfg.model.dtype,
-        "bnb_4bit_quant_storage": cfg.quantization.quant_storage,
-        "llm_int8_skip_modules": remaining,
-    }
+    model.config.quantization_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type=cfg.quantization.quant_type,
+        bnb_4bit_use_double_quant=cfg.quantization.double_quant,
+        bnb_4bit_compute_dtype=cfg.model.dtype,
+        bnb_4bit_quant_storage=cfg.quantization.quant_storage,
+        llm_int8_skip_modules=remaining,
+    ).to_dict()
 
 
 def _prepare_meta(model: PreTrainedModel, cfg: Config, requantized: list[str]) -> FinetuneMeta:
