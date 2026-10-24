@@ -2,7 +2,7 @@
 
 Package layout (each module explains itself — see module docstrings):
 
-    config.py     TOML -> validated dataclasses (the single source of truth)
+    config.py     TOML -> validated pydantic models (the single source of truth)
     data.py       ShareGPT loading, validation, splitting, token statistics
     model.py      NF4 pre-quantization + 4-bit model/LoRA assembly + merge
     hardware.py   ROCm/GPU discovery, rocm-smi parsing, SDPA/IPC probes

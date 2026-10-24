@@ -169,7 +169,7 @@ Rejected, with evidence:
 configs/                qwen3.8-27b.toml · qwen3-8b.toml · toy.toml
 src/rocm_qlora/
   cli.py                all commands (doctor, data, prepare, train, report, chat, merge)
-  config.py             TOML → validated dataclasses (strict: typos fail loudly)
+  config.py             TOML → pydantic models (strict: typos and bad types fail loudly)
   data.py               ShareGPT loading, validation, token profiling, previews
   model.py              prepare (NF4 + surgery) · 4-bit load · LoRA · merge
   monitor.py            metrics.jsonl · live dashboard · health checks · summaries
