@@ -464,6 +464,57 @@ def dashboard(
         _watermark(fig, meta)
 
 
+def _length_hist_panel(ax: Axes, srt: Sequence[int], max_length: int) -> None:
+    """Histogram of token lengths with p50/p90/p99 markers and the cap line."""
+    n = len(srt)
+    ax.hist(srt, bins=min(60, max(10, n // 5)), color=COLORS["loss_ema"], alpha=0.85, edgecolor=COLORS["bg"])
+    for q, c in ((50, COLORS["tok"]), (90, COLORS["best"]), (99, COLORS["grad"])):
+        v = percentile(srt, q)
+        ax.axvline(v, color=c, ls="--", lw=1.2)
+        ax.annotate(
+            f"p{q}={v:.0f}",
+            xy=(v, ax.get_ylim()[1]),
+            xytext=(3, -11),
+            textcoords="offset points",
+            fontsize=8,
+            color=c,
+        )
+    ax.axvline(max_length, color=COLORS["fg"], lw=1.6)
+    ax.annotate(
+        f"max_length={max_length}",
+        xy=(max_length, ax.get_ylim()[1] * 0.86),
+        xytext=(5, 0),
+        textcoords="offset points",
+        fontsize=9,
+        color=COLORS["fg"],
+    )
+    ax.set_xlabel("tokens per example (chat-templated)")
+    ax.set_ylabel("examples")
+    ax.set_title("Token length distribution")
+
+
+def _coverage_panel(ax: Axes, srt: Sequence[int], max_length: int) -> None:
+    """Fraction of examples fitting under each candidate sequence cap."""
+    n = len(srt)
+    caps = list(range(128, int(max(srt[-1] * 1.1, 512)) + 128, max(64, int(srt[-1] / 60))))
+    cov = [sum(1 for length in srt if length <= c) / n for c in caps]
+    ax.plot(caps, cov, color=COLORS["tok"], lw=2.0)
+    ax.axvline(max_length, color=COLORS["fg"], lw=1.6)
+    covered = sum(1 for length in srt if length <= max_length) / n
+    ax.annotate(
+        f"{covered * 100:.1f}% covered at {max_length}",
+        xy=(max_length, covered),
+        xytext=(8, -18),
+        textcoords="offset points",
+        fontsize=9,
+        color=COLORS["fg"],
+    )
+    ax.set_ylim(0, 1.02)
+    ax.set_xlabel("candidate max_length")
+    ax.set_ylabel("fraction of examples fitting")
+    ax.set_title("Coverage vs sequence cap")
+
+
 def token_length_hist(
     lengths: Sequence[int], out_path: str | Path, *, max_length: int, meta: dict[str, Any] | None = None
 ) -> None:
@@ -473,49 +524,8 @@ def token_length_hist(
             _no_data(ax)
             return
         srt = sorted(lengths)
-        n = len(srt)
-        ax.hist(srt, bins=min(60, max(10, n // 5)), color=COLORS["loss_ema"], alpha=0.85, edgecolor=COLORS["bg"])
-        for q, c in ((50, COLORS["tok"]), (90, COLORS["best"]), (99, COLORS["grad"])):
-            v = percentile(srt, q)
-            ax.axvline(v, color=c, ls="--", lw=1.2)
-            ax.annotate(
-                f"p{q}={v:.0f}",
-                xy=(v, ax.get_ylim()[1]),
-                xytext=(3, -11),
-                textcoords="offset points",
-                fontsize=8,
-                color=c,
-            )
-        ax.axvline(max_length, color=COLORS["fg"], lw=1.6)
-        ax.annotate(
-            f"max_length={max_length}",
-            xy=(max_length, ax.get_ylim()[1] * 0.86),
-            xytext=(5, 0),
-            textcoords="offset points",
-            fontsize=9,
-            color=COLORS["fg"],
-        )
-        ax.set_xlabel("tokens per example (chat-templated)")
-        ax.set_ylabel("examples")
-        ax.set_title("Token length distribution")
-
-        caps = list(range(128, int(max(srt[-1] * 1.1, 512)) + 128, max(64, int(srt[-1] / 60))))
-        cov = [sum(1 for length in srt if length <= c) / n for c in caps]
-        ax2.plot(caps, cov, color=COLORS["tok"], lw=2.0)
-        ax2.axvline(max_length, color=COLORS["fg"], lw=1.6)
-        covered = sum(1 for length in srt if length <= max_length) / n
-        ax2.annotate(
-            f"{covered * 100:.1f}% covered at {max_length}",
-            xy=(max_length, covered),
-            xytext=(8, -18),
-            textcoords="offset points",
-            fontsize=9,
-            color=COLORS["fg"],
-        )
-        ax2.set_ylim(0, 1.02)
-        ax2.set_xlabel("candidate max_length")
-        ax2.set_ylabel("fraction of examples fitting")
-        ax2.set_title("Coverage vs sequence cap")
+        _length_hist_panel(ax, srt, max_length)
+        _coverage_panel(ax2, srt, max_length)
         _watermark(fig, meta)
 
 

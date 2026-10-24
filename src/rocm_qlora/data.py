@@ -193,6 +193,29 @@ class TokenProfile:
         return sum(1 for length in self.lengths if length <= cap) / len(self.lengths)
 
 
+def _token_count(
+    tokenizer: PreTrainedTokenizerBase, messages: list[ChatMessage], template_kwargs: dict[str, Any] | None
+) -> int:
+    """Chat-templated token count for one example (~3.6 chars/token on failure)."""
+    try:
+        ids: Any = tokenizer.apply_chat_template(  # dynamic union; normalized just below
+            cast("list[dict[str, str]]", messages),  # TypedDict rows are plain dicts
+            tokenize=True,
+            add_generation_prompt=False,
+            **(template_kwargs or {}),
+        )
+        # transformers v5 may return a BatchEncoding/dict, a tensor, or a list.
+        if isinstance(ids, dict) or hasattr(ids, "input_ids"):
+            ids = ids["input_ids"]
+        if hasattr(ids, "tolist"):
+            ids = ids.tolist()
+        while ids and isinstance(ids[0], list):  # strip batch dims
+            ids = ids[0]
+        return len(ids)
+    except Exception:
+        return int(len("".join(m["content"] for m in messages)) / 3.6)
+
+
 def profile_tokens(
     tokenizer: PreTrainedTokenizerBase,
     examples: list[dict[str, list[ChatMessage]]],
@@ -208,29 +231,7 @@ def profile_tokens(
     ``max_length``. The profiler measures the rendered conversation *including* the
     assistant turn (i.e., exactly what the model is trained on).
     """
-    lengths: list[int] = []
-    for item in examples:
-        try:
-            ids: Any = tokenizer.apply_chat_template(  # dynamic union; normalized just below
-                cast("list[dict[str, str]]", item[messages_field]),  # TypedDict rows are plain dicts
-                tokenize=True,
-                add_generation_prompt=False,
-                **(template_kwargs or {}),
-            )
-            # transformers v5 may return a BatchEncoding/dict, a tensor, or a list.
-            if isinstance(ids, dict) or hasattr(ids, "input_ids"):
-                ids = ids["input_ids"]
-            if hasattr(ids, "tolist"):
-                ids = ids.tolist()
-            while ids and isinstance(ids[0], list):  # strip batch dims
-                ids = ids[0]
-            lengths.append(len(ids))
-        except Exception:
-            # Fall back to a character heuristic (~3.6 chars/token) rather
-            # than failing the whole profile.
-            text = "".join(m["content"] for m in item[messages_field])
-            lengths.append(int(len(text) / 3.6))
-    lengths.sort()
+    lengths = sorted(_token_count(tokenizer, item[messages_field], template_kwargs) for item in examples)
     return TokenProfile(
         lengths=lengths,
         n_truncated=sum(1 for length in lengths if length > max_length),

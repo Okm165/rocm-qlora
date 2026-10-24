@@ -23,6 +23,7 @@ import os
 import time
 import traceback
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
@@ -41,14 +42,24 @@ if TYPE_CHECKING:
 
     from .data import ChatMessage, DatasetStats, TokenProfile
     from .explain import ExplainerBook
-    from .monitor import GpuSampler, MetricsCallback, MetricsWriter, RichDashboard, RunSummary
+    from .monitor import GpuSampler, MetricsCallback, MetricsRecord, MetricsWriter, RichDashboard, RunSummary
 
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+@dataclass(frozen=True)
+class WorkerArgs:
+    """The worker's launch contract (what the parent ``train`` command sends)."""
+
+    run_dir: Path
+    dry_run: bool
+    max_steps: int | None
+    resume: str | None
+
+
+def parse_args(argv: list[str] | None = None) -> WorkerArgs:
     """Worker CLI: --run-dir, --dry-run, --max-steps, --resume."""
     parser = argparse.ArgumentParser(description="rocm-qlora training worker")
     parser.add_argument("--run-dir", required=True, help="Run directory containing config.resolved.json")
@@ -59,7 +70,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Checkpoint directory to resume from (optimizer/scheduler/step state included)",
     )
-    return parser.parse_args(argv)
+    ns = parser.parse_args(argv)
+    return WorkerArgs(run_dir=Path(ns.run_dir), dry_run=ns.dry_run, max_steps=ns.max_steps, resume=ns.resume)
 
 
 # ---------------------------------------------------------------------------
@@ -209,9 +221,7 @@ class _TrainingData(NamedTuple):
     total_tokens_estimate: int
 
 
-def _load_training_data(
-    cfg: Config, args: argparse.Namespace, *, ui: _Rank0UI | None, logger: logging.Logger
-) -> _TrainingData:
+def _load_training_data(cfg: Config, args: WorkerArgs, *, ui: _Rank0UI | None, logger: logging.Logger) -> _TrainingData:
     """Phase 1: tokenizer + chat template, dataset load/split/profile, rank-0 summary."""
     from .data import load_sharegpt, profile_tokens, split_dataset, to_hf_dataset
     from .model import load_tokenizer
@@ -398,10 +408,29 @@ def _render_charts(*args: Any, **kwargs: Any) -> None:
     render_charts(*args, **kwargs)
 
 
+def _make_callback(
+    cfg: Config, run_dir: Path, data: _TrainingData, *, ui: _Rank0UI, world_size: int
+) -> MetricsCallback:
+    """The rank-0 observability callback (charts render in a side thread)."""
+    from .monitor import MetricsCallback
+
+    return MetricsCallback(
+        cfg,
+        run_dir,
+        console=ui.console,
+        dashboard=ui.dashboard,
+        sampler=ui.sampler,
+        writer=ui.writer,
+        total_tokens_estimate=data.total_tokens_estimate,
+        world_size=world_size,
+        chart_renderer=_render_charts,
+    )
+
+
 def _build_trainer(
     cfg: Config,
     run_dir: Path,
-    args: argparse.Namespace,
+    args: WorkerArgs,
     *,
     data: _TrainingData,
     model: PreTrainedModel | PeftModel,
@@ -423,23 +452,8 @@ def _build_trainer(
             f"{cfg.optim.grad_accum} (accum) × {world_size} (GPUs) = [bold]{eff}[/bold] sequences/step[/dim]"
         )
 
-    callbacks = []
-    metrics_callback = None
-    if ui is not None:  # ui exists exactly on rank 0
-        from .monitor import MetricsCallback
-
-        metrics_callback = MetricsCallback(
-            cfg,
-            run_dir,
-            console=ui.console,
-            dashboard=ui.dashboard,
-            sampler=ui.sampler,
-            writer=ui.writer,
-            total_tokens_estimate=data.total_tokens_estimate,
-            world_size=world_size,
-            chart_renderer=_render_charts,
-        )
-        callbacks = [metrics_callback]
+    metrics_callback = _make_callback(cfg, run_dir, data, ui=ui, world_size=world_size) if ui is not None else None
+    callbacks = [metrics_callback] if metrics_callback is not None else []
 
     if world_size > 1:
         _skip_redundant_init_sync(logger.info)
@@ -460,7 +474,7 @@ def _build_trainer(
 def _train_and_save(
     cfg: Config,
     run_dir: Path,
-    args: argparse.Namespace,
+    args: WorkerArgs,
     trainer: SFTTrainer,
     *,
     data: _TrainingData,
@@ -533,7 +547,7 @@ def _report_failure(
 def main(argv: list[str] | None = None) -> None:
     """Worker entry: data → model → trainer → train → finalize (rank 0 owns the UI)."""
     args = parse_args(argv)
-    run_dir = Path(args.run_dir).resolve()
+    run_dir = args.run_dir.resolve()
     cfg = Config.from_dict(json.loads((run_dir / "config.resolved.json").read_text()))
 
     rank = int(os.environ.get("RANK", 0))
@@ -603,28 +617,15 @@ def _finalize_run(
     dry_run: bool,
 ) -> None:
     """Rank-0 end of run: summary.json, run_end event, charts, report, wrap-up."""
-    from .monitor import summarize
     from .plots import render_charts, write_report
 
     ui.dashboard.update(phase="finalizing")
     ui.dashboard.stop()
 
     records = metrics_callback.records if metrics_callback else []
-    summary = summarize(records)
-    summary.total_seconds = time.monotonic() - start_time
-    summary.run_dir = str(run_dir)
-    summary.adapter_dir = str(adapter_dir)
-    summary.model = cfg.model.name
-    summary.dataset = cfg.data.path
-    summary.effective_batch = cfg.optim.per_device_batch_size * cfg.optim.grad_accum * world_size
-    summary.world_size = world_size
-    summary.max_length = cfg.data.max_length
-    summary.lora_r = cfg.lora.r
-    summary.lr = cfg.optim.lr
-    summary.epochs = cfg.optim.epochs
-    summary.loss_type = cfg.optim.loss_type
-    summary.dry_run = dry_run
-    write_json(run_dir / "summary.json", summary.to_dict())
+    summary = _write_summary(
+        cfg, run_dir, adapter_dir, records, start_time=start_time, world_size=world_size, dry_run=dry_run
+    )
     if ui.writer:
         from .monitor import RunEndRecord
 
@@ -651,6 +652,37 @@ def _finalize_run(
     write_report(run_dir)
 
     _print_wrapup(ui.console, run_dir, summary, dry_run=dry_run)
+
+
+def _write_summary(
+    cfg: Config,
+    run_dir: Path,
+    adapter_dir: Path,
+    records: list[MetricsRecord],
+    *,
+    start_time: float,
+    world_size: int,
+    dry_run: bool,
+) -> RunSummary:
+    """Assemble the end-of-run numbers with their config context and persist summary.json."""
+    from .monitor import summarize
+
+    summary = summarize(records)
+    summary.total_seconds = time.monotonic() - start_time
+    summary.run_dir = str(run_dir)
+    summary.adapter_dir = str(adapter_dir)
+    summary.model = cfg.model.name
+    summary.dataset = cfg.data.path
+    summary.effective_batch = cfg.optim.per_device_batch_size * cfg.optim.grad_accum * world_size
+    summary.world_size = world_size
+    summary.max_length = cfg.data.max_length
+    summary.lora_r = cfg.lora.r
+    summary.lr = cfg.optim.lr
+    summary.epochs = cfg.optim.epochs
+    summary.loss_type = cfg.optim.loss_type
+    summary.dry_run = dry_run
+    write_json(run_dir / "summary.json", summary.to_dict())
+    return summary
 
 
 # ---------------------------------------------------------------------------
