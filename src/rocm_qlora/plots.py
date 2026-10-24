@@ -217,6 +217,34 @@ def loss_curve(
         _watermark(fig, meta)
 
 
+def _lr_series(ax: Axes, train: Sequence[TrainRecord], *, label: str | None = None) -> None:
+    """Learning-rate line (sci-notation y-axis), shared by chart and dashboard."""
+    recs = [r for r in train if r.get("lr") is not None]
+    ax.plot([r["step"] for r in recs], [as_float(r["lr"]) for r in recs], color=COLORS["lr"], lw=2.0, label=label)
+    ax.ticklabel_format(axis="y", style="sci", scilimits=(-2, 2))
+
+
+def _tok_series(ax: Axes, train: Sequence[TrainRecord], *, label: str | None = None) -> None:
+    """Tokens/s line, shared by chart and dashboard."""
+    recs = [r for r in train if r.get("tok_per_s")]
+    ax.plot(
+        [r["step"] for r in recs], [as_float(r["tok_per_s"]) for r in recs], color=COLORS["tok"], lw=1.8, label=label
+    )
+
+
+def _vram_series(ax: Axes, train: Sequence[TrainRecord]) -> None:
+    """Per-GPU VRAM lines, shared by chart and dashboard."""
+    for gi in range(len(train[-1]["gpu"])):
+        total = (train[-1]["gpu"][gi] or {}).get("mem_total_gb")
+        ax.plot(
+            [r["step"] for r in train],
+            _gpu_field(train, gi, "mem_used_gb"),
+            color=COLORS["gpus"][gi % len(COLORS["gpus"])],
+            lw=1.6,
+            label=f"GPU {gi}" + (f" (of {total:.0f} GB)" if total else ""),
+        )
+
+
 def lr_schedule(records: Sequence[MetricsRecord], out_path: str | Path, *, meta: dict[str, Any] | None = None) -> None:
     """Learning-rate schedule chart."""
     train = [r for r in select(records, "train") if r.get("lr") is not None]
@@ -224,12 +252,11 @@ def lr_schedule(records: Sequence[MetricsRecord], out_path: str | Path, *, meta:
         if not train:
             _no_data(ax)
             return
-        ax.plot([r["step"] for r in train], [r["lr"] for r in train], color=COLORS["lr"], lw=2.0)
+        _lr_series(ax, train)
         _warmup_span(ax, meta, train[0]["step"])
         ax.set_xlabel("optimizer step")
         ax.set_ylabel("learning rate")
         ax.set_title("Learning-rate schedule")
-        ax.ticklabel_format(axis="y", style="sci", scilimits=(-2, 2))
         _watermark(fig, meta)
 
 
@@ -270,7 +297,7 @@ def throughput(records: Sequence[MetricsRecord], out_path: str | Path, *, meta: 
             _no_data(ax)
             return
         steps = [r["step"] for r in train]
-        ax.plot(steps, [r["tok_per_s"] for r in train], color=COLORS["tok"], lw=1.8, label="tokens/s (all GPUs)")
+        _tok_series(ax, train, label="tokens/s (all GPUs)")
         ax.set_xlabel("optimizer step")
         ax.set_ylabel("tokens / second")
         if any(r.get("tokens_seen") for r in train):
@@ -297,17 +324,7 @@ def vram(records: Sequence[MetricsRecord], out_path: str | Path, *, meta: dict[s
         if not train:
             _no_data(ax)
             return
-        steps = [r["step"] for r in train]
-        n_gpus = len(train[-1]["gpu"])
-        for gi in range(n_gpus):
-            total = (train[-1]["gpu"][gi] or {}).get("mem_total_gb")
-            ax.plot(
-                steps,
-                _gpu_field(train, gi, "mem_used_gb"),
-                color=COLORS["gpus"][gi % len(COLORS["gpus"])],
-                lw=1.6,
-                label=f"GPU {gi}" + (f" (of {total:.0f} GB)" if total else ""),
-            )
+        _vram_series(ax, train)
         ax.set_xlabel("optimizer step")
         ax.set_ylabel("VRAM used (GB)")
         ax.set_title("VRAM per GPU")
@@ -386,8 +403,7 @@ def _panel_lr(ax: Axes, train: Sequence[TrainRecord]) -> None:
     if not lr_recs:
         _no_data(ax)
         return
-    ax.plot([r["step"] for r in lr_recs], [as_float(r["lr"]) for r in lr_recs], color=COLORS["lr"], lw=2.0)
-    ax.ticklabel_format(axis="y", style="sci", scilimits=(-2, 2))
+    _lr_series(ax, lr_recs)
     ax.set_title("learning rate")
 
 
@@ -397,7 +413,7 @@ def _panel_throughput(ax: Axes, train: Sequence[TrainRecord]) -> None:
     if not tput:
         _no_data(ax)
         return
-    ax.plot([r["step"] for r in tput], [as_float(r["tok_per_s"]) for r in tput], color=COLORS["tok"], lw=1.8)
+    _tok_series(ax, tput)
     ax.set_title("tokens/s")
     ax.set_xlabel("step")
 
@@ -408,14 +424,7 @@ def _panel_vram(ax: Axes, train: Sequence[TrainRecord]) -> None:
     if not gpu_recs:
         _no_data(ax)
         return
-    for gi in range(len(gpu_recs[-1]["gpu"])):
-        ax.plot(
-            [r["step"] for r in gpu_recs],
-            _gpu_field(gpu_recs, gi, "mem_used_gb"),
-            color=COLORS["gpus"][gi % len(COLORS["gpus"])],
-            lw=1.5,
-            label=f"GPU {gi}",
-        )
+    _vram_series(ax, gpu_recs)
     ax.legend(loc="upper left", ncols=3)
     ax.set_title("VRAM used (GB)")
     ax.set_xlabel("step")
