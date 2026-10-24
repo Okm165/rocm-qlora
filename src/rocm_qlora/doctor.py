@@ -1,6 +1,6 @@
 """`rocm-qlora doctor` — environment + hardware report with GPU probes.
 
-Writes ``.context/doctor-latest.{json,md}``: the artifact the train launcher
+Writes ``.context/doctor-latest.json``: the artifact the train launcher
 reads to pick attention settings and AOTriton flags.
 """
 
@@ -111,7 +111,7 @@ def _probe_hip_ipc() -> HipIpcProbe:
     from .probes import probe_hip_ipc
 
     ipc = probe_hip_ipc()
-    if ipc.get("ipc_ok"):
+    if ipc.get("ok"):
         console.print("RCCL IPC handles (hipIpcGetMemHandle, dma-buf mode): [green]✓[/green] → P2P collectives enabled")
     else:
         console.print(
@@ -147,7 +147,7 @@ def _doctor_probes(args: argparse.Namespace) -> DoctorVerdict:
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
-    """Run the environment doctor; writes .context/doctor-latest.{json,md}."""
+    """Run the environment doctor; writes .context/doctor-latest.json."""
     from .hardware import cpu_info, gpu_snapshot, host_memory, package_versions, torch_runtime_info
 
     context_dir = Path(".context")

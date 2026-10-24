@@ -7,7 +7,8 @@ command before launch), then:
     2. loads the prepared NF4 checkpoint onto its GPU
     3. freezes / casts / enables gradient checkpointing, attaches LoRA
     4. builds SFTConfig + SFTTrainer with the observability callbacks
-    5. trains, saves the adapter, writes summary + charts + report
+    5. trains, saves the adapter, then renders charts + the Markdown report
+       from the metrics stream
 
 Rank discipline: rank 0 owns the terminal UI, metrics.jsonl, charts and the
 report. Other ranks log warnings to their own file and stay quiet.
@@ -434,7 +435,7 @@ def main(argv: list[str] | None = None) -> None:
     torch.cuda.set_device(local_rank)
 
     start_time = time.monotonic()
-    ui = rank0_ui(cfg, run_dir, world_size, enabled=is_main)
+    ui = rank0_ui(cfg, run_dir, enabled=is_main)
 
     try:
         data = _load_training_data(cfg, args, ui=ui, logger=logger)

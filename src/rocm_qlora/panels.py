@@ -36,7 +36,7 @@ def kv_table() -> Table:
     return table
 
 
-def rank0_ui(cfg: Config, run_dir: Path, world_size: int, *, enabled: bool) -> Rank0UI | None:
+def rank0_ui(cfg: Config, run_dir: Path, *, enabled: bool) -> Rank0UI | None:
     """Console, GPU sampler, metrics writer, live dashboard.
 
     Rank 0 only; non-zero ranks get `None` and log to their own rank file
@@ -54,8 +54,6 @@ def rank0_ui(cfg: Config, run_dir: Path, world_size: int, *, enabled: bool) -> R
     writer = MetricsWriter(run_dir / "metrics.jsonl")
     dashboard = RichDashboard(console, refresh_per_second=cfg.run.console_refresh_per_second)
     dashboard.state.run_name = run_dir.name
-    dashboard.state.model = cfg.model.name.split("/")[-1]
-    dashboard.state.world_size = world_size
     dashboard.update(phase="loading data")
     return Rank0UI(console, sampler, writer, dashboard)
 

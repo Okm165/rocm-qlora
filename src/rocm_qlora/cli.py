@@ -27,10 +27,10 @@ from rich.table import Table
 from . import __version__
 from .config import Config, ConfigError
 from .doctor import cmd_doctor
-from .utils import fmt_int, human_bytes, human_duration, timestamp_slug, write_json
+from .utils import fmt_int, human_bytes, human_duration, timestamp_slug
 
 if TYPE_CHECKING:
-    from .data import DataProfile, DatasetStats, Percentiles, TokenProfile
+    from .data import DatasetStats, Percentiles, TokenProfile
 
 DEFAULT_CONFIG = "configs/qwen3.8-27b.toml"
 console = Console()
@@ -121,20 +121,17 @@ def _print_token_table(cfg: Config, profile: TokenProfile, pcts: Percentiles) ->
     console.print(ttable)
 
 
-def _print_max_length_hint(cfg: Config, pcts: Percentiles) -> int:
-    """Suggest a max_length at p99 (rounded to 128); returns the suggestion."""
+def _print_max_length_hint(cfg: Config, pcts: Percentiles) -> None:
+    """Suggest a max_length at p99 (rounded to 128)."""
     suggestion = int(round(pcts.p99 / 128) * 128)
     console.print(
         f"[dim]hint: for ≥99% coverage set data.max_length ≈ [bold]{suggestion}[/bold] "
         f"(current: {cfg.data.max_length})[/dim]"
     )
-    return suggestion
 
 
-def _write_profile_artifacts(
-    cfg: Config, profile: TokenProfile, stats: DatasetStats, pcts: Percentiles, suggestion: int
-) -> Path:
-    """Chart + profile.json under <output_root>/data-profile/<timestamp>."""
+def _write_profile_chart(cfg: Config, profile: TokenProfile) -> Path:
+    """Token-length histogram under <output_root>/data-profile/<timestamp>."""
     from .plots import token_length_hist
 
     out_dir = Path(cfg.run.output_root) / "data-profile" / timestamp_slug()
@@ -145,22 +142,11 @@ def _write_profile_artifacts(
         max_length=cfg.data.max_length,
         meta={"run_name": "data-profile"},
     )
-    payload: DataProfile = {
-        "n_examples": stats.n_examples,
-        "percentiles": asdict(pcts),
-        "coverage_at_max_length": profile.coverage_at(cfg.data.max_length),
-        "max_length": cfg.data.max_length,
-        "truncated": profile.n_truncated,
-        "total_tokens": profile.total_tokens,
-        "suggested_max_length_p99": suggestion,
-        "think_blocks": stats.think_blocks,
-    }
-    write_json(out_dir / "profile.json", payload)
     return out_dir
 
 
 def cmd_data(args: argparse.Namespace) -> int:
-    """Profile the dataset (tokens, coverage, truncation) and save the report."""
+    """Profile the dataset (tokens, coverage, truncation) and plot the histogram."""
     from .data import load_sharegpt, profile_tokens, render_preview
     from .model import load_tokenizer
 
@@ -177,9 +163,9 @@ def cmd_data(args: argparse.Namespace) -> int:
     )
     pcts = profile.percentiles()
     _print_token_table(cfg, profile, pcts)
-    suggestion = _print_max_length_hint(cfg, pcts)
+    _print_max_length_hint(cfg, pcts)
 
-    out_dir = _write_profile_artifacts(cfg, profile, stats, pcts, suggestion)
+    out_dir = _write_profile_chart(cfg, profile)
 
     console.print(
         Panel(

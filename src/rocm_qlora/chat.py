@@ -22,6 +22,7 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 
 from .config import Config
+from .data import ChatMessage
 
 if TYPE_CHECKING:
     from transformers import GenerationConfig, PreTrainedModel, PreTrainedTokenizerBase
@@ -89,7 +90,7 @@ def _print_banner(console: Console) -> None:
 
 
 def _apply_command(
-    user: str, gen: GenerationConfig, *, think: bool, history: list[dict[str, str]], console: Console
+    user: str, gen: GenerationConfig, *, think: bool, history: list[ChatMessage], console: Console
 ) -> tuple[bool, bool]:
     """Handle a /command in place; returns ``(consumed, think)``."""
     if user == "/reset":
@@ -119,13 +120,17 @@ def _apply_command(
     return False, think
 
 
-def _build_prompt(tokenizer: PreTrainedTokenizerBase, history: list[dict[str, str]], think: bool) -> str:
+def _build_prompt(tokenizer: PreTrainedTokenizerBase, history: list[ChatMessage], think: bool) -> str:
     """Chat-template the history, tolerating templates without thinking kwargs."""
     template_kwargs: dict[str, Any] = {"enable_thinking": think}
     try:
-        rendered = tokenizer.apply_chat_template(history, tokenize=False, add_generation_prompt=True, **template_kwargs)
+        rendered = tokenizer.apply_chat_template(  # TypedDict rows are plain dicts
+            cast("list[dict[str, str]]", history), tokenize=False, add_generation_prompt=True, **template_kwargs
+        )
     except TypeError:
-        rendered = tokenizer.apply_chat_template(history, tokenize=False, add_generation_prompt=True)
+        rendered = tokenizer.apply_chat_template(
+            cast("list[dict[str, str]]", history), tokenize=False, add_generation_prompt=True
+        )
     return cast("str", rendered)  # tokenize=False ⟹ str
 
 
@@ -186,7 +191,7 @@ def run_chat(
         pad_token_id=tokenizer.pad_token_id,
     )
     think = True
-    history: list[dict[str, str]] = []
+    history: list[ChatMessage] = []
     _print_banner(console)
 
     while True:

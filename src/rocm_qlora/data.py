@@ -39,19 +39,6 @@ class ChatMessage(TypedDict):
     content: str
 
 
-class DataProfile(TypedDict):
-    """The ``profile.json`` artifact written by the ``rocm-qlora data`` command."""
-
-    n_examples: int
-    percentiles: dict[str, float]
-    coverage_at_max_length: float
-    max_length: int
-    truncated: int
-    total_tokens: int
-    suggested_max_length_p99: int
-    think_blocks: int
-
-
 @dataclass(frozen=True)
 class Percentiles:
     """The five-point length profile used to choose ``max_length``."""

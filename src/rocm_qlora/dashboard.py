@@ -30,8 +30,6 @@ from .utils import fmt_eta, fmt_float, fmt_int, human_duration, safe_div
 @dataclass
 class DashboardState:
     run_name: str = ""
-    model: str = ""
-    world_size: int = 1
     step: int = 0
     max_steps: int = 0
     epoch: float = 0.0
@@ -114,7 +112,7 @@ class RichDashboard:
             metrics.add_row("eval loss", f"[orange1]{fmt_float(s.eval_loss)}[/orange1]")
         metrics.add_row("lr", f"{s.lr:.3e}" if s.lr is not None else "n/a")
         metrics.add_row("grad norm", fmt_float(s.grad_norm, 3))
-        metrics.add_row("throughput", f"{fmt_int(s.tok_per_s)} tok/s · {fmt_float(s.samples_per_s, 2)} samp/s")
+        metrics.add_row("throughput", f"{fmt_int(s.tok_per_s)} tok/s · {fmt_float(s.samples_per_s, 2)} samples/s")
         metrics.add_row(
             "tokens seen",
             fmt_int(s.tokens_seen) + (f" / ~{fmt_int(s.total_tokens_estimate)}" if s.total_tokens_estimate else ""),

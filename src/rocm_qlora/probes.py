@@ -57,7 +57,6 @@ def _run_probe(
     timeout: float,
     *,
     python_exe: str | None = None,
-    ok_key: str = "ok",
 ) -> Any:
     """Run one probe script in a fresh process; returns its parsed JSON line or an error dict.
 
@@ -75,11 +74,11 @@ def _run_probe(
         lines = [ln for ln in proc.stdout.splitlines() if ln.startswith("{")]
         if lines:
             return json.loads(lines[-1])
-        return {ok_key: False, "error": (proc.stderr.strip().splitlines() or ["no output"])[-1]}
+        return {"ok": False, "error": (proc.stderr.strip().splitlines() or ["no output"])[-1]}
     except subprocess.TimeoutExpired:
-        return {ok_key: False, "error": "timeout"}
+        return {"ok": False, "error": "timeout"}
     except Exception as exc:
-        return {ok_key: False, "error": str(exc)}
+        return {"ok": False, "error": str(exc)}
 
 
 def _sdpa_probe_env(env_mode: str) -> dict[str, str]:
@@ -115,9 +114,13 @@ def _sdpa_verdict(backends: dict[str, Any]) -> tuple[str, str]:
 
 
 class SdpaBackendResult(TypedDict, total=False):
-    """One backend's probe outcome (parsed from the subprocess JSON)."""
+    """One backend's probe outcome — the complete subprocess JSON payload."""
 
+    backend: str
+    env_aotriton: str
     ok: bool
+    out_sum: float
+    sanity: float
     error: str
 
 
@@ -130,9 +133,12 @@ class SdpaProbe(TypedDict):
 
 
 class HipIpcProbe(TypedDict, total=False):
-    """`probe_hip_ipc`'s result — the ``hip_ipc`` section of doctor-latest.json."""
+    """`probe_hip_ipc`'s result — the complete subprocess JSON payload."""
 
-    ipc_ok: bool
+    alloc_rc: int
+    ipc_rc: int
+    ok: bool
+    ipc_mode_legacy: str
     error: str
 
 
@@ -185,7 +191,7 @@ err = lib.hipGetErrorName(rc2).decode() if rc2 else None
 print(json.dumps({
     "alloc_rc": rc,
     "ipc_rc": rc2,
-    "ipc_ok": rc2 == 0,
+    "ok": rc2 == 0,
     "error": err,
     "ipc_mode_legacy": os.environ.get("HSA_ENABLE_IPC_MODE_LEGACY", "<unset>"),
 }))
@@ -203,7 +209,7 @@ def probe_hip_ipc(python_exe: str | None = None, timeout: float = 120.0) -> HipI
     """
     env = dict(os.environ)
     env["HSA_ENABLE_IPC_MODE_LEGACY"] = "0"
-    return _run_probe(_HIP_IPC_PROBE, [], env, timeout, python_exe=python_exe, ok_key="ipc_ok")
+    return _run_probe(_HIP_IPC_PROBE, [], env, timeout, python_exe=python_exe)
 
 
 def matmul_benchmark(dtype_name: str = "bfloat16", size: int = 8192, iters: int = 20, warmup: int = 5) -> MatmulBench:
