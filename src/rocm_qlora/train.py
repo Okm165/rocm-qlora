@@ -101,18 +101,12 @@ def setup_logging(run_dir: Path, rank: int) -> logging.Logger:
 def _skip_redundant_init_sync(log: Callable[[str], None]) -> None:
     """Disable DDP's initial parameter broadcast (safe *by construction* here).
 
-    DDP broadcasts all module states from rank 0 at construction so replicas
-    start identical. That broadcast coalesces the 16-bit parameters into one
-    transient buffer — measured at ~4.9 GiB for this model (the fp16
-    embed_tokens + lm_head pair), which does not fit on a 24 GB card next to
-    the ~19 GiB of loaded weights (it OOMs before the first step).
-
-    The broadcast is redundant in this project: every rank loads the *same*
-    prepared checkpoint from disk, takes the *same* code path, and (with a
-    shared seed) initializes LoRA identically — the replicas are bit-identical
-    by construction. `torch.nn.parallel.distributed` is patched at its
-    module-level binding; if a future torch renames it, this silently no-ops
-    and the original broadcast (and its loud OOM) returns.
+    The broadcast coalesces the 16-bit parameters into one ~4.9 GiB transient
+    buffer (fp16 embed_tokens + lm_head), which OOMs a 24 GB card next to the
+    loaded weights. It is redundant: every rank loads the same prepared
+    checkpoint and initializes LoRA with the same seed, so the replicas are
+    bit-identical by construction. If a future torch renames the patched
+    binding, this silently no-ops and the broadcast (and its OOM) returns.
     """
     import torch.nn.parallel.distributed as ddp_mod
 
@@ -334,11 +328,7 @@ def _build_model(
     report = parameter_report(cast("PreTrainedModel", model))  # pyright: ignore[reportInvalidCast]  # PeftModel forwards to the base
 
     # --- optional numerical diagnostics (env-gated) ----------------------
-    # Both exist because of a real failure mode: a run can hit a step with
-    # a finite loss but NaN gradients; DDP then spreads the NaN to every
-    # rank, the optimizer poisons the weights, and from then on the fused
-    # loss reports exactly 0.0 (zero on ignored positions) while the EMA
-    # keeps "improving". The on_log guard aborts, but *these* pinpoint.
+    # For the finite-loss/NaN-gradient failure mode: see health_violation.
     if os.environ.get("ROCM_QLORA_DETECT_ANOMALY") == "1":
         torch.autograd.set_detect_anomaly(True)
         logger.info("autograd anomaly detection ON — the first NaN-producing op will raise with a traceback")

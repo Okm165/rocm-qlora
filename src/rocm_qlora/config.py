@@ -81,8 +81,7 @@ class DataConfig:
     max_length: int = 1024
     #: How over-long sequences are cut (keep_start).
     truncation_mode: str = "keep_start"
-    #: See explainer "packing" — correctness hazard without document-aware
-    #: attention; off by default.
+    #: Correctness hazard without document-aware attention; off by default.
     packing: bool = False
     #: Sequence packing strategy when data.packing is on.
     packing_strategy: str = "bfd_split"

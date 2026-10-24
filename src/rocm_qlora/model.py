@@ -317,13 +317,11 @@ def _prepare_meta(model: PreTrainedModel, cfg: Config, requantized: list[str]) -
 def _save_prepared(model: PreTrainedModel, out_dir: Path, *, log: Callable[[str], None]) -> None:
     """save_pretrained with a fallback for non-reversible weight conversions.
 
-    transformers v5 replays the checkpoint->model weight conversions in
-    reverse when saving. Some VLM checkpoints (Qwen3.8 included) carry
-    vision-side conversions without a reverse implementation, which makes the
-    plain save fail with NotImplementedError. Vision tensors are unused for
-    text-only training, so dropping the non-reversible conversions is safe —
-    and the training dry-run (which reloads the checkpoint) verifies the
-    text-side round-trip end to end.
+    transformers v5 replays checkpoint->model conversions in reverse when
+    saving; some VLM checkpoints carry vision-side conversions without a
+    reverse, failing the plain save. Vision tensors are unused for text-only
+    training, so dropping the non-reversible conversions is safe (the dry-run
+    reload verifies the text-side round-trip).
     """
     try:
         model.save_pretrained(out_dir, max_shard_size="4GB")
@@ -483,11 +481,8 @@ def load_model_for_training(cfg: Config, *, local_rank: int = 0, attn: str | Non
     model.config.use_cache = False
 
     # --- drop the (unused) vision tower -------------------------------------
-    # Text-only training never touches `model.model.visual` (it is only
-    # reachable via pixel_values). Dropping it frees ~0.7 GiB per GPU and,
-    # critically at 27B scale, shrinks the initial DDP parameter broadcast —
-    # which otherwise needs a ~4.9 GiB transient buffer (the fp16
-    # embed_tokens + lm_head pair) on a 24 GB card.
+    # Text-only training never touches it; dropping it frees ~0.7 GiB per GPU
+    # and shrinks the initial DDP parameter broadcast.
     if hasattr(model, "model") and getattr(model.model, "visual", None) is not None:
         model.model.visual = None
         import gc

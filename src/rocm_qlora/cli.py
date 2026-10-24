@@ -692,9 +692,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    # Silence the torch-wheel libdrm "(null): No such file or directory" spam:
-    # it looks for the ASIC-ID table only under /opt/amdgpu/share/libdrm.
-    # Point it at the system table; the workers inherit this via build_worker_env.
+    # Point the torch wheel's libdrm at the system ASIC-ID table (silences a
+    # per-GPU stderr flood at HIP init; workers inherit it via build_worker_env).
     """Parse arguments and dispatch to the selected command."""
     import os
 
