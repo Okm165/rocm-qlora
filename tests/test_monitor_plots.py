@@ -34,6 +34,7 @@ def synth_records(n=60, epochs=3):
             "elapsed_s": i * 2.0,
             "eta_s": (n - i) * 2.0,
             "vram_peak_gb": 19.5,
+            "world_size": 3,
             "gpu": [
                 {
                     "index": g,
@@ -61,6 +62,18 @@ def synth_records(n=60, epochs=3):
             )
     records.append({"type": "event", "level": "info", "event": "train_start", "step": 0})
     records.append({"type": "event", "level": "warn", "event": "grad_spike", "step": 30, "value": 9.9})
+    records.append(
+        {
+            "type": "run_end",
+            "total_seconds": n * 2.0,
+            "steps": n,
+            "best_loss": 0.05,
+            "best_eval_loss": 0.15,
+            "tokens_seen": n * 4096,
+            "world_size": 3,
+            "dry_run": True,
+        }
+    )
     return records
 
 
@@ -117,6 +130,9 @@ def test_metrics_roundtrip_and_summary(tmp_path):
     assert summary.first_loss > summary.last_loss
     assert summary.best_eval_loss is not None
     assert summary.peak_vram_gb == 19.5
+    # world size + dry-run come from the stream itself (run_end record)
+    assert summary.world_size == 3
+    assert summary.dry_run is True
 
 
 def test_truncated_last_line_tolerated(tmp_path):
@@ -143,23 +159,12 @@ def test_render_charts_and_report(tmp_path):
     # live subset is smaller and cheap
     live = render_charts(tmp_path, records=records, meta=meta, live=True)
     assert {p.name for p in live} == {"dashboard.png", "loss.png"}
-    # report builds from the same records
-    (tmp_path / "summary.json").write_text("{}")
+    # the report derives from the stream alone — write it, then report
+    writer = MetricsWriter(tmp_path / "metrics.jsonl")
+    for r in records:
+        writer.write(r)
+    writer.close()
     report = write_report(tmp_path)
     text = report.read_text()
     assert "Headline numbers" in text and "loss.png" in text
-
-
-def test_run_summary_round_trip():
-    """summary.json is a typed round-trip: RunSummary -> dict -> RunSummary."""
-    from rocm_qlora.monitor import RunSummary
-
-    records = synth_records(n=30)
-    summary = summarize(records)
-    summary.model = "org/model"
-    summary.world_size = 3
-    summary.dry_run = True
-
-    restored = RunSummary.from_dict({**summary.to_dict(), "unknown_future_key": 1})
-    assert restored == summary  # unknown keys ignored, every field preserved
-    assert restored.model == "org/model" and restored.world_size == 3 and restored.dry_run is True
+    assert "*GPUs:* 3" in text and "*dry run:* True" in text

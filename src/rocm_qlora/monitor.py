@@ -21,8 +21,8 @@ import json
 import math
 import threading
 import time
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, fields
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, NotRequired, TypedDict, final, overload, override
 
@@ -120,6 +120,7 @@ class RunEndRecord(TypedDict):
     best_eval_loss: float | None
     tokens_seen: int
     world_size: NotRequired[int]
+    dry_run: NotRequired[bool]
     ts: NotRequired[str]
 
 
@@ -184,8 +185,10 @@ def select(records: Sequence[MetricsRecord], kind: Literal["eval"]) -> list[Eval
 def select(records: Sequence[MetricsRecord], kind: Literal["epoch_end"]) -> list[EpochEndRecord]: ...
 @overload
 def select(records: Sequence[MetricsRecord], kind: Literal["event"]) -> list[EventRecord]: ...
+@overload
+def select(records: Sequence[MetricsRecord], kind: Literal["run_end"]) -> list[RunEndRecord]: ...
 def select(records: Sequence[MetricsRecord], kind: str) -> Any:
-    """Records of one type ('train'/'eval'/'epoch_end'/'event')."""
+    """Records of one type ('train'/'eval'/'epoch_end'/'event'/'run_end')."""
     return [r for r in records if r.get("type") == kind]
 
 
@@ -238,6 +241,12 @@ def trend_arrow(values: Sequence[float | None], window: int = 25, eps: float = 1
 
 @dataclass
 class RunSummary:
+    """End-of-run numbers, derived from the metrics stream.
+
+    ``total_seconds`` and ``adapter_dir`` are the two facts the records do not
+    carry; the worker fills them live for the wrap-up panel.
+    """
+
     steps: int = 0
     first_loss: float | None = None
     last_loss: float | None = None
@@ -251,28 +260,9 @@ class RunSummary:
     avg_tok_per_s: float | None = None
     peak_vram_gb: float | None = None
     warnings: int = 0
-    #: Config context, filled by ``train._finalize_run`` (absent in old summaries).
-    model: str = ""
-    dataset: str = ""
-    run_dir: str = ""
-    adapter_dir: str = ""
-    effective_batch: int = 0
     world_size: int = 1
-    max_length: int = 0
-    lora_r: int = 0
-    lr: float = 0.0
-    epochs: float = 0.0
-    loss_type: str = ""
     dry_run: bool = False
-
-    def to_dict(self) -> dict[str, Any]:
-        return dict(self.__dict__)
-
-    @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> RunSummary:
-        """Rebuild from a ``summary.json`` payload (unknown keys ignored)."""
-        known = {f.name for f in fields(cls)}
-        return cls(**{k: v for k, v in data.items() if k in known})
+    adapter_dir: str = ""
 
 
 def summarize(records: Sequence[MetricsRecord]) -> RunSummary:
@@ -301,6 +291,12 @@ def summarize(records: Sequence[MetricsRecord]) -> RunSummary:
             s.first_eval_loss, s.last_eval_loss, s.best_eval_loss = el[0], el[-1], min(el)
     if events:
         s.warnings = sum(1 for e in events if e.get("level") == "warn")
+    ws = next((r.get("world_size") for r in reversed(records) if r.get("world_size")), None)
+    if ws:
+        s.world_size = int(ws)
+    run_ends = select(records, "run_end")
+    if run_ends:
+        s.dry_run = bool(run_ends[-1].get("dry_run", False))
     return s
 
 
@@ -431,7 +427,7 @@ class MetricsCallback(TrainerCallback):
         self._epoch_index = 0
         self._warned_grad_spike_at = -(10**9)
         self._loss_series: list[float] = []
-        self._gpu_mem_series: list[float] = []
+        self._gpu_mem_series: list[tuple[int, float]] = []
         self._snapshot_thread: threading.Thread | None = None
         self._last_snapshot_step = 0
         self.max_steps = 0
@@ -459,9 +455,10 @@ class MetricsCallback(TrainerCallback):
             if max(safe_div(g.mem_used_gb, g.mem_total_gb, 0) for g in gpus) > 0.95:
                 lines.append("[yellow]! VRAM >95% — OOM risk on a longer batch[/yellow]")
         if len(self._gpu_mem_series) > 20:
-            growth = self._gpu_mem_series[-1] - self._gpu_mem_series[10]
+            step0, mem0 = next((s for s in self._gpu_mem_series if s[0] >= 10), self._gpu_mem_series[0])
+            growth = self._gpu_mem_series[-1][1] - mem0
             if growth > 1.5:
-                lines.append(f"[yellow]! VRAM grew {growth:.1f} GB since step 10 — possible leak[/yellow]")
+                lines.append(f"[yellow]! VRAM grew {growth:.1f} GB since step {step0} — possible leak[/yellow]")
         return lines
 
     def _chart_meta(self) -> ChartMeta:
@@ -528,7 +525,7 @@ class MetricsCallback(TrainerCallback):
         step_time_ema = self._track_step_timing(now)
         tokens, tok_per_s, token_dt = self._track_tokens(now, logs, state)
         loss, loss_ema = self._track_loss(logs)
-        gpu_recs, vram_peak = self._track_vram()
+        gpu_recs, vram_peak = self._track_vram(state.global_step)
         remaining = max(0, self.max_steps - state.global_step)
         # Samples/s over the same interval as tok/s: every optimizer step
         # consumes one batch, and logging may span several steps.
@@ -606,11 +603,11 @@ class MetricsCallback(TrainerCallback):
         smoothed = ema(self._loss_series, span=20)
         return loss, (smoothed[-1] if smoothed else None)
 
-    def _track_vram(self) -> tuple[list[GpuMetric], float | None]:
+    def _track_vram(self, step: int) -> tuple[list[GpuMetric], float | None]:
         gpu_recs = _gpu_records(self.sampler.latest())
         vram_peak = max((g["mem_used_gb"] for g in gpu_recs), default=None)
         if vram_peak is not None:
-            self._gpu_mem_series.append(vram_peak)
+            self._gpu_mem_series.append((step, vram_peak))
         return gpu_recs, vram_peak
 
     def _update_dashboard(

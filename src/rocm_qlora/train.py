@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple, cast
 from .config import Config
 from .panels import print_wrapup, rank0_ui, show_dataset_panel, show_model_panel
 from .sft import build_sft_config, ensure_training_chat_template
-from .utils import seed_everything, write_json
+from .utils import seed_everything
 
 if TYPE_CHECKING:
     import torch
@@ -483,16 +483,14 @@ def _finalize_run(
     world_size: int,
     dry_run: bool,
 ) -> None:
-    """Rank-0 end of run: summary.json, run_end event, charts, report, wrap-up."""
+    """Rank-0 end of run: run_end event, charts, report, wrap-up."""
     from .plots import render_charts, write_report
 
     ui.dashboard.update(phase="finalizing")
     ui.dashboard.stop()
 
     records = metrics_callback.records if metrics_callback else []
-    summary = _write_summary(
-        cfg, run_dir, adapter_dir, records, start_time=start_time, world_size=world_size, dry_run=dry_run
-    )
+    summary = _assemble_summary(adapter_dir, records, start_time=start_time)
     if ui.writer:
         from .monitor import RunEndRecord
 
@@ -503,6 +501,8 @@ def _finalize_run(
             "best_loss": summary.best_loss,
             "best_eval_loss": summary.best_eval_loss,
             "tokens_seen": summary.tokens_seen,
+            "world_size": world_size,
+            "dry_run": dry_run,
         }
         ui.writer.write(run_end)
         ui.writer.close()
@@ -521,34 +521,18 @@ def _finalize_run(
     print_wrapup(ui.console, run_dir, summary, dry_run=dry_run)
 
 
-def _write_summary(
-    cfg: Config,
-    run_dir: Path,
-    adapter_dir: Path,
-    records: list[MetricsRecord],
-    *,
-    start_time: float,
-    world_size: int,
-    dry_run: bool,
-) -> RunSummary:
-    """Assemble the end-of-run numbers with their config context and persist summary.json."""
+def _assemble_summary(adapter_dir: Path, records: list[MetricsRecord], *, start_time: float) -> RunSummary:
+    """End-of-run numbers for the wrap-up panel and the run_end record.
+
+    Everything but the wall clock and the adapter path is derived from the
+    metrics stream (see ``monitor.summarize``) — there is no second file to
+    keep in sync.
+    """
     from .monitor import summarize
 
     summary = summarize(records)
     summary.total_seconds = time.monotonic() - start_time
-    summary.run_dir = str(run_dir)
     summary.adapter_dir = str(adapter_dir)
-    summary.model = cfg.model.name
-    summary.dataset = cfg.data.path
-    summary.effective_batch = cfg.optim.per_device_batch_size * cfg.optim.grad_accum * world_size
-    summary.world_size = world_size
-    summary.max_length = cfg.data.max_length
-    summary.lora_r = cfg.lora.r
-    summary.lr = cfg.optim.lr
-    summary.epochs = cfg.optim.epochs
-    summary.loss_type = cfg.optim.loss_type
-    summary.dry_run = dry_run
-    write_json(run_dir / "summary.json", summary.to_dict())
     return summary
 
 

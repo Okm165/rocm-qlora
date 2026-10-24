@@ -2,8 +2,9 @@
 
 * ``render_charts`` — the chart set written to ``<run>/charts/``; ``live=True``
   renders the cheap subset used for periodic snapshots during training.
-* ``write_report`` — a Markdown report built purely from ``metrics.jsonl`` +
-  ``summary.json``, so it works even for a crashed run.
+* ``write_report`` — a Markdown report built purely from the metrics stream
+  (``metrics.jsonl`` + ``config.resolved.toml``), so it works even for a
+  crashed run.
 
 Charts are annotated where it helps (epoch boundaries, warmup shading, best
 step, clip line), dark-themed, and headless-safe (Agg backend).
@@ -38,7 +39,7 @@ from .monitor import (
     select,
     summarize,
 )
-from .utils import as_float, fmt_float, fmt_int, human_duration, percentile, read_json
+from .utils import as_float, fmt_float, fmt_int, human_duration, percentile
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -592,20 +593,17 @@ def replot(run_dir: str | Path) -> list[Path]:
 
 
 def write_report(run_dir: str | Path) -> Path:
-    """Write ``report.md`` from metrics.jsonl + summary.json (crash-tolerant)."""
+    """Write ``report.md`` from the metrics stream (crash-tolerant)."""
     run_dir = Path(run_dir)
     records = read_metrics(run_dir)
-    try:
-        summary = RunSummary.from_dict(read_json(run_dir / "summary.json"))
-    except Exception:
-        summary = summarize(records)
+    summary = summarize(records)
     cfg = _read_config(run_dir)
 
     lines = [
         f"# Run report — {run_dir.name}\n",
         (
-            f"*Model:* `{cfg.get('model', {}).get('name', summary.model or '?')}` · "
-            f"*dataset:* `{cfg.get('data', {}).get('path', summary.dataset or '?')}` · "
+            f"*Model:* `{cfg.get('model', {}).get('name') or '?'}` · "
+            f"*dataset:* `{cfg.get('data', {}).get('path') or '?'}` · "
             f"*GPUs:* {summary.world_size} · *dry run:* {summary.dry_run}\n"
         ),
         *_headline_table(summary),

@@ -109,8 +109,7 @@ Rejected, with evidence:
 ├── charts/            loss, lr, grad_norm, throughput, vram, gpu_health, epochs, dashboard (.png, live-updated)
 ├── logs/rank-*.log
 ├── adapter/           final LoRA adapter + checkpoints (27B: every 42 steps)
-├── metrics.jsonl      one JSON record per optimizer step (the single source of truth)
-├── summary.json       headline numbers
+├── metrics.jsonl      per-step records + events (the single source of truth)
 ├── report.md          auto-generated (numbers, per-epoch table, charts, events)
 ├── config.resolved.toml
 └── env_fingerprint.json
