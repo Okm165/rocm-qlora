@@ -76,7 +76,7 @@ class QuantizationConfig(_Section):
     def _reject_lm_head(cls, value: list[str]) -> list[str]:
         if "lm_head" in value:
             raise ValueError(
-                "quantization.requantize_modules contains 'lm_head', which cannot be quantized: TRL 1.16 "
+                "quantization.requantize_modules contains 'lm_head', which cannot be quantized: TRL "
                 "computes every SFT loss through a fused chunked head that slices the raw lm_head weight "
                 "tensor (no full logits are materialized). The head must stay in 16-bit."
             )

@@ -334,7 +334,7 @@ def build_parser() -> argparse.ArgumentParser:
     """The full CLI: one subparser per command; shared flags via add_common."""
     parser = argparse.ArgumentParser(
         prog="rocm-qlora",
-        description="Teaching-first QLoRA fine-tuning for AMD ROCm GPUs",
+        description="GPU-only QLoRA fine-tuning for AMD ROCm GPUs",
     )
     parser.add_argument("--version", action="version", version=f"rocm-qlora {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)

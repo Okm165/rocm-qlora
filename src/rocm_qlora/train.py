@@ -116,8 +116,10 @@ def _skip_redundant_init_sync(log: Callable[[str], None]) -> None:
     buffer (fp16 embed_tokens + lm_head), which OOMs a 24 GB card next to the
     loaded weights. It is redundant: every rank loads the same prepared
     checkpoint and initializes LoRA with the same seed, so the replicas are
-    bit-identical by construction. If a future torch renames the patched
-    binding, this silently no-ops and the broadcast (and its OOM) returns.
+    bit-identical by construction. This is a deliberate monkeypatch (torch
+    exposes no parameter for it, and accelerate's kwargs dataclass cannot
+    carry one); if a future torch renames the binding, the warning below says
+    the broadcast — and its OOM — is back.
     """
     import torch.nn.parallel.distributed as ddp_mod
 

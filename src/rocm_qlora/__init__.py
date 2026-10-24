@@ -1,4 +1,4 @@
-"""rocm-qlora: teaching-first QLoRA fine-tuning for AMD ROCm GPUs.
+"""rocm-qlora: GPU-only QLoRA fine-tuning for AMD ROCm GPUs.
 
 Package layout (each module explains itself — see module docstrings):
 
@@ -19,4 +19,11 @@ Package layout (each module explains itself — see module docstrings):
     cli.py        `rocm-qlora <command>` entry point
 """
 
-__version__ = "0.1.0"
+# From the installed distribution metadata (pyproject.toml is the one place
+# the version is written); "0+unknown" for a bare source checkout.
+try:
+    from importlib.metadata import version as _dist_version
+
+    __version__ = _dist_version("rocm-qlora")
+except Exception:  # pragma: no cover - metadata always present in an install
+    __version__ = "0+unknown"
