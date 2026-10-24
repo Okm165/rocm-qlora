@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
 
 from .config import Config
-from .hardware import gpu_snapshot
+from .hardware import freest_gpu_index
 from .model import (
     compute_dtype,
     load_tokenizer,
@@ -31,7 +31,7 @@ from .model import (
     quant_storage_dtype,
     resolve_model_class,
 )
-from .utils import now_iso, read_json, write_json
+from .utils import dir_size_bytes, now_iso, read_json, write_json
 
 if TYPE_CHECKING:
     import torch.nn as nn
@@ -256,8 +256,9 @@ def _write_quantization_config(model: PreTrainedModel, cfg: Config) -> None:
     Full paths, not last components: transformers matches a skip entry as a
     prefix *or* suffix, so a short entry like "qkv" (a 16-bit vision Linear)
     would also skip the quantized ``linear_attn.in_proj_qkv``. The dict comes
-    from `BitsAndBytesConfig` itself, so a key this project misspells fails
-    here instead of being silently ignored at load time.
+    from `BitsAndBytesConfig` itself, so its keys are spelled the way bnb
+    expects (bnb only *warns* about unknown keys, so a hand-written dict could
+    rot silently).
     """
     import bitsandbytes as bnb
     import torch
@@ -311,19 +312,14 @@ def _surgery_device() -> str:
     ``prepare`` is a GPU tool: quantizing on the host CPU is not supported, so
     a machine where rocm-smi reports no GPUs fails here loudly.
     """
-
-    snap = gpu_snapshot()
-    if not snap:
+    index = freest_gpu_index()
+    if index is None:
         raise RuntimeError(
             "prepare needs a visible GPU for the quantization surgery "
             "(rocm-smi reported none — run `rocm-qlora doctor` to see why)"
         )
-    best = max(snap, key=lambda g: g.mem_free_b)
-    return f"cuda:{best.index}"
+    return f"cuda:{index}"
 
 
 def _dir_size_gb(path: Path) -> float:
-    try:
-        return sum(f.stat().st_size for f in path.rglob("*") if f.is_file()) / 1e9
-    except Exception:
-        return float("nan")
+    return dir_size_bytes(path) / 1e9

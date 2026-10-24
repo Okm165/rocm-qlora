@@ -48,7 +48,7 @@ Unsloth guides, TRL docs, field reports), not laws of nature.
 | `double_quant` | true | quantize the quantization scales; ~0.4 bits/param cheaper (fp32 absmax per 64-param block is 1.5 GB at 27B, 8-bit nested is 0.4 GB — 1.1 GB saved). |
 | `quant_storage` | uint8 | required for FSDP/sharding compatibility and what upstream checkpoints use. |
 | `requantize_modules` | `["in_proj_qkv"]` | the upstream checkpoint left this 2.5B-param projection in 16-bit (5 GB/GPU). Re-quantizing it to NF4 (1.3 GB) frees ~3.7 GB — the single biggest memory win. `lm_head` is deliberately **not** here (chunked-CE constraint); `in_proj_a/b` also stay 16-bit (48 MB, upstream keeps the gate projections precise). |
-| `requantize_vision` | true | the vision tower is unused for text training; quantizing it saves ~1 GB. |
+| `requantize_vision` | true | the vision tower is unused for text training (dropped at load, ~0.25 GB freed); `prepare` quantizes it so the checkpoint stays small. |
 
 ## What to change when something is off
 

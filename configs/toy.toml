@@ -21,8 +21,8 @@ dtype = "bfloat16"         # compute dtype for the quantized matmuls
 [quantization]
 quant_type = "nf4"         # 4-bit normal float (measured 0.52 B/param, docs/02)
 double_quant = true        # quantize the quantization scales too (~1.1 GB at 27B)
-requantize_vision = true   # the vision tower is unused for text; it is freed after load
-requantize_modules = ["in_proj_qkv"]   # lm_head is never quantized (TRL's fused loss slices it)
+requantize_vision = true   # unused for text (dropped at load); quantizing it keeps the checkpoint small
+requantize_modules = ["in_proj_qkv"]   # inert for this plain source; matters for pre-quantized ones (lm_head is never quantized: TRL's fused loss slices it)
 
 [data]
 path = ".data/raw/dataset.json"        # ShareGPT-style {messages: [...]} JSON

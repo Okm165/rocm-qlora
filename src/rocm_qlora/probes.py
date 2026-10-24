@@ -15,7 +15,7 @@ import sys
 import time
 from typing import Any, TypedDict
 
-from .hardware import gpu_snapshot
+from .hardware import freest_gpu_index
 
 # ---------------------------------------------------------------------------
 # SDPA backend probe (fresh subprocess per backend)
@@ -103,17 +103,16 @@ def _run_sdpa_probe(python_exe: str | None, backend: str, env: dict[str, str], t
 def _sdpa_verdict(backends: dict[str, Any]) -> tuple[str, str]:
     """(verdict, attn_implementation) from the per-backend probe results.
 
-    ``eager_only`` means the run uses math attention through eager: either no
-    fused backend launched, or the only fused one needs AOTriton off — and the
-    mem-efficient path is the observed intermittent-NaN source on this stack
-    (docs/05), so it is not chosen on a probe pass alone.
+    Only a *flash* pass selects SDPA. The mem-efficient path is the observed
+    intermittent-NaN source on this stack (docs/05), so its forward passing
+    does not justify enabling it — a machine where only it launches gets
+    ``eager_only`` (math attention through eager) instead.
     """
     flash_on = backends.get("flash_on", {}).get("ok", False)
     flash_off = backends.get("flash_off", {}).get("ok", False)
-    eff_on = backends.get("efficient_on", {}).get("ok", False)
     math_ok = backends.get("math_on", {}).get("ok", False) or backends.get("math_off", {}).get("ok", False)
 
-    if flash_on or eff_on:
+    if flash_on:
         return "aotriton_on", "sdpa"
     if flash_off:
         return "aotriton_off", "sdpa"
@@ -168,15 +167,14 @@ def probe_sdpa(python_exe: str | None = None, timeout: float = 300.0) -> SdpaPro
     AOTriton experimental flag ON (needed to enable fused attention on some
     gfx1100 wheels) and OFF, and reports what actually launches.
     """
-    results: SdpaProbe = {"backends": {}, "verdict": "unknown", "attn_implementation": "sdpa"}
-
+    backends: dict[str, Any] = {}
     for env_mode in ("on", "off"):
         env = _sdpa_probe_env(env_mode)
         for backend in ("flash", "efficient", "math"):
-            results["backends"][f"{backend}_{env_mode}"] = _run_sdpa_probe(python_exe, backend, env, timeout)
+            backends[f"{backend}_{env_mode}"] = _run_sdpa_probe(python_exe, backend, env, timeout)
 
-    results["verdict"], results["attn_implementation"] = _sdpa_verdict(results["backends"])
-    return results
+    verdict, attn_implementation = _sdpa_verdict(backends)
+    return SdpaProbe(verdict=verdict, attn_implementation=attn_implementation, backends=backends)
 
 
 _HIP_IPC_PROBE = r"""
@@ -258,8 +256,10 @@ def probe_bnb_smoke() -> BnbSmoke:
     try:
         import bitsandbytes as bnb
 
-        snap = gpu_snapshot()
-        device = f"cuda:{max(snap, key=lambda g: g.mem_free_b).index}" if snap else "cuda:0"
+        index = freest_gpu_index()
+        if index is None:
+            raise RuntimeError("no GPU visible to rocm-smi — cannot run the bitsandbytes smoke")
+        device = f"cuda:{index}"
         torch.manual_seed(0)
         lin = torch.nn.Linear(512, 256, bias=False).to(device, dtype=torch.float16)
         q = bnb.nn.Linear4bit(

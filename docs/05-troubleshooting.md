@@ -103,8 +103,9 @@ backward op to **`ScaledDotProductEfficientAttentionBackward0`** — the fused
 is bit-exact on both transports, so the cause is model-side numerics. Until
 it is root-caused, the operational answer is: guards (already active),
 `--resume` from the last checkpoint, and the automatic backend guard (the
-launcher disables probe-flagged backends, so the mem-efficient backward is
-never dispatched to; `--set model.attn=eager` forces math everywhere).
+launcher disables the backends the probe flagged — on this box mem-efficient,
+whose backward is the observed intermittent-NaN source; `--set model.attn=eager`
+forces math everywhere).
 `scripts/poc_deltanet_backward.py` isolates one Gated DeltaNet layer at the
 27B's exact dimensions for a targeted reproduction (needs a free GPU).
 

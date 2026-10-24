@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 import math
 import os
-import random
 from collections.abc import Callable, Iterable, Sequence
 from datetime import datetime
 from pathlib import Path
@@ -36,7 +35,7 @@ def human_bytes(n: float | int | None) -> str:
         if abs(n) < 1000.0 or unit == "TB":
             return f"{n:.1f} {unit}" if unit != "B" else f"{int(n)} B"
         n /= 1000.0
-    return f"{n:.1f} TB"  # pragma: no cover - unreachable
+    raise AssertionError("unreachable: the TB branch returns")  # pragma: no cover
 
 
 def human_duration(seconds: float | None) -> str:
@@ -159,24 +158,6 @@ def linear_slope(values: Iterable[float | None]) -> float:
 # ---------------------------------------------------------------------------
 
 
-def seed_everything(seed: int) -> None:
-    """Seed python/numpy/torch.
-
-    torch is imported lazily: the import costs seconds and the plotting-only
-    paths (report, charts) never need it. numpy is a hard dependency, so its
-    seed is not optional — a swallowed import error would silently drop it.
-
-    ``PYTHONHASHSEED`` is *not* set here: hash randomization is fixed at
-    interpreter start, so only the launcher can export it in time (it does).
-    """
-    import numpy as np
-
-    random.seed(seed)
-    np.random.seed(seed)
-    try:
-        import torch
-    except ImportError:  # pragma: no cover - torch is a hard dependency
-        return
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
+def dir_size_bytes(path: str | Path) -> int:
+    """Total size of the files under ``path`` (bytes)."""
+    return sum(f.stat().st_size for f in Path(path).rglob("*") if f.is_file())

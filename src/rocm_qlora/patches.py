@@ -26,14 +26,14 @@ if TYPE_CHECKING:
 def skip_redundant_init_sync(log: Callable[[str], None]) -> None:
     """Disable DDP's initial parameter broadcast (safe *by construction* here).
 
-    The broadcast coalesces the 16-bit parameters into one ~4.9 GiB transient
-    buffer (fp16 embed_tokens + lm_head), which OOMs a 24 GB card next to the
-    loaded weights. It is redundant: every rank loads the same prepared
-    checkpoint and initializes LoRA with the same seed, so the replicas are
-    bit-identical by construction. This is a deliberate monkeypatch (torch
-    exposes no parameter for it, and accelerate's kwargs dataclass cannot
-    carry one); if a future torch renames the binding, the warning below says
-    the broadcast — and its OOM — is back.
+    The broadcast walks every parameter at trainer construction, and at 27B it
+    pushed a 24 GB card past its margin (docs/02 records the OOM). It is
+    redundant: every rank loads the same prepared checkpoint and initializes
+    LoRA with the same seed, so the replicas are bit-identical by construction.
+    torch's DDP has an ``init_sync=False`` parameter, but accelerate's kwargs
+    dataclass and the Trainer's plumbing cannot carry it, so the broadcast is
+    disabled at the source — a deliberate monkeypatch. If a future torch
+    renames the binding, the warning below says the broadcast is back.
     """
     import torch.nn.parallel.distributed as ddp_mod
 
@@ -43,7 +43,7 @@ def skip_redundant_init_sync(log: Callable[[str], None]) -> None:
     else:
         log(
             "WARNING: torch.nn.parallel.distributed._sync_module_states is gone — the DDP init broadcast "
-            "(~4.9 GiB transient at 27B) is back; expect an OOM at trainer construction"
+            "is back; expect an OOM at trainer construction (docs/02)"
         )
 
 
@@ -64,7 +64,9 @@ def _install_grad_finite_checks(model: torch.nn.Module, log: Callable[[str], Non
 
     def make_hook(param_name: str):
         def hook(grad: torch.Tensor):
-            if grad is not None and not bool(torch.isfinite(grad).all()):  # pyright: ignore[reportUnnecessaryComparison]  # defensive
+            # Post-accumulate hooks run for leaf tensors after their gradient is
+            # accumulated, so `grad` is always a tensor here.
+            if not bool(torch.isfinite(grad).all()):
                 raise RuntimeError(
                     f"non-finite gradient in '{param_name}' — aborting before the optimizer step "
                     "(ROCM_QLORA_GRAD_CHECK=1). See docs/05-troubleshooting.md"

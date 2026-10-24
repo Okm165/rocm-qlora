@@ -18,9 +18,14 @@ def test_parser_accepts_every_command():
         ["report", "--run", "x"],
         ["merge", "--run", "x"],
         ["chat", "--run", "x"],
-        ["train", "--config", "c.toml", "--gpus", "0,1", "--run-name", "renamed", "--seed", "7", "--dry-run"],
     ):
-        assert parser.parse_args(argv) is not None
+        args = parser.parse_args(argv)
+        assert args.command == argv[0]
+    train = parser.parse_args(
+        ["train", "--config", "c.toml", "--gpus", "0,1", "--run-name", "renamed", "--seed", "7", "--dry-run"]
+    )
+    assert train.command == "train"
+    assert (train.gpus, train.run_name, train.seed, train.dry_run) == ("0,1", "renamed", 7, True)
 
 
 def test_load_config_applies_cli_overrides(tmp_path):
@@ -57,7 +62,7 @@ def test_make_run_dir_layout(tmp_path):
     assert (run / "logs").is_dir() and (run / "charts").is_dir()
 
 
-def test_make_run_dir_never_reuses_a_directory(tmp_path, monkeypatch):
+def test_make_run_dir_never_reuses_a_directory(tmp_path):
     """Minute-resolution slugs can collide; the second run gets a suffix."""
     from rocm_qlora import launcher
     from rocm_qlora.config import Config
@@ -69,7 +74,7 @@ def test_make_run_dir_never_reuses_a_directory(tmp_path, monkeypatch):
     assert (second / "logs").is_dir() and (second / "charts").is_dir()
 
 
-def test_sdpa_verdict_policy():
+def test_sdpa_verdict_only_a_flash_pass_selects_sdpa():
     """The probe's decision: fused only on a pass; mem-efficient never on a pass alone."""
     from rocm_qlora.probes import _sdpa_verdict
 
@@ -77,6 +82,12 @@ def test_sdpa_verdict_policy():
     bad = {"ok": False, "error": "RuntimeError: No available kernel"}
     # flash passes with AOTriton on -> sdpa + the flag
     assert _sdpa_verdict({"flash_on": ok, "efficient_on": bad, "math_on": ok}) == ("aotriton_on", "sdpa")
+    # mem-efficient passing alone does NOT select sdpa: its backward is the
+    # observed intermittent-NaN source, so a probe pass does not justify it
+    assert _sdpa_verdict({"flash_on": bad, "flash_off": bad, "efficient_on": ok, "math_on": ok}) == (
+        "eager_only",
+        "eager",
+    )
     # flash only without the flag -> sdpa, flag off
     assert _sdpa_verdict({"flash_on": bad, "flash_off": ok, "math_on": ok}) == ("aotriton_off", "sdpa")
     # only the mem-efficient path survives, and only with the flag off -> eager

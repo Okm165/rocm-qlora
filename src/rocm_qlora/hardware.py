@@ -18,6 +18,7 @@ import json
 import os
 import platform
 import subprocess
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from importlib import metadata as importlib_metadata
 from pathlib import Path
@@ -279,6 +280,12 @@ class GpuPlan:
     gpus: list[int]
     free_gb: dict[int, float]
     warnings: list[str] = field(default_factory=list)
+
+
+def freest_gpu_index(snapshot: Sequence[GpuInfo] | None = None) -> int | None:
+    """Device index of the GPU with the most free VRAM (None when none visible)."""
+    snap = gpu_snapshot() if snapshot is None else snapshot
+    return max(snap, key=lambda g: g.mem_free_b).index if snap else None
 
 
 def select_gpus(*, requested: str | list[int] = "auto") -> GpuPlan:

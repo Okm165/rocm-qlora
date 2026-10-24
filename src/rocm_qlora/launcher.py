@@ -66,7 +66,9 @@ class DoctorHost(TypedDict):
 class DoctorVerdict(TypedDict, total=False):
     """`.context/doctor-latest.json`: what `doctor` writes, what the launcher reads.
 
-    ``total=False``: ``doctor --fast`` skips probes, so every section is optional.
+    The launcher consumes the ``sdpa`` section (backend guard); the rest is the
+    artifact for humans and issue reports. ``total=False``: ``doctor --fast``
+    skips probes, so every section is optional.
     """
 
     created: str

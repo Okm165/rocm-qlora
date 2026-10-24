@@ -9,7 +9,7 @@ from rich.console import Console
 
 from .config import Config
 from .model import compute_dtype, load_tokenizer, resolve_model_class
-from .utils import human_bytes
+from .utils import dir_size_bytes, human_bytes
 
 if TYPE_CHECKING:
     from transformers import PreTrainedModel
@@ -71,8 +71,8 @@ def merge_run(
     """Fold the adapter into the base, dequantize NF4 → bf16, save.
 
     A 27B model needs ~55 GB of bf16 memory, sharded across the GPUs
-    (``device_map="balanced"``, GPUs only — the free-VRAM budget is printed
-    by the run itself; if the device set is too small, it fails loudly).
+    (``device_map="balanced"``, GPUs only; the training run's preflight prints
+    free VRAM per GPU, and if the device set is too small this fails loudly).
     """
     console = console or Console()
     run_dir = Path(run_dir)
@@ -92,7 +92,7 @@ def merge_run(
     model.save_pretrained(out, max_shard_size="4GB", save_original_format=False)
     load_tokenizer(cfg).save_pretrained(out)
 
-    size = sum(f.stat().st_size for f in out.rglob("*") if f.is_file())
+    size = dir_size_bytes(out)
     console.print(
         f"[green]merge complete:[/green] {out} ({human_bytes(size)})\n"
         "  [dim]GGUF export for llama.cpp: docs/06-27b-runbook.md (step 6).[/dim]"

@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple, cast
 from .config import Config
 from .patches import install_diagnostics, skip_redundant_init_sync
 from .sft import build_sft_config, ensure_training_chat_template
-from .utils import fmt_float, fmt_int, human_duration, seed_everything
+from .utils import fmt_float, fmt_int, human_duration
 
 if TYPE_CHECKING:
     from datasets import Dataset
@@ -91,10 +91,9 @@ def setup_logging(run_dir: Path, rank: int) -> logging.Logger:
     level_name = os.environ.get("ROCM_QLORA_LOG_LEVEL", "INFO").upper()
     logger.setLevel(getattr(logging, level_name, logging.INFO))
     # torch 2.13 renamed `all_gather_into_tensor` -> `all_gather_single`; HF
-    # Trainer / Accelerate still call the old name once per logging step,
-    # flooding the console with one FutureWarning per rank per step (~84
-    # lines/run) and burying real signals. Silence precisely that message;
-    # remove when the stack updates.
+    # Trainer / Accelerate still call the old name. Python's default filters
+    # show that warning once per rank — this keeps even that known-benign line
+    # out of the run's console. Remove when the stack updates.
     import warnings
 
     warnings.filterwarnings("ignore", category=FutureWarning, message=r".*all_gather_into_tensor.*is deprecated.*")
@@ -457,8 +456,12 @@ def main(argv: list[str] | None = None) -> None:
 
     logger = setup_logging(run_dir, rank)
     # Identical seed on every rank: required so all replicas initialize
-    # identically (see patches.skip_redundant_init_sync).
-    seed_everything(cfg.run.seed)
+    # identically (see patches.skip_redundant_init_sync). transformers' own
+    # set_seed covers python/numpy/torch (+CUDA); PYTHONHASHSEED is the
+    # launcher's job — it must be set before the interpreter starts.
+    from transformers import set_seed
+
+    set_seed(cfg.run.seed)
 
     import torch
 

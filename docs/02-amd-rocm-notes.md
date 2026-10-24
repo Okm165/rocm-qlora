@@ -63,8 +63,9 @@ NCCL_P2P_DISABLE = "0"
 
 `HSA_FORCE_FINE_GRAIN_PCIE=1` adds nothing here. Do **not** add `iommu=pt`
 (translated IOMMU works; one upstream report shows it corrupting peer IPC).
-`doctor` probes `hipIpcGetMemHandle` on every run, so transport regressions
-are caught immediately.
+`doctor` probes `hipIpcGetMemHandle` and caches the verdict in
+`.context/doctor-latest.json`; the launcher reads that verdict — training
+runs do not re-probe.
 
 ## bitsandbytes 4-bit: 0.50.2 is good on ROCm
 

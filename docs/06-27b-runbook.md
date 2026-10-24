@@ -3,7 +3,7 @@
 Everything is already configured in `configs/qwen3.8-27b.toml`. This page is
 the operator's view: what to run, what to expect, what to watch, and what to
 do when something looks wrong. The 27B run is the heavy one; the same
-commands rehearse the full code path on `configs/toy.toml` in ~4 minutes.
+commands rehearse the full code path on `configs/toy.toml` in ~2 minutes.
 
 ## The commands, in order
 
