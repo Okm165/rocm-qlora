@@ -109,7 +109,7 @@ the cap where the coverage curve saturates — for typical Q&A data, around
 * loss: starts ~1.5–2.0 → ends ~1.0–1.4 (domain Q&A with reasoning traces)
 * eval: tracks train within ~0.1–0.15
 * grad norm: mostly 0.2–1.5, occasional 3–5 spikes
-* throughput: measured ~335 tokens/s total (range 123–405) with batch 1 ×
+* throughput: measured ~333 tokens/s total (range 123–405) with batch 1 ×
   1536 across the GPUs (small batches underutilize them — expected for QLoRA)
 
 If the numbers fall inside those bands and the trend arrows agree, the run is
