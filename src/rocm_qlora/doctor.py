@@ -15,7 +15,6 @@ from rich.panel import Panel
 from rich.table import Table
 
 from . import __version__
-from .panels import kv_table
 from .utils import human_bytes, timestamp_slug, write_json
 
 if TYPE_CHECKING:
@@ -30,7 +29,9 @@ def _doctor_host_panel(mem: HostMemory, cpu: CpuInfo) -> None:
     """Host summary panel (CPU/RAM/kernel/driver/disk)."""
     from .hardware import disk_free_gb, kernel_version, rocm_driver_version
 
-    host = kv_table()
+    host = Table.grid(padding=(0, 2))
+    host.add_column(style="dim", justify="right")
+    host.add_column()
     host.add_row("CPU", f"{cpu.get('model', '?')} ({cpu.get('cores')} threads)")
     host.add_row("RAM", f"{mem['total_gib']:.0f} GiB total · {mem['available_gib']:.0f} GiB available")
     host.add_row("kernel", kernel_version())

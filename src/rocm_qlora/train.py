@@ -28,20 +28,21 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 from .config import Config
-from .panels import print_wrapup, rank0_ui, show_dataset_panel, show_model_panel
 from .sft import build_sft_config, ensure_training_chat_template
-from .utils import seed_everything
+from .utils import fmt_float, fmt_int, human_duration, seed_everything
 
 if TYPE_CHECKING:
     import torch
     from datasets import Dataset
     from peft import PeftModel
+    from rich.console import Console
     from transformers import PreTrainedModel, PreTrainedTokenizerBase
     from trl import SFTTrainer
 
     from .dashboard import RichDashboard
-    from .monitor import MetricsCallback, MetricsRecord, MetricsWriter, RunSummary
-    from .panels import Rank0UI
+    from .data import DatasetStats, TokenProfile
+    from .model import ParameterReport
+    from .monitor import GpuSampler, MetricsCallback, MetricsRecord, MetricsWriter, RunSummary
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -165,6 +166,127 @@ def _install_grad_finite_checks(model: torch.nn.Module, log: Callable[[str], Non
 
 
 # ---------------------------------------------------------------------------
+# Rank-0 terminal output
+# ---------------------------------------------------------------------------
+
+
+class Rank0UI(NamedTuple):
+    """The rank-0 terminal stack (``None`` on every other rank)."""
+
+    console: Console
+    sampler: GpuSampler
+    writer: MetricsWriter
+    dashboard: RichDashboard
+
+
+def _rank0_ui(cfg: Config, run_dir: Path, *, enabled: bool) -> Rank0UI | None:
+    """Console, GPU sampler, metrics writer, live dashboard (rank 0 only).
+
+    Non-zero ranks get ``None`` and log to their own rank file instead
+    (``setup_logging``).
+    """
+    if not enabled:
+        return None
+    from rich.console import Console
+
+    from .dashboard import RichDashboard
+    from .monitor import GpuSampler, MetricsWriter
+
+    console = Console()
+    sampler = GpuSampler(cfg.logging.gpu_sample_seconds)
+    writer = MetricsWriter(run_dir / "metrics.jsonl")
+    dashboard = RichDashboard(console, refresh_per_second=cfg.run.console_refresh_per_second)
+    dashboard.state.run_name = run_dir.name
+    dashboard.update(phase="loading data")
+    return Rank0UI(console, sampler, writer, dashboard)
+
+
+def _short_path(path: Path) -> str:
+    """cwd-relative when possible — keeps status lines short and copy-pasteable."""
+    try:
+        return str(path.relative_to(Path.cwd()))
+    except ValueError:
+        return str(path)
+
+
+def _print_dataset_status(
+    console: Console, cfg: Config, stats: DatasetStats, profile: TokenProfile, n_train: int, n_eval: int
+) -> None:
+    """Dataset summary lines (rank 0); the rendered-example preview is `rocm-qlora data`'s job."""
+    pcts = profile.percentiles()
+    turns = ", ".join(f"{k}: {v}" for k, v in stats.turns_per_example.items())
+    console.print(
+        f"[dim]dataset:[/dim] {fmt_int(stats.n_examples)} examples (train {n_train}, eval {n_eval}) · turns {turns}"
+    )
+    console.print(
+        f"[dim]tokens/example:[/dim] p50={pcts.p50:.0f} p90={pcts.p90:.0f} p95={pcts.p95:.0f} "
+        f"p99={pcts.p99:.0f} max={pcts.p100:.0f} · coverage {profile.coverage_at(cfg.data.max_length) * 100:.1f}% "
+        f"@ {cfg.data.max_length} ({profile.n_truncated} truncated, {profile.truncation_pct:.1f}%)"
+    )
+    console.print(
+        f"[dim]reasoning traces:[/dim] {stats.think_blocks} assistant turns with  thinking "
+        f"({stats.think_complete} complete)"
+    )
+
+
+def _print_model_status(
+    ui: Rank0UI, attn: str, disabled: list[str], report: ParameterReport, *, world_size: int
+) -> None:
+    """Model summary lines + the model_loaded event (rank 0)."""
+    from .monitor import EventRecord
+
+    attn_note = f"{attn} (doctor-verified where available)"
+    if disabled:
+        attn_note = f"{attn} ({', '.join(disabled)} off per doctor verdict)"
+    ui.console.print(
+        f"[dim]model:[/dim] {fmt_int(report['total'])} params · trainable {fmt_int(report['trainable'])} "
+        f"({report['pct']:.3f}%) · attention {attn_note}"
+    )
+    breakdown = " · ".join(f"{k}: {fmt_int(v)}" for k, v in list(report["by_module"].items())[:8])
+    ui.console.print(f"[dim]lora modules:[/dim] {breakdown}")
+    ui.writer.write(
+        EventRecord(
+            type="event",
+            level="info",
+            event="model_loaded",
+            total_params=report["total"],
+            trainable=report["trainable"],
+            attn=attn,
+            sdpa_disabled=disabled,
+            world_size=world_size,
+        )
+    )
+
+
+def _print_wrapup(console: Console, run_dir: Path, summary: RunSummary, *, dry_run: bool) -> None:
+    """Run-complete lines: headline numbers, artifacts, next commands."""
+    nan = float("nan")
+    loss = (
+        f"{(summary.first_loss if summary.first_loss is not None else nan):.4f} → "
+        f"{(summary.last_loss if summary.last_loss is not None else nan):.4f} "
+        f"(best {(summary.best_loss if summary.best_loss is not None else nan):.4f} @ step {summary.best_step})"
+    )
+    console.print(
+        f"[bold green]run complete[/bold green]: {fmt_int(summary.steps)} steps · loss {loss} · "
+        f"{fmt_int(summary.tokens_seen)} tokens · {human_duration(summary.total_seconds)} · "
+        f"peak VRAM {(summary.peak_vram_gb if summary.peak_vram_gb is not None else nan):.1f} GB"
+    )
+    if summary.last_eval_loss is not None:
+        console.print(
+            f"[dim]eval loss:[/dim] {fmt_float(summary.first_eval_loss)} → {fmt_float(summary.last_eval_loss)} "
+            f"(best {fmt_float(summary.best_eval_loss)})"
+        )
+    console.print(
+        f"[dim]artifacts:[/dim] adapter {_short_path(Path(summary.adapter_dir))} · "
+        f"charts {_short_path(run_dir / 'charts')} · report {_short_path(run_dir / 'report.md')}"
+    )
+    if dry_run:
+        console.print("[yellow]This was a dry run (3 steps). Launch without --dry-run for the real thing.[/yellow]")
+    short = _short_path(run_dir)
+    console.print(f"[dim]next:[/dim] rocm-qlora chat --run {short} · merge --run {short} · report --run {short}")
+
+
+# ---------------------------------------------------------------------------
 # Phase helpers
 # ---------------------------------------------------------------------------
 
@@ -205,7 +327,8 @@ def _load_training_data(cfg: Config, args: WorkerArgs, *, ui: Rank0UI | None, lo
     total_tokens_estimate = int(profile.total_tokens * (n_train / max(1, profile.n_total)))
 
     if ui is not None:  # ui exists exactly on rank 0
-        show_dataset_panel(ui, cfg, stats, profile, n_train, eval_ds, examples, tokenizer, logger)
+        _print_dataset_status(ui.console, cfg, stats, profile, n_train, len(eval_ds) if eval_ds is not None else 0)
+        logger.info("dataset ready: %d train / %s eval", n_train, len(eval_ds) if eval_ds is not None else 0)
 
     return _TrainingData(tokenizer, original_chat_template, train_ds, eval_ds, n_train, total_tokens_estimate)
 
@@ -273,7 +396,7 @@ def _build_model(
     torch.cuda.empty_cache()
 
     if ui is not None:  # ui exists exactly on rank 0
-        show_model_panel(ui, attn, disabled, report, world_size=world_size)
+        _print_model_status(ui, attn, disabled, report, world_size=world_size)
     logger.info("model ready: %d trainable params", report["trainable"])
     return model
 
@@ -435,7 +558,7 @@ def main(argv: list[str] | None = None) -> None:
     torch.cuda.set_device(local_rank)
 
     start_time = time.monotonic()
-    ui = rank0_ui(cfg, run_dir, enabled=is_main)
+    ui = _rank0_ui(cfg, run_dir, enabled=is_main)
 
     try:
         data = _load_training_data(cfg, args, ui=ui, logger=logger)
@@ -519,7 +642,7 @@ def _finalize_run(
     )
     write_report(run_dir)
 
-    print_wrapup(ui.console, run_dir, summary, dry_run=dry_run)
+    _print_wrapup(ui.console, run_dir, summary, dry_run=dry_run)
 
 
 def _assemble_summary(adapter_dir: Path, records: list[MetricsRecord], *, start_time: float) -> RunSummary:
