@@ -56,7 +56,7 @@ def synth_records(n=60, epochs=3):
                     "elapsed_s": i * 2.0,
                 }
             )
-    records.append({"type": "event", "level": "warn", "event": "grad_spike", "step": 30, "value": 9.9})
+    records.append({"type": "event", "level": "warn", "event": "grad_spike", "step": 30, "value": 9.9, "median": 0.5})
     records.append({"type": "run_end", "total_seconds": n * 2.0, "dry_run": True})
     return records
 

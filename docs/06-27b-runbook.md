@@ -59,8 +59,9 @@ llama-quantize model-f16.gguf model-Q4_K_M.gguf Q4_K_M
 * **VRAM per GPU** — starts ~21 GB and sawtooths toward ~25.6 GB (2026-10-23
   batch-1 run); a sustained climb means fragmentation — resuming resets it.
 * **warnings** — the console prints `!` lines when the loss EMA rises, a GPU
-  hits 90 °C, or VRAM grows by > 1.5 GB since step 10; each family fires at
-  most once per 100 steps, and none should appear on a healthy run.
+  hits 90 °C, or VRAM grows by > 1.5 GB since step 10; the families share one
+  cooldown (at most one warning per 100 steps), and none should appear on a
+  healthy run.
 
 ## The guards (why the run aborts instead of rotting)
 

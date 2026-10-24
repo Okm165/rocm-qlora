@@ -121,7 +121,7 @@ materialized), AOTriton flash SDPA for the 16 full-attention layers, the
 pre-quantized checkpoint, micro-batch 1 × accum 4 (same effective batch,
 ~half the activation memory of 2 × 2 — batch 2 × 1536 peaked at 25.5/25.75 GB
 and OOMed, docs/05), `embed_tokens`/`lm_head` kept bf16, the DDP
-init-broadcast skip (removes a redundant 4.9 GB transient), `adamw_8bit`,
+init-broadcast skip, `adamw_8bit`,
 non-reentrant gradient checkpointing.
 
 Rejected, with evidence:

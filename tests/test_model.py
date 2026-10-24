@@ -25,14 +25,9 @@ class _Fake27BShape(nn.Module):
             block.o_proj = nn.Linear(32, 32, bias=False)
             self.layers.append(block)
 
-    def get_input_embeddings(self) -> nn.Embedding:
-        return self.embed_tokens
-
 
 def _model() -> _Fake27BShape:
-    model = _Fake27BShape()
-    model.config = type("C", (), {"hidden_size": 32, "num_hidden_layers": 3, "vocab_size": 64})()
-    return model
+    return _Fake27BShape()
 
 
 def test_prepare_meta_counts_tied_weights_once():

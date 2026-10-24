@@ -138,7 +138,7 @@ class OptimConfig(_Section):
     max_grad_norm: Annotated[float, Field(gt=0)] = 0.3  # QLoRA paper value
     #: AdamW weight decay.
     weight_decay: float = 0.01
-    #: adamw_torch | adamw_8bit | adafactor (paged is CUDA-only).
+    #: adamw_torch | adamw_8bit | adafactor (paged optimizers are not supported).
     optimizer: str = "adamw_8bit"
     #: LR schedule (cosine | linear | constant | cosine_with_restarts).
     scheduler: Literal["cosine", "linear", "constant", "cosine_with_restarts"] = "cosine"
@@ -163,7 +163,7 @@ class OptimConfig(_Section):
         if value not in {"adamw_torch", "adamw_8bit", "adafactor"}:
             raise ValueError(
                 "optim.optimizer must be adamw_torch|adamw_8bit|adafactor "
-                "(paged optimizers are CUDA-only and unsupported on ROCm)"
+                "(paged optimizers are not supported by this project)"
             )
         return value
 

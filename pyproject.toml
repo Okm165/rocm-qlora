@@ -30,7 +30,7 @@ dependencies = [
     "bitsandbytes>=0.50.2,<1",
     # datasets: dataset loading / splitting / preprocessing
     "datasets>=5.1,<6",
-    # accelerate: device placement + distributed launch plumbing
+    # accelerate: transformers' device placement / Trainer plumbing (not imported directly)
     "accelerate>=1.15,<2",
     # huggingface-hub: transformers' hub access (downloads, cache paths)
     "huggingface-hub>=2.2,<3",
@@ -116,7 +116,7 @@ quote-style = "double"
 [tool.codespell]
 skip = ".venv,.data,.outputs,.context,uv.lock,*.json,*.jsonl,*.safetensors,*.svg"
 # Domain terms that codespell would otherwise flag.
-ignore-words-list = "arange,ba,te,nd,ist,ans,ue,fo"
+ignore-words-list = "arange,ba,te,nd,ist,ans,ue,fo,nothink"
 
 # -----------------------------------------------------------------------------
 # uv configuration

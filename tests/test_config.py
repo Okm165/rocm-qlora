@@ -35,7 +35,7 @@ def test_validation_errors_are_collected():
 
 
 def test_paged_optimizer_rejected_with_hint():
-    with pytest.raises(ConfigError, match="paged optimizers are CUDA-only"):
+    with pytest.raises(ConfigError, match="paged optimizers are not supported"):
         Config.from_dict({"optim": {"optimizer": "paged_adamw_8bit"}})
 
 
@@ -71,7 +71,6 @@ def test_checkpoint_every_n_steps_default_and_validation():
         (lambda c: setattr(c.run, "seed", -1), "run.seed"),
         (lambda c: setattr(c.model, "dtype", "float64"), "model.dtype"),
         (lambda c: setattr(c.data, "truncation_mode", "keep_end"), "truncation_mode"),
-        (lambda c: setattr(c.optim, "optimizer", "paged_adamw_8bit"), "paged optimizers"),
         (lambda c: setattr(c.quantization, "requantize_modules", ["lm_head"]), "lm_head"),
         (lambda c: setattr(c.dist, "gpus", []), "dist.gpus"),
         (lambda c: setattr(c.optim, "checkpoint_every_n_layers", 0), "checkpoint_every_n_layers"),

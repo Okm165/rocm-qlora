@@ -20,7 +20,7 @@ Unsloth guides, TRL docs, field reports), not laws of nature.
 |---|---|---|
 | `lr` | 1e-4 (27B), 2e-4 (toy) | QLoRA range 1e-4–2e-4 for 7–13B; conservative end for a 27B that is already close to the target behavior. LoRA LRs run ~10× higher than full-fine-tune LRs. |
 | `scheduler` | cosine | explore early, refine late. `constant` (the QLoRA paper) also works; `linear` is a fine third option. |
-| `warmup_ratio` | 0.03 | Adam's second-moment estimate is garbage for the first steps; 3–10% warmup is standard. (Computed into `warmup_steps` internally — transformers v5 removed the ratio.) |
+| `warmup_ratio` | 0.03 | Adam's second-moment estimate is garbage for the first steps; 3–10% warmup is standard. (Passed through as transformers' `warmup_steps`; the library turns a value below 1 into `ceil(max_steps × ratio)`.) |
 | `max_grad_norm` | 0.3 | the QLoRA paper value; aggressively clips outlier batches on small data. |
 | `weight_decay` | 0.01 | mild; the base is frozen, this only shapes the adapter. |
 | `optimizer` | `adamw_8bit` (27B) / `adamw_torch` (8B, toy) | 8-bit states save ~1 GB at 27B scale; plain AdamW is simplest when VRAM allows. **Paged optimizers are CUDA-only** — the config validator rejects them with a hint. |
@@ -47,7 +47,7 @@ Unsloth guides, TRL docs, field reports), not laws of nature.
 | `quant_type` | nf4 | normal-distribution-matched 4-bit; the QLoRA default. |
 | `double_quant` | true | quantize the quantization scales; ~0.4 bits/param cheaper (fp32 absmax per 64-param block is 1.5 GB at 27B, 8-bit nested is 0.4 GB — 1.1 GB saved). |
 | `quant_storage` | uint8 | required for FSDP/sharding compatibility and what upstream checkpoints use. |
-| `requantize_modules` | `["in_proj_qkv"]` | the upstream checkpoint left this 2.5B-param projection in 16-bit (5 GB/GPU). Re-quantizing it to NF4 (1.3 GB) frees ~3.7 GB — the single biggest memory win. `lm_head` is deliberately **not** here (chunked-CE constraint); `in_proj_a/b` also stay 16-bit (48 MB, upstream keeps the gate projections precise). |
+| `requantize_modules` | `["in_proj_qkv"]` | the upstream checkpoint left this 2.5B-param projection in 16-bit (5 GB/GPU). Re-quantizing it to NF4 (1.3 GB) frees ~3.7 GB — the single biggest memory win. `lm_head` is deliberately **not** here (chunked-CE constraint); `in_proj_a/b` also stay 16-bit for this pre-quantized source (48 MB, upstream keeps the gate projections precise) — a plain bf16 source gets every Linear except the head quantized. |
 | `requantize_vision` | true | the vision tower is unused for text training (dropped at load, ~0.25 GB freed); `prepare` quantizes it so the checkpoint stays small. |
 
 ## What to change when something is off

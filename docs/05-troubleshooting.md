@@ -126,8 +126,8 @@ validation (`train --dry-run` catches this class in 2 minutes).
 ## "unexpected keyword argument 'warmup_ratio'"
 
 transformers v5 removed `warmup_ratio` from training args. This project
-computes `warmup_steps` from the ratio internally — keep using
-`optim.warmup_ratio` in the TOML.
+passes the ratio through as `warmup_steps` (the library converts a value below
+1 into `ceil(max_steps × ratio)`) — keep using `optim.warmup_ratio` in the TOML.
 
 ## OOM on the 27B (24 GB cards)
 
@@ -242,5 +242,5 @@ uv run rocm-qlora doctor              # full probe → .context/doctor-latest.js
 ```
 
 For HF/TRL internals in the rank logs: `ROCM_QLORA_HF_LOG_LEVEL=info`.
-`ROCM_QLORA_LOG_LEVEL` (default `INFO`) sets the package's own file-log level —
-`WARNING` quiets the per-step health lines.
+`ROCM_QLORA_LOG_LEVEL` (default `INFO`) sets the package's own file-log level
+(the console's per-step lines are unaffected).
