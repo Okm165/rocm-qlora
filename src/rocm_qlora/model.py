@@ -699,11 +699,8 @@ def _dequantize_linear4bit(model: PreTrainedModel, *, dtype: torch.dtype):
         if module.bias is not None:  # pyright: ignore[reportUnnecessaryComparison]  # biasless Linears
             new.bias = torch.nn.Parameter(module.bias.data.to(dtype), requires_grad=False)
         new = new.to(device=dequant.device)
-        parent = model
-        parts = name.split(".")
-        for part in parts[:-1]:
-            parent = getattr(parent, part)
-        setattr(parent, parts[-1], new)
+        parent, attr = _parent_of(model, name)
+        setattr(parent, attr, new)
     # The weights are bf16 now: drop the quantization metadata (a config that
     # still claims 4-bit would re-quantize on reload and confuse GGUF
     # converters) and the consumed load-time conversion record (its reverse —

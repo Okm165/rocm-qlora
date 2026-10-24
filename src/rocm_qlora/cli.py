@@ -157,7 +157,7 @@ def _doctor_gpu_table(gpus: list[GpuInfo]) -> None:
     for g in gpus:
         gpu_table.add_row(
             str(g.index),
-            f"{g.mem_total_b / 1e9:.0f} GB",
+            f"{g.mem_total_gb:.0f} GB",
             f"{g.mem_free_gb:.1f} GB",
             f"{g.temp_edge_c:.0f}°C" if g.temp_edge_c is not None else "?",
             f"{g.power_w:.0f} W" if g.power_w is not None else "?",
@@ -328,7 +328,7 @@ def _doctor_markdown(verdict: DoctorVerdict, runtime: dict[str, Any], gpus: list
     lines = [f"# Doctor report — {verdict.get('created', '')}", ""]
     lines.append(f"- torch: {runtime.get('torch', '?')} · HIP: {runtime.get('hip', '?')}")
     lines.append(f"- devices: {runtime.get('device_count', 0)}")
-    lines.extend(f"- GPU {g.index}: {g.mem_total_b / 1e9:.0f} GB total, {g.mem_free_gb:.1f} GB free" for g in gpus)
+    lines.extend(f"- GPU {g.index}: {g.mem_total_gb:.0f} GB total, {g.mem_free_gb:.1f} GB free" for g in gpus)
     if "sdpa" in verdict:
         lines.append(
             f"- SDPA verdict: **{verdict['sdpa']['verdict']}** (attn={verdict['sdpa']['attn_implementation']})"

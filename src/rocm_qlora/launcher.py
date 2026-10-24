@@ -278,7 +278,7 @@ def write_env_fingerprint(run_dir: Path, cfg: Config, gpu_ids: list[int]) -> Non
         "gpu_snapshot": [
             {
                 "index": g.index,
-                "mem_total_gb": g.mem_total_b / 1e9,
+                "mem_total_gb": g.mem_total_gb,
                 "mem_free_gb": g.mem_free_gb,
                 "temp_edge_c": g.temp_edge_c,
                 "power_w": g.power_w,

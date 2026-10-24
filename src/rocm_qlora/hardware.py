@@ -594,8 +594,7 @@ def select_gpus(needed_gb: float, *, requested: str | list[int] = "auto", safety
     for g in free:
         who = ", ".join(f"{p['name']}(pid {p['pid']})" for p in holders if str(g) in str(p["gpus"]))
         warnings.append(
-            f"GPU {g}: {free[g]:.1f} GB free of {snap[g].mem_total_b / 1e9:.0f} GB"
-            + (f" — held by: {who}" if who else "")
+            f"GPU {g}: {free[g]:.1f} GB free of {snap[g].mem_total_gb:.0f} GB" + (f" — held by: {who}" if who else "")
         )
     raise RuntimeError(
         f"No GPU has {need:.1f} GB free VRAM (need = estimate {needed_gb:.1f} GB × "

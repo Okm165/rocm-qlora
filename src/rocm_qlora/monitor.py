@@ -234,7 +234,6 @@ def trend_arrow(values: Sequence[float | None], window: int = 25, eps: float = 1
 @dataclass
 class RunSummary:
     steps: int = 0
-    epochs_done: float = 0.0
     first_loss: float | None = None
     last_loss: float | None = None
     best_loss: float | None = None
@@ -242,8 +241,6 @@ class RunSummary:
     first_eval_loss: float | None = None
     last_eval_loss: float | None = None
     best_eval_loss: float | None = None
-    loss_slope: float | None = None
-    train_seconds: float = 0.0
     total_seconds: float = 0.0
     tokens_seen: int = 0
     avg_tok_per_s: float | None = None
@@ -278,7 +275,6 @@ def summarize(records: Sequence[MetricsRecord]) -> RunSummary:
     s = RunSummary()
     train = select(records, "train")
     evals = select(records, "eval")
-    epochs = select(records, "epoch_end")
     events = select(records, "event")
 
     if train:
@@ -287,7 +283,6 @@ def summarize(records: Sequence[MetricsRecord]) -> RunSummary:
         if finite:
             s.first_loss, s.last_loss = finite[0][1], finite[-1][1]
             s.best_step, s.best_loss = min(finite, key=lambda t: t[1])
-        s.loss_slope = linear_slope([loss for _, loss in finite[-50:]])
         s.tokens_seen = int(train[-1].get("tokens_seen") or 0)
         rates = [as_float(r["tok_per_s"]) for r in train if r.get("tok_per_s")]
         if rates:
@@ -295,15 +290,10 @@ def summarize(records: Sequence[MetricsRecord]) -> RunSummary:
         vrams = [as_float(r["vram_peak_gb"]) for r in train if r.get("vram_peak_gb")]
         if vrams:
             s.peak_vram_gb = max(vrams)
-        times = [r["elapsed_s"] for r in train]
-        if times:
-            s.train_seconds = times[-1]
     if evals:
         el = [r["eval_loss"] for r in evals]
         if el:
             s.first_eval_loss, s.last_eval_loss, s.best_eval_loss = el[0], el[-1], min(el)
-    if epochs:
-        s.epochs_done = float(epochs[-1].get("epoch") or 0.0)
     if events:
         s.warnings = sum(1 for e in events if e.get("level") == "warn")
     return s
@@ -381,8 +371,8 @@ def _gpu_records(gpus: Sequence[GpuInfo]) -> list[dict[str, Any]]:
     return [
         {
             "index": g.index,
-            "mem_used_gb": g.mem_used_b / 1e9,
-            "mem_total_gb": g.mem_total_b / 1e9,
+            "mem_used_gb": g.mem_used_gb,
+            "mem_total_gb": g.mem_total_gb,
             "temp_edge_c": g.temp_edge_c,
             "temp_junction_c": g.temp_junction_c,
             "power_w": g.power_w,
