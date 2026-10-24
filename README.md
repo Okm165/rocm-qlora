@@ -171,10 +171,12 @@ src/rocm_qlora/
   cli.py                all commands (doctor, data, prepare, train, report, chat, merge)
   config.py             TOML → pydantic models (strict: typos and bad types fail loudly)
   data.py               ShareGPT loading, validation, token profiling, previews
-  model.py              prepare (NF4 + surgery) · 4-bit load · LoRA · merge
+  model.py              prepare (NF4 + surgery) · 4-bit load · LoRA
+  merge.py              adapter → bf16 merge (ready for GGUF export)
   monitor.py            metrics.jsonl · live dashboard · health checks · summaries
   plots.py              all matplotlib charts + Markdown report
-  hardware.py           rocm-smi parsing · GPU selection · SDPA/IPC probes
+  hardware.py           rocm-smi parsing · GPU selection
+  probes.py             SDPA / RCCL-IPC / matmul probes
   vram.py               model geometry · transparent VRAM estimator
   launcher.py           GPU choice, worker env, torchrun orchestration
   sft.py                config → SFTConfig mapping (checkpoint cadence, warmup)

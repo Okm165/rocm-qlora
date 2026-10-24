@@ -19,8 +19,9 @@ from .explain import kv_table
 from .utils import human_bytes, timestamp_slug, write_json
 
 if TYPE_CHECKING:
-    from .hardware import CpuInfo, GpuInfo, HipIpcProbe, HostMemory, MatmulBench, SdpaProbe, TorchRuntime
+    from .hardware import CpuInfo, GpuInfo, HostMemory, TorchRuntime
     from .launcher import BnbSmoke, DoctorVerdict
+    from .probes import HipIpcProbe, MatmulBench, SdpaProbe
 
 console = Console()
 
@@ -74,7 +75,7 @@ def _doctor_software_tables(versions: dict[str, str], runtime: TorchRuntime) -> 
 
 def _probe_sdpa() -> SdpaProbe:
     """SDPA backend probe + table; returns the ``sdpa`` verdict section."""
-    from .hardware import probe_sdpa
+    from .probes import probe_sdpa
 
     console.print("[dim]probing SDPA backends (fresh subprocess per backend, ~30-60 s)…[/dim]")
     sdpa = probe_sdpa()
@@ -107,7 +108,7 @@ def _probe_bnb() -> BnbSmoke:
 
 def _probe_hip_ipc() -> HipIpcProbe:
     """RCCL IPC-handle probe + report."""
-    from .hardware import probe_hip_ipc
+    from .probes import probe_hip_ipc
 
     ipc = probe_hip_ipc()
     if ipc.get("ipc_ok"):
@@ -122,7 +123,7 @@ def _probe_hip_ipc() -> HipIpcProbe:
 
 def _bench_matmul() -> MatmulBench:
     """bf16 matmul TFLOPS on GPU 0 + report."""
-    from .hardware import matmul_benchmark
+    from .probes import matmul_benchmark
 
     console.print("[dim]bf16 matmul benchmark (8192³)…[/dim]")
     bench = matmul_benchmark()

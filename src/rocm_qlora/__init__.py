@@ -4,8 +4,10 @@ Package layout (each module explains itself — see module docstrings):
 
     config.py     TOML -> validated pydantic models (the single source of truth)
     data.py       ShareGPT loading, validation, splitting, token statistics
-    model.py      NF4 pre-quantization + 4-bit model/LoRA assembly + merge
-    hardware.py   ROCm/GPU discovery, rocm-smi parsing, SDPA/IPC probes
+    model.py      NF4 pre-quantization + 4-bit model/LoRA assembly
+    merge.py      adapter -> bf16 merge (ready for GGUF export)
+    hardware.py   ROCm/GPU discovery, rocm-smi parsing, GPU selection
+    probes.py     SDPA / RCCL-IPC / matmul probes (fresh subprocess each)
     vram.py       model geometry + the transparent VRAM estimator
     launcher.py   GPU selection + worker environment + torchrun orchestration
     sft.py        project config -> trl.SFTConfig mapping

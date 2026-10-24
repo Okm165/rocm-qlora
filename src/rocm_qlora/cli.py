@@ -405,7 +405,7 @@ def cmd_chat(args: argparse.Namespace) -> int:
 
 def cmd_merge(args: argparse.Namespace) -> int:
     """Fold the adapter into the base model in bf16 (ready for GGUF export)."""
-    from .model import merge_run
+    from .merge import merge_run
 
     console.rule("[bold cyan]merge[/bold cyan]")
     merge_run(args.run, out_dir=args.out, console=console)

@@ -34,15 +34,13 @@ from .config import Config
 from .hardware import (
     CpuInfo,
     GpuPlan,
-    HipIpcProbe,
     HostMemory,
-    MatmulBench,
-    SdpaProbe,
     TorchRuntime,
     gpu_processes,
     gpu_snapshot,
     select_gpus,
 )
+from .probes import HipIpcProbe, MatmulBench, SdpaProbe
 from .utils import now_iso, read_json, timestamp_slug, write_json
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
