@@ -29,9 +29,9 @@ forgotten, and on small datasets the low-rank bottleneck acts as a
 ```
 prepare (once)
   source checkpoint (pre-quantized NF4 from the community, or plain bf16)
-    → re-quantize modules the upstream left in 16-bit        [model.py]
-    → write a self-describing quantization_config            [model.py]
-    → save + finetune_meta.json (exact parameter accounting) [model.py]
+    → re-quantize modules the upstream left in 16-bit        [prepare.py]
+    → write a self-describing quantization_config            [prepare.py]
+    → save + finetune_meta.json (exact parameter accounting) [prepare.py]
 
 train (each run)
   prepared checkpoint → 4-bit load onto this rank's GPU      [transformers+bnb]

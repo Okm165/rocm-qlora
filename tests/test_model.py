@@ -5,7 +5,8 @@ from __future__ import annotations
 import torch.nn as nn
 
 from rocm_qlora.config import Config
-from rocm_qlora.model import _prepare_meta, parameter_report
+from rocm_qlora.model import parameter_report
+from rocm_qlora.prepare import _prepare_meta
 
 
 class _Fake27BShape(nn.Module):

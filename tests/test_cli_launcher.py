@@ -69,6 +69,25 @@ def test_make_run_dir_never_reuses_a_directory(tmp_path, monkeypatch):
     assert (second / "logs").is_dir() and (second / "charts").is_dir()
 
 
+def test_sdpa_verdict_policy():
+    """The probe's decision: fused only on a pass; mem-efficient never on a pass alone."""
+    from rocm_qlora.probes import _sdpa_verdict
+
+    ok = {"ok": True}
+    bad = {"ok": False, "error": "RuntimeError: No available kernel"}
+    # flash passes with AOTriton on -> sdpa + the flag
+    assert _sdpa_verdict({"flash_on": ok, "efficient_on": bad, "math_on": ok}) == ("aotriton_on", "sdpa")
+    # flash only without the flag -> sdpa, flag off
+    assert _sdpa_verdict({"flash_on": bad, "flash_off": ok, "math_on": ok}) == ("aotriton_off", "sdpa")
+    # only the mem-efficient path survives, and only with the flag off -> eager
+    # (its backward is the known intermittent-NaN source; not chosen on a probe pass)
+    assert _sdpa_verdict({"flash_on": bad, "flash_off": bad, "efficient_off": ok, "math_on": ok}) == (
+        "eager_only",
+        "eager",
+    )
+    assert _sdpa_verdict({"flash_on": bad, "math_on": bad}) == ("all_failed", "eager")
+
+
 def test_build_worker_env_policy():
     cfg = Config.from_dict({})
     env = build_worker_env(cfg, [0, 2])

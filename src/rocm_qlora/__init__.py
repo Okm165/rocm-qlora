@@ -4,7 +4,8 @@ Package layout (each module explains itself — see module docstrings):
 
     config.py     TOML -> validated pydantic models (the single source of truth)
     data.py       ShareGPT loading, validation, splitting, token statistics
-    model.py      NF4 pre-quantization + 4-bit model/LoRA assembly
+    prepare.py    checkpoint surgery: NF4 re-quantization + finetune_meta.json
+    model.py      4-bit load + selective fp32 cast + LoRA (training-time assembly)
     merge.py      adapter -> bf16 merge (ready for GGUF export)
     hardware.py   ROCm/GPU discovery, rocm-smi parsing, GPU selection
     probes.py     SDPA / HIP-IPC / bnb-smoke / matmul GPU probes

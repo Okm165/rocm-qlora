@@ -175,7 +175,8 @@ src/rocm_qlora/
   cli.py                all commands (doctor, data, prepare, train, report, chat, merge)
   config.py             TOML → pydantic models (strict: typos and bad types fail loudly)
   data.py               ShareGPT loading, validation, token profiling, previews
-  model.py              prepare (NF4 + surgery) · 4-bit load · LoRA
+  prepare.py            checkpoint surgery (NF4 re-quantization, finetune_meta.json)
+  model.py              4-bit load · selective fp32 cast · LoRA
   merge.py              adapter → bf16 merge (ready for GGUF export)
   metrics.py            metrics.jsonl: records, writer/reader, summaries, health guard
   callback.py           the training-time callback: progress lines, charts, GPU sampling

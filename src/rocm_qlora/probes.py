@@ -101,7 +101,13 @@ def _run_sdpa_probe(python_exe: str | None, backend: str, env: dict[str, str], t
 
 
 def _sdpa_verdict(backends: dict[str, Any]) -> tuple[str, str]:
-    """(verdict, attn_implementation) from the per-backend probe results."""
+    """(verdict, attn_implementation) from the per-backend probe results.
+
+    ``eager_only`` means the run uses math attention through eager: either no
+    fused backend launched, or the only fused one needs AOTriton off — and the
+    mem-efficient path is the observed intermittent-NaN source on this stack
+    (docs/05), so it is not chosen on a probe pass alone.
+    """
     flash_on = backends.get("flash_on", {}).get("ok", False)
     flash_off = backends.get("flash_off", {}).get("ok", False)
     eff_on = backends.get("efficient_on", {}).get("ok", False)
@@ -112,7 +118,7 @@ def _sdpa_verdict(backends: dict[str, Any]) -> tuple[str, str]:
     if flash_off:
         return "aotriton_off", "sdpa"
     if math_ok:
-        return "math_only", "eager"
+        return "eager_only", "eager"
     return "all_failed", "eager"
 
 

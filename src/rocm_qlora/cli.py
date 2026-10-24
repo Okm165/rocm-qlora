@@ -180,7 +180,7 @@ def cmd_data(args: argparse.Namespace) -> int:
 
 def cmd_prepare(args: argparse.Namespace) -> int:
     """Create the prepared NF4 checkpoint from the source model."""
-    from .model import prepare_checkpoint
+    from .prepare import prepare_checkpoint
 
     cfg = _load_config(args)
     console.rule("[bold cyan]prepare checkpoint[/bold cyan]")
