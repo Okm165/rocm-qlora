@@ -23,7 +23,7 @@ handled by the libraries. This project adds exactly four things:
    `prepare` step that makes 27B QLoRA fit on 24 GB cards.
 4. **A clean output trail** — every run leaves a self-contained folder:
    config snapshot, environment fingerprint, per-step metrics, charts,
-   per-epoch adapters, a Markdown report with interpretation.
+   per-epoch adapters, a Markdown report.
 
 ## Requirements
 
@@ -73,95 +73,70 @@ uv run rocm-qlora train  --config configs/toy.toml --dry-run
 
 `load_in_4bit=True` on a **bf16 checkpoint** stages the entire bf16 model in
 host RAM before quantizing (~55 GB for 27B — times the number of DDP ranks).
-`prepare` instead:
-
-1. loads the **pre-quantized** upstream checkpoint (~22 GB, mostly NF4),
-2. **re-quantizes the modules upstream left in 16-bit** (`in_proj_qkv`, the
-   vision tower) — worth ~5 GB per GPU, the difference between fitting and
-   OOM on 24 GB cards,
-3. keeps `lm_head` in 16-bit (TRL 1.16 computes every SFT loss through a
-   fused chunked head that slices the raw weight tensor — a quantized head
-   breaks it),
-4. writes a `finetune_meta.json` with **exact** parameter accounting, which
-   the VRAM estimator and the run preflight use.
-
-### Per-GPU VRAM budget (27B, DDP, measured estimates)
-
-| component | GB |
-|---|---|
-| NF4 weights + 16-bit embeddings/lm_head | ~17.3 (exact accounting in finetune_meta.json) |
-| LoRA (r=16, all-linear) + 8-bit Adam | ~0.7 |
-| activations @ 1536 tokens, batch 1, gradient checkpointing | ~1.3 |
-| HIP context + fragmentation | ~1 |
-| **total** | **~21 of 24** (measured 21.1 at step 1; sawtooths toward ~24 — docs/06) |
+`prepare` quantizes **once** instead: it re-quantizes the modules upstream
+left in 16-bit (`in_proj_qkv`, the vision tower — worth ~5 GB/GPU, the
+difference between fitting and OOM on 24 GB cards), keeps `lm_head` 16-bit
+(TRL's fused loss slices the raw weight tensor), and records **exact**
+parameter accounting for the VRAM estimator and the run preflight. The
+per-item 24 GB budget is in `docs/02-amd-rocm-notes.md`; in short: ~21 GB
+measured at step 1, sawtoothing toward ~24 (docs/06).
 
 ### Speed: what's applied, what was rejected — and why
 
-Applied (all measured):
-
-| win | effect |
-|---|---|
-| TRL 1.16 fused chunked head | full logits are never materialized (the "Cut Cross-Entropy" idea, built in) |
-| AOTriton flash SDPA | 16 full-attention layers run flash kernels |
-| RCCL dma-buf IPC (`HSA_ENABLE_IPC_MODE_LEGACY=0`) | ~26 GB/s vs ~5.2 GB/s SHM collectives (bit-exact at 27B sizes; SHM kept as the default — see the notes below) |
-| pre-quantized checkpoint (`prepare`) | no 55 GB on-the-fly quantization pass at load |
-| micro-batch 1 × accum 4 (same effective batch) | ~half the activation memory of 2 × 2 — the 1536-token batch-2 runs peaked at 25.5/25.75 GB and OOMed (see docs/05); batch 2 is faster when it fits |
-| `embed_tokens`/`lm_head` stay bf16 | step memory 25 → ~20 GB; the fit comes from batch 1 × accum 4 (batch 2 × 1536 peaked 25.5–25.75 GB and OOMed — docs/05) |
-| DDP init-broadcast skip | removes a redundant 4.9 GB transient (identical checkpoints + shared seed ⇒ replicas identical by construction) |
-| `adamw_8bit`, non-reentrant gradient checkpointing, 8 dataloader workers | standard hygiene |
+Applied (all measured): TRL's fused chunked head (full logits are never
+materialized), AOTriton flash SDPA for the 16 full-attention layers, the
+pre-quantized checkpoint, micro-batch 1 × accum 4 (same effective batch,
+~half the activation memory of 2 × 2 — batch 2 × 1536 peaked at 25.5/25.75 GB
+and OOMed, docs/05), `embed_tokens`/`lm_head` kept bf16, the DDP
+init-broadcast skip (removes a redundant 4.9 GB transient), `adamw_8bit`,
+non-reentrant gradient checkpointing.
 
 Rejected, with evidence:
 
 | option | why not |
 |---|---|
-| flash-linear-attention Triton kernels (the big remaining lever for the 48 DeltaNet layers) | FLA #790: certain autotune configs of `chunk_gated_delta_rule_fwd_kernel_h_blockdim64` — the exact kernel this model needs — produce **wrong outputs** (training diverged); #804: cold-start Triton stalls on ROCm (82 min autotune reported on gfx1100). Pure-PyTorch fallback stays. |
-| FP8 training (torchao/torchtitan) | CDNA3+ only (MI300/MI325); gfx1100 has no FP8 matrix cores → emulation, slower |
+| flash-linear-attention Triton kernels (the big lever for the 48 DeltaNet layers) | upstream issue #790: autotune configs of the exact kernel this model needs produce **wrong outputs**; #804: cold-start autotune can stall for an hour on gfx1100 (details in docs/02) |
+| FP8 training (torchao/torchtitan) | CDNA3+ only; gfx1100 has no FP8 matrix cores |
 | torchao NF4Tensor + torch.compile/FSDP2 | different ecosystem, ROCm maturity unclear; bnb NF4 is the supported path here |
-| sequence packing | the DeltaNet layers have no document-aware masking → documents would attend to each other (silent data corruption). Off until that's solved. |
+| sequence packing | the DeltaNet layers have no document-aware masking → documents would attend to each other (silent data corruption) |
 | `torch.compile` | bnb + hybrid attention + gradient checkpointing is not a supported combination here |
-| Unsloth | fastest on paper, but single-GPU-centric, fights uv containment, caps torch below the ROCm 7.1 stack. Kept as a documented alternative (docs/02). |
+| Unsloth | single-GPU-centric, fights uv containment, caps torch below the ROCm 7.1 stack (docs/02) |
 
 ## What a run produces
 
 ```
 .outputs/runs/<timestamp>-<name>/
-├── charts/            loss, eval, lr, grad_norm, throughput, vram, gpu_health, epochs, dashboard (.png, live-updated)
+├── charts/            loss, lr, grad_norm, throughput, vram, gpu_health, epochs, dashboard (.png, live-updated)
 ├── logs/rank-*.log
 ├── adapter/           final LoRA adapter + checkpoints (27B: every 42 steps)
 ├── metrics.jsonl      one JSON record per optimizer step (the single source of truth)
 ├── summary.json       headline numbers
-├── report.md          auto-generated with interpretation + next steps
+├── report.md          auto-generated (numbers, per-epoch table, charts, events)
 ├── config.resolved.toml / .json
 └── env_fingerprint.json
 ```
 
-## AMD/ROCm notes (verified on RDNA3 hardware)
+## AMD/ROCm notes
 
-* **Attention**: PyTorch SDPA dispatches to AOTriton flash kernels on gfx1100
-  when `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1`; `doctor` probes each
-  backend in a fresh process (deferred launch errors otherwise poison the
-  process) and the launcher applies the verdict automatically — including
-  disabling any backend the probe flagged as broken (on gfx1100 the
-  mem-efficient backward is the observed intermittent-NaN source; padded
-  batches then run math attention).
-* **RCCL**: consumer RDNA3 P2P works once the runtime uses **dma-buf IPC**
-  (`HSA_ENABLE_IPC_MODE_LEGACY=0`; the default legacy mode needs a DKMS-only
-  ioctl and fails on mainline kernels with `hipIpcGetMemHandle: invalid
-  argument`). Measured ~26 GB/s vs ~5.2 GB/s for shared memory, and verified
-  bit-exact at the 27B's gradient sizes on **both** transports
-  (`scripts/poc_p2p_allreduce.py`). The default is SHM
-  (`NCCL_P2P_DISABLE=1`) — a simplicity choice at ~45 ms/step for LoRA; the
-  intermittent NaN-grad events seen on the 27B are model-side, not
-  transport-related (the fused attention backward is the lead — see the
-  runbook). Opt in with
+Short version, all verified on RDNA3 hardware — full evidence in
+`docs/02-amd-rocm-notes.md`:
+
+* **Attention**: SDPA → AOTriton flash kernels work on gfx1100; `doctor`
+  probes each backend in a fresh process and the launcher applies the
+  verdict, disabling any backend the probe flagged (the mem-efficient
+  *backward* is the observed intermittent-NaN source; padded batches then
+  run math attention).
+* **RCCL**: P2P works via dma-buf IPC (`HSA_ENABLE_IPC_MODE_LEGACY=0`,
+  ~26 GB/s vs ~5.2 GB/s SHM); the default is still SHM — a simplicity choice,
+  and the NaN events are model-side, not transport-side. Opt in with
   `[env.extra] NCCL_P2P_DISABLE = "0"`.
-* **bitsandbytes**: 0.50.2 passes both training-shape and decode-shape
-  4-bit smoke tests (the ≤0.49.2 ROCm GEMV NaN bug is fixed).
-* **Hybrid attention**: Qwen3.8's Gated DeltaNet layers run on transformers'
-  pure-PyTorch fallbacks (no flash-linear-attention/Triton kernels — the
-  RDNA3 Triton path is the unstable part of the ecosystem).
-* **Allocator**: `PYTORCH_HIP_ALLOC_CONF=garbage_collection_threshold:0.8`
-  (no `expandable_segments` — tried 2026-10-23, corrupted numerics; see docs/05).
+* **Hybrid attention**: the 48 DeltaNet layers run on transformers'
+  pure-PyTorch fallbacks (the RDNA3 Triton path is the unstable part of the
+  ecosystem).
+* **Allocator**: `garbage_collection_threshold:0.8`; never enable
+  `expandable_segments` (corrupted numerics on this stack, docs/05).
+* **bitsandbytes**: 0.50.2 passes the training- and decode-shape 4-bit
+  smoke tests (the ≤0.49.2 ROCm GEMV NaN is fixed).
 
 ## Repository layout
 
@@ -197,14 +172,16 @@ and the guard/resume behaviour.
 
 ## Code quality
 
-One linter + formatter (ruff) and one typo checker (codespell), configured in
-`pyproject.toml`, all dev-only dependencies:
+One linter + formatter (ruff), one typo checker (codespell) and one type
+checker (basedpyright), configured in `pyproject.toml` as dev-only
+dependencies:
 
 ```bash
 uv run ruff check .        # lint (E,W,F,I,UP,B,SIM,C4,PIE,RUF,PERF,RET,ISC)
 uv run ruff format .       # format (120 cols, double quotes)
 uv run codespell           # typos (skips .venv/.data/.outputs/.context)
-uv run pytest              # 26 tests, no GPU required
+uv run basedpyright        # type gate: 0 errors
+uv run pytest              # 62 tests, no GPU required
 ```
 
-All four pass clean on this tree — treat a red run as a bug, not noise.
+All five pass clean on this tree — treat a red run as a bug, not noise.

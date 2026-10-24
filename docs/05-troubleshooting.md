@@ -92,22 +92,17 @@ saved that looks healthy.
 
 **Known occurrence & status (open)**: the 27B path shows this intermittently
 (~2 events in ~15 observed steps, across both transports and batch configs);
-the toy model shows it rarely (3 events in ~330 observed steps on the default
-`sdpa` path; 0 in 138 steps with math attention).
-`ROCM_QLORA_DETECT_ANOMALY=1` has pinned the first non-finite backward op to
-**`ScaledDotProductEfficientAttentionBackward0`** — the fused (mem-efficient)
-attention backward, not the DeltaNet layers. Plain allreduce is bit-exact on
-both transports at the 27B's gradient sizes
-(`scripts/poc_p2p_allreduce.py`), so the cause is model-side numerics, not
-communication. Until it is root-caused, the operational answer is: guards
-(already active), `--resume` from the last checkpoint, and the
-automatic backend guard — the launcher disables SDPA backends the doctor
-probe flagged, so on this machine the mem-efficient backward is never
-dispatched to (padded batches run math attention; causal unmasked ones stay
-on flash). `--set model.attn=eager` forces math everywhere if you want to
-rule fused kernels out entirely. `scripts/poc_deltanet_backward.py` isolates
-one Gated DeltaNet layer at the 27B's exact dimensions for a targeted
-reproduction (needs a free GPU).
+the toy shows it rarely (3 events in ~330 steps on `sdpa`; 0 in 138 steps with
+math attention). `ROCM_QLORA_DETECT_ANOMALY=1` pinned the first non-finite
+backward op to **`ScaledDotProductEfficientAttentionBackward0`** — the fused
+(mem-efficient) attention backward, not the DeltaNet layers; plain allreduce
+is bit-exact on both transports, so the cause is model-side numerics. Until
+it is root-caused, the operational answer is: guards (already active),
+`--resume` from the last checkpoint, and the automatic backend guard (the
+launcher disables probe-flagged backends, so the mem-efficient backward is
+never dispatched to; `--set model.attn=eager` forces math everywhere).
+`scripts/poc_deltanet_backward.py` isolates one Gated DeltaNet layer at the
+27B's exact dimensions for a targeted reproduction (needs a free GPU).
 
 ## "mat1 and mat2 shapes cannot be multiplied" (weird 1×N weights)
 
@@ -162,8 +157,7 @@ allocator config, suspect corruption, not the data.
 ## Slow steps
 
 Baseline expectation: a few seconds/step for 27B QLoRA at batch 1 × 1536
-tokens across the GPUs (batch 2 peaked at 25.5–25.75 GB and OOMed); the toy
-is sub-second. If steps slow down mid-run:
+tokens across the GPUs; the toy is sub-second. If steps slow down mid-run:
 
 * check `gpu_health.png` for thermal throttling,
 * check `vram.png` for a leak (monotonic climb),

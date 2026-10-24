@@ -51,19 +51,10 @@ uv run rocm-qlora chat --run .outputs/runs/<timestamp>-qwen3.8-27b
 
 ## The guards (why the run aborts instead of rotting)
 
-The monitor hard-stops on three numeric failure modes — learned from real
-failures, see `docs/05-troubleshooting.md`:
-
-1. non-finite loss (classic NaN/Inf spike),
-2. **finite loss with NaN grad_norm** — the forward was fine, the backward
-   poisoned the gradients; the next optimizer step would write NaN into
-   every weight,
-3. **loss exactly 0.0** — TRL's fused loss is `sum(-log_probs)/n` where
-   ignored positions contribute zeros, so a poisoned model reports exactly
-   zero while the loss EMA keeps "improving".
-
-When one fires, the run exits with a loud error, an `error` event in `metrics.jsonl`, and
-the run exits — nothing silent, nothing saved that looks healthy.
+The monitor hard-stops on three numeric failure modes — non-finite loss,
+finite loss with NaN `grad_norm`, and loss exactly 0.0 — writes an `error`
+event, and exits loudly; nothing silent, nothing saved that looks healthy.
+The full story of each mode is in `docs/05-troubleshooting.md`.
 
 **Resume after an abort** (checkpoints carry optimizer/scheduler state; the
 27B config writes one every 42 steps — half an epoch — so a crash costs at
@@ -90,44 +81,30 @@ the exact tensor, before the optimizer step. Both are diagnostic-only (slower).
 
 ## Transport note (P2P vs shared memory)
 
-P2P/IPC **works** on RDNA3 workstations and is verified bit-exact at the 27B's
-gradient sizes (`scripts/poc_p2p_allreduce.py`: ~25 GB/s vs ~5 GB/s for SHM, zero
-mismatches over 100 iterations × 4 sizes on both transports). The *default* is
-shared memory — a simplicity choice (keeps the IPC/IOMMU path out of the
-picture) at ~45 ms/step, noise next to a ~10–25 s step. The NaN events below
-are **not** transport-related.
-
-To experiment with P2P anyway, add to the config:
-
-```toml
-[env.extra]
-NCCL_P2P_DISABLE = "0"
-```
+The default is shared memory — a simplicity choice; the NaN events are
+**not** transport-related (both transports are bit-exact at the 27B's
+gradient sizes). To experiment with P2P, add `[env.extra] NCCL_P2P_DISABLE =
+"0"` to the config. Full evidence in `docs/02-amd-rocm-notes.md`.
 
 ## Known issue: intermittent NaN gradients on the 27B (open)
 
 The 27B path intermittently produces a step with a *finite loss but
-`grad_norm = NaN`* (~2 events in ~15 observed steps; the toy shows it rarely —
-see docs/05). After such a step the optimizer poisons the weights and the
-fused loss reports exactly 0.0 — which is why the guard exists and why it
-will likely fire early in a real 27B run. It is **model-side, not
-communication**: plain allreduce is bit-exact on both transports at the 27B's
-gradient sizes.
+`grad_norm = NaN`* (~2 events in ~15 observed steps). After such a step the
+optimizer poisons the weights and the fused loss reports exactly 0.0 — which
+is why the guard exists and why it will likely fire early in a real 27B run.
+It is **model-side, not communication**.
 
-**Root-cause lead (toy-scale)**: `ROCM_QLORA_DETECT_ANOMALY=1` pinned the
-first non-finite backward op to `ScaledDotProductEfficientAttentionBackward0`
-— the fused (mem-efficient) attention backward, which padded batches
-dispatch to via their 4D mask. Two follow-ups: the launcher now disables
-SDPA backends the doctor probe flags (this machine: mem-efficient), so
-training no longer dispatches to it — masked batches fall back to math; and a
-toy run forced fully to math (`--set model.attn=eager`) completed 92/92 steps
-clean.
+**Root-cause lead (toy-scale)**: the anomaly detector pinned the first
+non-finite backward op to `ScaledDotProductEfficientAttentionBackward0` — the
+fused attention backward that padded batches dispatch to via their 4D mask.
+The launcher now disables SDPA backends the doctor probe flags (this machine:
+mem-efficient), and a toy run forced fully to math (`--set model.attn=eager`)
+completed 92/92 steps clean. Full evidence: `docs/05-troubleshooting.md`.
 
 **What this means for a run**: the guard aborts cleanly (validated — it fired
-at step 3 of a dry run), and `--resume` continues from the last checkpoint
-(validated on the toy). But with this rate, a full 3-epoch run
-will likely need several resumes — before committing to that, spend one
-small job on the root cause:
+at step 3 of a dry run) and `--resume` continues from the last checkpoint
+(validated on the toy). With this rate, a full 3-epoch run may need several
+resumes — before committing to that, spend one small job on the root cause:
 
 ```bash
 # 3 steps, ~4 min — names the exact op whose backward goes NaN

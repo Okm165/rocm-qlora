@@ -35,20 +35,12 @@ from generic guides. `rocm-qlora doctor` reproduces the probes.
 Topology (`rocm-smi --showtopo`): consumer gfx1100 cards are
 **PCIE**-attached — no XGMI, no PCIe switch.
 
-Out of the box, RCCL's P2P transport died at:
-
-```
-NCCL WARN hipIpcGetMemHandle failed : invalid argument
-→ ncclUnhandledCudaError: Call to CUDA function failed  (at the first barrier)
-```
-
-**Root cause (verified):** the ROCm 7.1 runtime bundled with the torch wheel
-defaults to *legacy* IPC mode. Legacy mode exports IPC handles via
-`AMDKFD_IOC_IPC_EXPORT_HANDLE` — an ioctl that only exists in the out-of-tree
-DKMS driver; the in-tree amdgpu driver on mainline kernels does not implement
-it, so the handle export fails and the P2P transport dies.
-
-**The fix that makes P2P work** (kept in the launcher):
+Out of the box, RCCL's P2P transport died at the first barrier with
+`hipIpcGetMemHandle failed : invalid argument`. **Root cause (verified):**
+the ROCm 7.1 runtime defaults to *legacy* IPC mode, whose handle-export
+ioctl (`AMDKFD_IOC_IPC_EXPORT_HANDLE`) exists only in the out-of-tree DKMS
+driver; the in-tree amdgpu driver on mainline kernels does not implement it.
+The fix (kept in the launcher):
 
 ```
 HSA_ENABLE_IPC_MODE_LEGACY=0     # select the mainline dma-buf IPC path
@@ -59,29 +51,20 @@ Measured multi-GPU: **~26 GB/s bus bandwidth** (vs ~5.2 GB/s SHM), and
 27B's real gradient sizes (30 iterations × 4 sizes, zero mismatches).
 
 **Why the default is nevertheless SHM** (`NCCL_P2P_DISABLE=1`): the 27B
-training path showed rare, stochastic NaN-gradient events (a finite loss with
-`grad_norm = NaN`, after which the optimizer wrote NaN into the weights and
-the fused loss reported exactly 0.0 forever). **Those events are model-side,
-not transport-side** — they occurred over both P2P and SHM, and plain
-allreduce is bit-exact on both (100 iterations × 4 sizes, zero mismatches, at
-the 27B's exact gradient sizes). The SHM default is therefore a simplicity
-choice — it keeps the IPC/IOMMU path out of the picture, and for LoRA the
-cost is ~45 ms/step, noise next to a ~10–25 s step. The NaN guards
-(`docs/05`) abort loudly on either transport.
-
-Opt back into P2P for an experiment:
+showed rare NaN-gradient events, and they are **model-side, not
+transport-side** — they occurred over both transports, and plain allreduce is
+bit-exact on both. SHM is a simplicity choice (~45 ms/step for LoRA — noise
+next to a 10–25 s step); the NaN guards abort loudly either way. Opt back in:
 
 ```toml
 [env.extra]
 NCCL_P2P_DISABLE = "0"
 ```
 
-`HSA_FORCE_FINE_GRAIN_PCIE=1` adds nothing here (25.8 vs 26.0 GB/s). Do **not**
-add `iommu=pt` (translated IOMMU works; one upstream report shows `iommu=pt`
-corrupting peer IPC). RCCL logs a "Missing iommu=pt" warning — expected here;
-our P2P is verified without it, so revisit only if P2P failures appear.
-`rocm-qlora doctor` probes `hipIpcGetMemHandle` on every run so transport
-regressions are caught immediately.
+`HSA_FORCE_FINE_GRAIN_PCIE=1` adds nothing here. Do **not** add `iommu=pt`
+(translated IOMMU works; one upstream report shows it corrupting peer IPC).
+`doctor` probes `hipIpcGetMemHandle` on every run, so transport regressions
+are caught immediately.
 
 ## bitsandbytes 4-bit: 0.50.2 is good on ROCm
 
@@ -97,29 +80,23 @@ regressions are caught immediately.
 Qwen3.8 interleaves 48 **Gated DeltaNet** layers with 16 full-attention
 layers. The fast kernels for the DeltaNet layers live in
 `flash-linear-attention` (Triton-based). This project deliberately **does not
-install it** — transformers ships pure-PyTorch fallbacks
-(`torch_chunk_gated_delta_rule`, `causal_conv1d_fn`), which are correct and
-memory-frugal. The decision is evidence-based, not conservatism:
+install it** — transformers ships pure-PyTorch fallbacks, which are correct
+and memory-frugal. The decision is evidence-based:
 
-* **Correctness**: FLA issue #790 — certain Triton autotune configs
-  (`num_warps > num_stages > 1`) of `chunk_gated_delta_rule_fwd_kernel_h_blockdim64`
-  (the exact kernel this model uses) produce **wrong outputs**; a Qwen3.5
-  training run diverged after a few hundred steps with such a config.
-  Whether the config Triton picks on *this* machine is safe is unknowable
-  without bit-exact reference tests — not a trade worth making silently in a
-  training run.
+* **Correctness**: FLA issue #790 — certain Triton autotune configs of
+  `chunk_gated_delta_rule_fwd_kernel_h_blockdim64` (the exact kernel this
+  model uses) produce **wrong outputs**; a training run diverged with such a
+  config. Whether this machine's autotune picks a safe config is unknowable
+  without bit-exact reference tests.
 * **Cold start**: FLA issue #804 — fresh Triton caches on ROCm can stall the
-  first forward for minutes (measured autotune: 82 minutes on a gfx1100 in a
-  community report). Weights/VRAM are not the constraint; time-to-first-step
-  is.
+  first forward for minutes (82 min autotune reported on a gfx1100).
 
-The honest trade: the pure-torch fallback is slower on the 48 linear-attention
-layers, so the run is compute-bound — keep the micro-batch as large as VRAM
-allows (the 27B config uses batch 1 × accum 4 after the 2026-10-23 OOMs) to maximize arithmetic intensity. That is
-the price of correctness on RDNA3 today. To experiment anyway:
-`uv add flash-linear-attention`, run with a *warm* Triton cache, and validate
-against the fallback numerically (same weights, same batch → compare losses)
-before trusting a long run.
+The honest trade: the pure-torch fallback is slower on the 48
+linear-attention layers, so the run is compute-bound — keep the micro-batch
+as large as VRAM allows. To experiment anyway: `uv add
+flash-linear-attention`, run with a *warm* Triton cache, and validate against
+the fallback numerically (same weights, same batch → compare losses) before
+trusting a long run.
 
 ## Allocator
 
