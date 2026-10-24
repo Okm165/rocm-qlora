@@ -1,17 +1,9 @@
 # =============================================================================
 # rocm-qlora — QLoRA fine-tuning workspace for AMD ROCm GPUs
 # =============================================================================
-# Everything is contained in this repository:
-#   * Python interpreter : managed by uv  (3.12, see .python-version)
-#   * Virtual environment: ./.venv        (created by `uv sync`)
-#   * Datasets & models  : ./.data        (git-ignored)
-#   * Run artifacts      : ./.outputs     (git-ignored)
-#   * Env fingerprints   : ./.context     (git-ignored)
-#
-# `torch` is NOT installed from PyPI. It is pinned to the official PyTorch
-# ROCm 7.1 wheel index, matching the ROCm 7.1 user-space (HIP 7.1.x).
-# The `[device-*]` extras / rocm-sdk packages are only needed for the AMD
-# "TheRock" wheels; the pytorch.org wheels bundle everything they need.
+# torch is pinned to the official PyTorch ROCm 7.1 wheel index (matching the
+# ROCm 7.1 user-space); those wheels bundle everything they need — the
+# [device-*] / rocm-sdk packages are only for the AMD "TheRock" wheels.
 # =============================================================================
 
 [project]
@@ -24,10 +16,8 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     # --- Deep learning core (ROCm build, resolved from the custom index) ----
     "torch>=2.13,<2.14",
-    # Triton ROCm fork. This is a *transitive* dependency of the torch ROCm
-    # wheel, but uv only applies [tool.uv.sources] index mappings to direct
-    # dependencies — so it is declared here explicitly. Keep it in lockstep
-    # with whatever triton version the pinned torch wheel requires.
+    # Triton ROCm fork: a transitive dep of the torch wheel, but uv applies
+    # [tool.uv.sources] index mappings only to direct dependencies.
     "triton-rocm==3.7.1; sys_platform == 'linux'",
     # --- The fine-tuning stack ---------------------------------------------
     # transformers: model/tokenizer/chat-template machinery
@@ -155,12 +145,8 @@ source = ["src/rocm_qlora"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
-# torch.jit.script_method deprecation is emitted 14x by torch's own
-# torch/utils/mkldnn.py (reached via bitsandbytes -> torch.compile at import);
-# keep the suite summary clean without hiding anything actionable.
-# Message-specific: only torch's own `torch.jit.script_method` deprecation is
-# hidden (emitted from torch/jit/_script.py via the mkldnn path); a module
-# filter does not match because the warning's stacklevel points elsewhere.
+# torch's own torch.jit.script_method deprecation (reached via bnb ->
+# torch.compile) is emitted 14x at import; hide only that message.
 filterwarnings = ["ignore:.*torch.jit.script_method.*is deprecated.*:DeprecationWarning"]
 markers = [
     "gpu: tests that require a working ROCm GPU (skipped by default)",
