@@ -105,7 +105,7 @@ class MetricsCallback(TrainerCallback):
         self.sampler = sampler
         self.writer = writer
         self.world_size = max(1, world_size)
-        # Injected by train.py: keeps `monitor` out of the `plots` import cycle
+        # Injected by train.py: keeps `callback` out of the `plots` import cycle
         # while deferring matplotlib to the first render.
         self._chart_renderer = chart_renderer
 

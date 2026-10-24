@@ -181,7 +181,7 @@ src/rocm_qlora/
   callback.py           the training-time callback: progress lines, charts, GPU sampling
   plots.py              all matplotlib charts + Markdown report
   hardware.py           rocm-smi parsing · GPU selection
-  probes.py             SDPA / RCCL-IPC / matmul probes
+  probes.py             SDPA / HIP-IPC / bnb-smoke / matmul GPU probes
   launcher.py           GPU choice, worker env, torchrun orchestration
   sft.py                config → SFTConfig mapping (checkpoint cadence, warmup)
   train.py              the training worker (one process per GPU)

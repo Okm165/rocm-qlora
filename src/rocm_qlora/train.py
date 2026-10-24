@@ -329,7 +329,7 @@ def _build_model(
 
 
 def _render_charts(*args: Any, **kwargs: Any) -> None:
-    """Lazy chart renderer injected into MetricsCallback (keeps `plots` out of `monitor`)."""
+    """Lazy chart renderer injected into MetricsCallback (keeps `plots` out of `callback`)."""
     from .plots import render_charts
 
     render_charts(*args, **kwargs)

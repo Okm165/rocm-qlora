@@ -263,7 +263,14 @@ class GpuFingerprint(TypedDict):
 
 
 class EnvFingerprint(TypedDict):
-    """``env_fingerprint.json``: machine + software state stored with a run."""
+    """``env_fingerprint.json``: machine + software state stored with a run.
+
+    A *frozen* record: it says what was actually used at run start (resolved
+    GPU ids, the doctor verdict applied to the env), which is the point — the
+    config snapshot can be edited afterwards, this cannot. It overlaps
+    ``.context/doctor-latest.json`` on purpose: the doctor verdict is
+    machine state *now*, this is the state that run saw.
+    """
 
     created: str
     gpus_selected: list[int]

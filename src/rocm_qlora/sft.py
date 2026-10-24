@@ -113,7 +113,7 @@ def _sft_kwargs(cfg: Config, run_dir: Path, *, dry_run: bool, max_steps: int | N
         "dataloader_pin_memory": True,
         "ddp_find_unused_parameters": False,
         "torch_empty_cache_steps": 50,
-        # transformers v5 accepts "all" | "non_padding" | "no"; the monitor
+        # transformers v5 accepts "all" | "non_padding" | "no"; the callback
         # reads the resulting num_input_tokens_seen from the log.
         "include_num_input_tokens_seen": "non_padding",
     }
