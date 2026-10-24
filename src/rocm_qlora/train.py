@@ -548,7 +548,6 @@ def main(argv: list[str] | None = None) -> None:
                 ui,
                 metrics_callback,
                 start_time=start_time,
-                world_size=world_size,
                 dry_run=args.dry_run,
             )
 
@@ -576,7 +575,6 @@ def _finalize_run(
     metrics_callback: MetricsCallback | None,
     *,
     start_time: float,
-    world_size: int,
     dry_run: bool,
 ) -> None:
     """Rank-0 end of run: run_end event, charts, report, wrap-up."""
@@ -588,11 +586,6 @@ def _finalize_run(
     run_end: RunEndRecord = {
         "type": "run_end",
         "total_seconds": summary.total_seconds,
-        "steps": summary.steps,
-        "best_loss": summary.best_loss,
-        "best_eval_loss": summary.best_eval_loss,
-        "tokens_seen": summary.tokens_seen,
-        "world_size": world_size,
         "dry_run": dry_run,
     }
     ui.writer.write(run_end)

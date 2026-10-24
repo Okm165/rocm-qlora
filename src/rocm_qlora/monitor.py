@@ -106,16 +106,17 @@ class EventRecord(TypedDict):
 
 
 class RunEndRecord(TypedDict):
-    """Final tally written once at the end of a run (``type == "run_end"``)."""
+    """Run end marker written once (``type == "run_end"``).
+
+    Only the facts the per-step records cannot carry: wall time and whether
+    this was a dry run. Steps, losses, tokens and world size are derived from
+    the stream itself (``summarize``), so they are not duplicated here.
+    """
 
     type: Literal["run_end"]
     total_seconds: float
-    steps: int
-    best_loss: float | None
-    best_eval_loss: float | None
-    tokens_seen: int | None
-    world_size: NotRequired[int]
-    dry_run: NotRequired[bool]
+    dry_run: bool
+    world_size: NotRequired[int]  # stamped on every record by MetricsCallback._write
     ts: NotRequired[str]
 
 

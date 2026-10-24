@@ -60,18 +60,7 @@ def synth_records(n=60, epochs=3):
             )
     records.append({"type": "event", "level": "info", "event": "train_start", "step": 0})
     records.append({"type": "event", "level": "warn", "event": "grad_spike", "step": 30, "value": 9.9})
-    records.append(
-        {
-            "type": "run_end",
-            "total_seconds": n * 2.0,
-            "steps": n,
-            "best_loss": 0.05,
-            "best_eval_loss": 0.15,
-            "tokens_seen": n * 4096,
-            "world_size": 3,
-            "dry_run": True,
-        }
-    )
+    records.append({"type": "run_end", "total_seconds": n * 2.0, "dry_run": True})
     return records
 
 
@@ -128,7 +117,7 @@ def test_metrics_roundtrip_and_summary(tmp_path):
     assert summary.first_loss > summary.last_loss
     assert summary.best_eval_loss is not None
     assert summary.peak_vram_gb == 19.5
-    # world size + dry-run + wall time come from the stream itself (run_end record)
+    # world size comes from any record; dry-run + wall time from the run_end marker
     assert summary.world_size == 3
     assert summary.dry_run is True
     assert summary.total_seconds == 120.0
