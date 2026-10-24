@@ -36,7 +36,7 @@ from .metrics import (
     select,
     trend_arrow,
 )
-from .utils import as_float, fmt_eta, fmt_float, fmt_int
+from .utils import as_float, fmt_float, fmt_int
 
 
 @final
@@ -111,8 +111,6 @@ class MetricsCallback(TrainerCallback):
 
         self.records: list[MetricsRecord] = []
         self._t0 = time.monotonic()
-        self._last_step_time: float | None = None
-        self._step_times: list[float] = []
         self._last_tokens: int | None = None
         self._last_tokens_time: float | None = None
         self._epoch_losses: list[float] = []
@@ -151,12 +149,13 @@ class MetricsCallback(TrainerCallback):
             for warning in warnings:
                 self.console.print(f"[yellow]! {warning}[/yellow]")
 
-    def _print_progress(self, record: TrainRecord, *, loss_ema: float | None, eta_s: float | None) -> None:
+    def _print_progress(self, record: TrainRecord, *, loss_ema: float | None) -> None:
         """One compact status line per logged step (the live view, as text).
 
-        ``loss_ema``/``eta_s`` are live-only (the charts rebuild the EMA from
-        ``loss``; an ETA cannot be recomputed after the fact); the VRAM peak
-        is read straight off the record's GPU samples.
+        ``loss_ema`` is live-only (the charts rebuild it from ``loss``); the
+        VRAM peak is read straight off the record's GPU samples. No ETA: a
+        linear extrapolation of step times is a prediction, and this tool
+        reports what happened.
         """
         parts = [
             f"step {record['step']}/{self.max_steps}",
@@ -171,8 +170,6 @@ class MetricsCallback(TrainerCallback):
             parts.append(f"{fmt_int(record['tok_per_s'])} tok/s")
         if record["gpu"]:
             parts.append(f"VRAM {max(g['mem_used_gb'] for g in record['gpu']):.1f} GB")
-        if eta_s is not None:
-            parts.append(f"ETA {fmt_eta(eta_s)}")
         self.console.print("[dim]" + " · ".join(parts) + "[/dim]")
         self._print_health_warnings(record)
 
@@ -222,29 +219,24 @@ class MetricsCallback(TrainerCallback):
         if "loss" not in logs:
             return
 
-        record, loss_ema, eta_s = self._track_step(time.monotonic(), logs, state)
+        record, loss_ema = self._track_step(time.monotonic(), logs, state)
         self._write(record)
         self._health_checks(record)
-        self._print_progress(record, loss_ema=loss_ema, eta_s=eta_s)
+        self._print_progress(record, loss_ema=loss_ema)
 
         if state.global_step - self._last_snapshot_step >= self.cfg.logging.chart_snapshot_steps:
             self._last_snapshot_step = state.global_step
             self._schedule_snapshot()
 
-    def _track_step(
-        self, now: float, logs: dict[str, Any], state: TrainerState
-    ) -> tuple[TrainRecord, float | None, float | None]:
-        """Assemble one train record plus the progress line's live-only values.
+    def _track_step(self, now: float, logs: dict[str, Any], state: TrainerState) -> tuple[TrainRecord, float | None]:
+        """Assemble one train record plus the progress line's live-only EMA.
 
-        Returns ``(record, loss_ema, eta_s)`` — the EMA and ETA are shown live
-        but not persisted (see ``TrainRecord``).
+        Returns ``(record, loss_ema)`` — the EMA is shown live but not
+        persisted (see ``TrainRecord``).
         """
-        step_time_avg = self._track_step_timing(now)
         tokens, tok_per_s = self._track_tokens(now, logs)
         loss, loss_ema = self._track_loss(logs)
         gpu_recs = self._track_vram(state.global_step)
-        remaining = max(0, self.max_steps - state.global_step)
-        eta_s = step_time_avg * remaining if step_time_avg is not None else None
         record: TrainRecord = {
             "type": "train",
             "step": state.global_step,
@@ -256,7 +248,7 @@ class MetricsCallback(TrainerCallback):
             "tokens_seen": tokens,
             "gpu": gpu_recs,
         }
-        return record, loss_ema, eta_s
+        return record, loss_ema
 
     def _record_eval(self, state: TrainerState, eval_loss: float) -> None:
         record: EvalRecord = {
@@ -266,14 +258,6 @@ class MetricsCallback(TrainerCallback):
         }
         self._write(record)
         self.console.print(f"[dim]eval (step {record['step']}): loss {fmt_float(record['eval_loss'])}[/dim]")
-
-    def _track_step_timing(self, now: float) -> float | None:
-        """Mean of the last 20 step times (drives the ETA)."""
-        step_dt = (now - self._last_step_time) if self._last_step_time is not None else None
-        if step_dt and step_dt > 0:
-            self._step_times.append(step_dt)
-        self._last_step_time = now
-        return (sum(self._step_times[-20:]) / len(self._step_times[-20:])) if self._step_times else None
 
     def _track_tokens(self, now: float, logs: dict[str, Any]) -> tuple[int | None, float | None]:
         """Tokens seen and tokens/s since the previous log.

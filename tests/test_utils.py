@@ -6,7 +6,6 @@ import math
 
 from rocm_qlora.utils import (
     as_float,
-    fmt_eta,
     fmt_float,
     fmt_int,
     human_bytes,
@@ -40,12 +39,6 @@ def test_fmt_float_and_int():
     assert fmt_float(1e-4) == "1.00e-04"
     assert fmt_int(1234567) == "1,234,567"
     assert fmt_int(None) == "n/a"
-
-
-def test_fmt_eta():
-    assert fmt_eta(None) == "n/a"
-    assert fmt_eta(-1) == "n/a"
-    assert fmt_eta(90).startswith("1m 30s (finishes ~")
 
 
 def test_percentile_linear_interpolation():

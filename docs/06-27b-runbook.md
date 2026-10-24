@@ -41,7 +41,7 @@ llama-quantize model-f16.gguf model-Q4_K_M.gguf Q4_K_M
 | | value |
 |---|---|
 | steps | `examples ÷ effective batch` per epoch × 3 epochs (effective batch = 1 × 4 accum × GPUs — it scales with the GPU count) |
-| wall time | ~75–90 min total (measured ~18–21 s/step × 252 steps + 3 evals; the ETA on the progress line is ground truth) |
+| wall time | ~75–90 min total (measured ~18–21 s/step × 252 steps + 3 evals) |
 | VRAM | ~21–24 GB of 24 per GPU (step 1 ≈ 21.1 GB; peaks ~24 — weights 17.7 GB, rest is LoRA + activations + context) |
 | eval | the 5% holdout at each epoch end (~2–3 min each) |
 | artifacts | `charts/` refresh every 10 steps; `metrics.jsonl` has one record per step |

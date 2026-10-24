@@ -11,7 +11,7 @@ import math
 import os
 import random
 from collections.abc import Callable, Iterable, Sequence
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -62,19 +62,6 @@ def fmt_int(value: int | float | None) -> str:
     if value is None:
         return "n/a"
     return f"{int(value):,}"
-
-
-def fmt_eta(seconds: float | None) -> str:
-    """ETA + wall-clock completion time, e.g. '4m 12s (finishes ~14:32)'."""
-    if seconds is None or seconds < 0:
-        return "n/a"
-    done = datetime.now() + timedelta(seconds=seconds)
-    return f"{human_duration(seconds)} (finishes ~{done.strftime('%H:%M')})"
-
-
-# ---------------------------------------------------------------------------
-# Time
-# ---------------------------------------------------------------------------
 
 
 def now_iso() -> str:

@@ -41,10 +41,9 @@ class TrainRecord(TypedDict):
     """A per-step training record (``type == "train"``).
 
     Only facts that cannot be derived from another record in the stream:
-    ``loss_ema``/``eta_s``/``vram_peak_gb`` are computed live for the progress
-    line (the charts rebuild the EMA from ``loss``, the VRAM peak is
-    ``max(gpu[].mem_used_gb)``, and an ETA cannot be recomputed after the
-    fact).
+    ``loss_ema``/``vram_peak_gb`` are computed live for the progress line
+    (the charts rebuild the EMA from ``loss``; the VRAM peak is
+    ``max(gpu[].mem_used_gb)``).
     """
 
     type: Literal["train"]
