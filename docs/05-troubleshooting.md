@@ -202,7 +202,7 @@ Mitigations (in place):
 * `HSA_USE_SVM=0` in `[env.extra]` of `configs/qwen3.8-27b.toml` — removes
   the documented eviction trigger; ~0.1% measured cost, outputs unchanged;
 * mid-epoch checkpoints (`logging.checkpoint_every_n_steps = 42`) — a reset
-  now loses ≤ ~11 min; resume with `--resume`;
+  now loses ≤ ~15 min (42 steps × ~21 s/step measured); resume with `--resume`;
 * keep VRAM pressure low (see "OOM on the 27B" above) — memory pressure is
   what feeds the eviction path.
 

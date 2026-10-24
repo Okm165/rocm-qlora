@@ -372,13 +372,14 @@ def gpu_health(records: Sequence[MetricsRecord], out_path: str | Path, *, meta: 
 def epoch_bars(records: Sequence[MetricsRecord], out_path: str | Path, *, meta: ChartMeta | None = None) -> None:
     """Per-epoch train/eval loss bars."""
     epochs = select(records, "epoch_end")
+    evals = _eval_by_step(records)
     with _chart(out_path, figsize=(8, 4)) as (fig, ax):
         if not epochs:
             _no_data(ax)
             return
         labels = [f"ep {int(e.get('epoch', i + 1))}" for i, e in enumerate(epochs)]
         train_means = [e.get("train_loss_mean") or float("nan") for e in epochs]
-        eval_losses = [e.get("eval_loss") or float("nan") for e in epochs]
+        eval_losses = [evals.get(e.get("step")) or float("nan") for e in epochs]
         x = list(range(len(labels)))
         ax.bar([i - 0.18 for i in x], train_means, width=0.36, color=COLORS["loss_ema"], label="train (epoch mean)")
         ax.bar([i + 0.18 for i in x], eval_losses, width=0.36, color=COLORS["eval"], label="eval (holdout)")
@@ -611,7 +612,7 @@ def write_report(run_dir: str | Path) -> Path:
             f"*GPUs:* {summary.world_size} · *dry run:* {summary.dry_run}\n"
         ),
         *_headline_table(summary),
-        *_epoch_table(select(records, "epoch_end")),
+        *_epoch_table(select(records, "epoch_end"), records),
         *_charts_section(sorted((run_dir / "charts").glob("*.png"))),
         *_events_table(select(records, "event")),
         *_continue_section(run_dir),
@@ -646,10 +647,16 @@ def _headline_table(summary: RunSummary) -> list[str]:
     return lines
 
 
-def _epoch_table(epochs: Sequence[EpochEndRecord]) -> list[str]:
+def _eval_by_step(records: Sequence[MetricsRecord]) -> dict[int, float]:
+    """Holdout eval loss keyed by step — how an epoch finds *its* eval."""
+    return {r["step"]: r["eval_loss"] for r in select(records, "eval")}
+
+
+def _epoch_table(epochs: Sequence[EpochEndRecord], records: Sequence[MetricsRecord]) -> list[str]:
     """Per-epoch markdown table (empty list when there are no epochs)."""
     if not epochs:
         return []
+    evals = _eval_by_step(records)
     lines = [
         "## Per-epoch summary\n",
         "| epoch | step | train loss (mean) | eval loss | elapsed |",
@@ -657,7 +664,7 @@ def _epoch_table(epochs: Sequence[EpochEndRecord]) -> list[str]:
     ]
     lines += [
         f"| {e.get('epoch')} | {e.get('step')} | {fmt_float(e.get('train_loss_mean'))} | "
-        f"{fmt_float(e.get('eval_loss')) if e.get('eval_loss') is not None else '—'} | "
+        f"{fmt_float(evals[e['step']]) if e.get('step') in evals else '—'} | "
         f"{human_duration(e.get('elapsed_s'))} |"
         for e in epochs
     ]

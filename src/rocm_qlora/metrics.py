@@ -70,13 +70,18 @@ class EvalRecord(TypedDict):
 
 
 class EpochEndRecord(TypedDict):
-    """Per-epoch aggregates (``type == "epoch_end"``)."""
+    """Per-epoch aggregates (``type == "epoch_end"``).
+
+    ``step`` is the epoch's last optimizer step. The holdout eval for this
+    epoch is the ``eval`` record with the *same* step — the Trainer evaluates
+    right after ``on_epoch_end`` fires, so a copy taken here would be the
+    previous epoch's eval.
+    """
 
     type: Literal["epoch_end"]
     epoch: int
     step: int
     train_loss_mean: float | None
-    eval_loss: float | None
     elapsed_s: float
     world_size: NotRequired[int]
     ts: NotRequired[str]

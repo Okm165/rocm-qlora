@@ -18,7 +18,7 @@ uv run rocm-qlora prepare --config configs/qwen3.8-27b.toml
 # 2. dry run — 3 steps on 8 examples (~3 min): proves load → step → save → charts
 uv run rocm-qlora train --config configs/qwen3.8-27b.toml --dry-run
 
-# 3. the real run (expect ~30–60 min wall time)
+# 3. the real run (measured: 87 min for 252 steps at ~21 s/step)
 uv run rocm-qlora train --config configs/qwen3.8-27b.toml
 
 # 4. regenerate charts + report from metrics.jsonl at any time
@@ -41,21 +41,22 @@ llama-quantize model-f16.gguf model-Q4_K_M.gguf Q4_K_M
 | | value |
 |---|---|
 | steps | `examples ÷ effective batch` per epoch × 3 epochs (effective batch = 1 × 4 accum × GPUs — it scales with the GPU count) |
-| wall time | ~75–90 min total (measured ~18–21 s/step × 252 steps + 3 evals) |
-| VRAM | ~21–24 GB of 24 per GPU (step 1 ≈ 21.1 GB; peaks ~24 — weights 17.7 GB, rest is LoRA + activations + context) |
+| wall time | measured 87 min (252 steps at ~21 s/step + 3 evals, 2026-10-23 run) |
+| VRAM | starts ~21 GB (step 1: 21.1/20.8/21.0 per GPU), peaks ~25.6 of the card's 25.75 GB (24 GiB) — weights 17.7 GB, the rest is LoRA + activations + allocator slack |
 | eval | the 5% holdout at each epoch end (~2–3 min each) |
 | artifacts | `charts/` refresh every 10 steps; `metrics.jsonl` has one record per step |
 
 ## What to watch (progress line + charts)
 
-* **loss / EMA ↘** — expect ~1.3 → ~0.7–0.9 over 3 epochs on small Q&A data.
-  The EMA is the honest signal; single-step wiggles are noise.
+* **loss / EMA ↘** — measured 1.434 → 0.625 over 252 steps on the 2026-10-23
+  run (evals 0.73/0.70/0.71). The EMA is the honest signal; single-step
+  wiggles are noise.
 * **grad norm** — typically 0.3–1.5. A transient spike (> 10× the recent
   median) is clipped and logged as a `warn` event, at most once per 50 steps;
   a *sustained* rise is worth a look.
 * **eval loss** — falling or flat = healthy; a clear rise = overfitting
   (fewer epochs, more dropout — `configs/qwen3.8-27b.toml` comments say where).
-* **VRAM per GPU** — starts ~21 GB and sawtooths toward ~24 GB (2026-10-23
+* **VRAM per GPU** — starts ~21 GB and sawtooths toward ~25.6 GB (2026-10-23
   batch-1 run); a sustained climb means fragmentation — resuming resets it.
 * **warnings** — the console prints `!` lines when the loss EMA rises, a GPU
   hits 90 °C, or VRAM grows by > 1.5 GB since step 10; each family fires at
@@ -70,7 +71,7 @@ The full story of each mode is in `docs/05-troubleshooting.md`.
 
 **Resume after an abort** (checkpoints carry optimizer/scheduler state; the
 27B config writes one every 42 steps — half an epoch — so a crash costs at
-most ~11 min):
+most ~15 min at the measured ~21 s/step):
 
 ```bash
 uv run rocm-qlora train --config configs/qwen3.8-27b.toml \

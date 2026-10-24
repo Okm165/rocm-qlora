@@ -94,7 +94,7 @@ uv run rocm-qlora train  --config configs/toy.toml --dry-run
 
 | config | model | notes |
 |---|---|---|
-| `configs/qwen3.8-27b.toml` | `unsloth/Qwen3.8-27B-unsloth-bnb-4bit` | the heavy config: 27B dense hybrid (Gated DeltaNet + full attention), ~21–24 GB/GPU measured (batch 1; peaks near the 24 GB ceiling) |
+| `configs/qwen3.8-27b.toml` | `unsloth/Qwen3.8-27B-unsloth-bnb-4bit` | the heavy config: 27B dense hybrid (Gated DeltaNet + full attention), ~21 GB/GPU at step 1, peaks ~25.6 of the card's 25.75 GB (24 GiB) — measured, batch 1 |
 | `configs/qwen3-8b.toml` | `Qwen/Qwen3-8B` | comfortable fallback, ~8 GB/GPU (derived from the parameter count — this config has not been run on this box), downloads on first use |
 | `configs/toy.toml` | `Qwen/Qwen3.5-0.8B` | same architecture family as 3.8; pipeline rehearsal |
 
@@ -108,8 +108,8 @@ left in 16-bit (`in_proj_qkv`, the vision tower — freeing ~3.7 GB/GPU: a
 fitting and OOM on 24 GB cards), keeps `lm_head` 16-bit
 (TRL's fused loss slices the raw weight tensor), and records **exact**
 parameter accounting + provenance in `finetune_meta.json`. The
-per-item 24 GB budget is in `docs/02-amd-rocm-notes.md`; in short: ~21 GB
-measured at step 1, sawtoothing toward ~24 (docs/06).
+per-item budget is in `docs/02-amd-rocm-notes.md`; in short: ~21 GB measured
+at step 1, sawtoothing toward the card's 25.75 GB (docs/06).
 
 ### Speed: what's applied, what was rejected — and why
 

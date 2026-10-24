@@ -80,8 +80,9 @@ about learning.
 
 Typical edge temperatures: idle ~45 °C, training 55–75 °C is typical,
 85 °C is warm-but-fine, 95 °C+ is throttle territory (the model clock will
-drop and throughput.png will show it). Package power peaks ~355 W; a GPU
-pinned at max power *and* >90 °C wants better airflow. The chart draws one
+drop and throughput.png will show it). Package power on this box: measured
+p50 ~290 W, p90 ~375 W, max ~520 W; a GPU pinned at max power *and* >90 °C
+wants better airflow. The chart draws one
 line at **90 °C** — the same threshold the run's `!` warning fires at.
 
 ## epochs.png — per-epoch bars
@@ -108,8 +109,8 @@ the cap where the coverage curve saturates — for typical Q&A data, around
 * loss: starts ~1.5–2.0 → ends ~1.0–1.4 (domain Q&A with reasoning traces)
 * eval: tracks train within ~0.1–0.15
 * grad norm: mostly 0.2–1.5, occasional 3–5 spikes
-* throughput: hundreds to low-thousands of tokens/s per GPU with batch 1 at
-  1536 tokens (small batches underutilize the GPU — expected for QLoRA)
+* throughput: measured ~335 tokens/s total (range 123–405) with batch 1 ×
+  1536 across the GPUs (small batches underutilize them — expected for QLoRA)
 
 If the numbers fall inside those bands and the trend arrows agree, the run is
 healthy. The progress-line warnings summarize exactly these

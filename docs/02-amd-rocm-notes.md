@@ -105,23 +105,23 @@ GC threshold only. Do **not** enable `expandable_segments:True`: tried on
 2026-10-23, it silently corrupted numerics (identical seed/batch, step-1 loss
 1.43 → 3.36, NaN grads; docs/05). Headroom is bought with batch size instead.
 
-## The 24 GB budget for a 27B model
+## The per-GPU budget for a 27B model (24 GiB cards)
 
-The math that makes 27B QLoRA fit on 24 GB cards (per GPU, DDP). The
+The numbers that make 27B QLoRA fit on 24 GiB cards (per GPU, DDP; rocm-smi
+reports the card as 25.75 GB, the unit this tool prints). The
 "why" column carries measured reality. The tool does **not** predict this
 number: the preflight reports free VRAM as a fact, and a run either fits or
 OOMs — this table (plus the knobs in docs/05) is what to react with:
 
-| item | GB | why |
+| item | GB | how it is known |
 |---|---|---|
-| NF4 weights (text-side Linears) | ~12.5 | 24.33 B params at 0.5 B/param packed + 0.4 absmax — measured on disk. `in_proj_a/b` stay 16-bit (48 MB; upstream keeps the gate projections precise) |
-| embeddings (bf16, untied) | ~2.5 | `embed_tokens` is not a Linear |
-| lm_head (bf16) | ~2.5 | stays 16-bit — TRL's fused loss slices the raw weight; upcasting to fp32 costs +2.5 GB for nothing |
-| vision tower | ~0.2 | dropped right after load (freed) |
-| LoRA r=16 (all text-side linears) + 8-bit Adam | ~0.7 | ~117 M trainable (0.4 %) |
-| activations @1536 tok, batch 1, grad-ckpt | ~1.3 | recomputed, not stored |
-| context / fragmentation / RCCL | ~1 | HIP context + transport buffers |
-| **total** | **~21 of 24** | measured 21.1 GB at batch 1, step 1 (2026-10-23 run) |
+| NF4 weights (text-side Linears) | 12.5 | measured on disk (24.33 B params × 0.5 B packed + 0.4 absmax). `in_proj_a/b` stay 16-bit (48 MB; upstream keeps the gate projections precise) |
+| embeddings (bf16, untied) | 2.5 | exact — 1.271 B params × 2 B |
+| lm_head (bf16) | 2.5 | exact — same count; stays 16-bit (TRL's fused loss slices the raw weight) |
+| vision tower | 0.25 | measured on disk; dropped right after load (freed) |
+| LoRA r=16 (all text-side linears) + 8-bit Adam | 0.7 | exact — 116.7 M trainable × (2 params + 2 grads + 2 optimizer bytes) |
+| **everything else** | **~2.7** | the measured step-1 total minus the exact rows above: activations, HIP context, RCCL buffers, allocator slack. A *residual*, not a model — and the total itself grows toward ~25.6 GB over a run (allocator sawtooth, docs/06) |
+| **total** | **21.1 of 25.75** | measured at batch 1, step 1 (2026-10-23 run); batch 2 × 1536 peaked at 25.5/25.75 and OOMed (docs/05) |
 
 The single most important number: **requantizing `in_proj_qkv` frees ~3.7 GB**
 per GPU (5 GB in 16-bit → 1.3 GB at NF4; upstream checkpoints keep it in

@@ -68,7 +68,7 @@ health checks, report.
 | signal | healthy | worrying |
 |---|---|---|
 | loss at step 0 | ~0.8–2.0 (in-domain, strong base) | >3 (template/formatting bug) |
-| loss after 1 epoch | −0.1 to −0.4 from start | flat (LR too low / no learning) |
+| loss after 1 epoch | −0.4 to −0.6 from start (measured 1.434 → 0.836 epoch-1 mean) | flat (LR too low / no learning) |
 | eval − train | ≤ 0.15 | rising eval gap (overfitting) |
 | grad norm | 0.1–2 with occasional spikes | sustained >10 (LR too high) |
 | tokens/s | stable in the progress lines | decaying (thermal throttle / leak) |

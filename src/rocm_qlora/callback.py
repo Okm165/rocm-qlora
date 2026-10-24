@@ -330,13 +330,11 @@ class MetricsCallback(TrainerCallback):
     ) -> None:
         """Record epoch aggregates and refresh the charts."""
         self._epoch_index += 1
-        recent_eval = next((r for r in reversed(self.records) if r.get("type") == "eval"), None)
         record: EpochEndRecord = {
             "type": "epoch_end",
             "epoch": self._epoch_index,
             "step": state.global_step,
             "train_loss_mean": (sum(self._epoch_losses) / len(self._epoch_losses)) if self._epoch_losses else None,
-            "eval_loss": recent_eval.get("eval_loss") if recent_eval else None,
             "elapsed_s": time.monotonic() - self._t0,
         }
         self._write(record)
