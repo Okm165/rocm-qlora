@@ -25,7 +25,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from .monitor import (
+from .metrics import (
     METRICS_FILENAME,
     ChartMeta,
     EpochEndRecord,

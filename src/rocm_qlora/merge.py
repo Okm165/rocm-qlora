@@ -5,12 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from rich.console import Console
+
 from .config import Config
 from .model import compute_dtype, load_tokenizer, resolve_model_class
 from .utils import human_bytes
 
 if TYPE_CHECKING:
-    from rich.console import Console
     from transformers import PreTrainedModel
 
 
@@ -72,8 +73,6 @@ def merge_run(
     (``device_map="balanced"``, GPUs only — the free-VRAM budget is printed
     by the run itself; if the device set is too small, it fails loudly).
     """
-    from rich.console import Console
-
     console = console or Console()
     run_dir = Path(run_dir)
     cfg = Config.from_toml(run_dir / "config.resolved.toml")

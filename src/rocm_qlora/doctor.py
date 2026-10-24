@@ -14,19 +14,30 @@ from rich.console import Console
 from rich.table import Table
 
 from . import __version__
+from .hardware import (
+    CpuInfo,
+    GpuInfo,
+    HostMemory,
+    TorchRuntime,
+    cpu_info,
+    disk_free_gb,
+    gpu_snapshot,
+    host_memory,
+    kernel_version,
+    package_versions,
+    torch_runtime_info,
+)
 from .utils import human_bytes, timestamp_slug, write_json
 
 if TYPE_CHECKING:
-    from .hardware import CpuInfo, GpuInfo, HostMemory, TorchRuntime
-    from .launcher import BnbSmoke, DoctorVerdict
-    from .probes import HipIpcProbe, MatmulBench, SdpaProbe
+    from .launcher import DoctorVerdict
+    from .probes import BnbSmoke, HipIpcProbe, MatmulBench, SdpaProbe, probe_bnb_smoke
 
 console = Console()
 
 
 def _doctor_host_table(mem: HostMemory, cpu: CpuInfo) -> None:
     """Host summary table (CPU/RAM/kernel/driver/disk)."""
-    from .hardware import disk_free_gb, kernel_version
 
     host = Table(title="host")
     host.add_column("property", style="dim")
@@ -97,7 +108,7 @@ def _probe_sdpa() -> SdpaProbe:
 
 def _probe_bnb() -> BnbSmoke:
     """bitsandbytes 4-bit smoke (train + decode shapes) + report."""
-    result = _doctor_bnb_smoke()
+    result = probe_bnb_smoke()
     status = "[green]✓[/green]" if result.get("ok") else f"[red]✗[/red] {result.get('error', '')}"
     console.print(f"bitsandbytes 4-bit smoke (train + decode shapes): {status}")
     if result.get("decode_nan"):
@@ -147,7 +158,6 @@ def _doctor_probes(args: argparse.Namespace) -> DoctorVerdict:
 
 def cmd_doctor(args: argparse.Namespace) -> int:
     """Run the environment doctor; writes .context/doctor-latest.json."""
-    from .hardware import cpu_info, gpu_snapshot, host_memory, package_versions, torch_runtime_info
 
     context_dir = Path(".context")
     context_dir.mkdir(parents=True, exist_ok=True)
@@ -174,44 +184,3 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     write_json(context_dir / "doctor-latest.json", verdict)
     console.print(f"[dim]saved: {context_dir / 'doctor-latest.json'}[/dim]")
     return 0
-
-
-def _doctor_bnb_smoke() -> BnbSmoke:
-    """Quantize a Linear on GPU; check train-shape and decode-shape numerics."""
-    import torch
-
-    try:
-        import bitsandbytes as bnb
-
-        from .hardware import gpu_snapshot
-
-        snap = gpu_snapshot()
-        device = f"cuda:{max(snap, key=lambda g: g.mem_free_b).index}" if snap else "cuda:0"
-        torch.manual_seed(0)
-        lin = torch.nn.Linear(512, 256, bias=False).to(device, dtype=torch.float16)
-        q = bnb.nn.Linear4bit(
-            512, 256, bias=False, compute_dtype=torch.bfloat16, compress_statistics=True, quant_type="nf4"
-        )
-        q.weight = bnb.nn.Params4bit(
-            lin.weight.data,
-            requires_grad=False,
-            quant_type="nf4",  # pyright: ignore[reportCallIssue]  # bnb stubs omit the 4-bit params
-            compress_statistics=True,  # pyright: ignore[reportCallIssue]
-        )
-        q = q.to(device)
-        result: BnbSmoke = {"ok": True}
-        errors: dict[int, float] = {}
-        for seq in (1, 4):
-            x = torch.randn(1, seq, 512, device=device, dtype=torch.bfloat16)
-            y = q(x)
-            ref = lin(x.to(torch.float16)).float()
-            err = (y.float() - ref).abs().max().item()
-            errors[seq] = err
-            if seq == 1 and (torch.isnan(y).any() or err > 1.0):
-                result["decode_nan"] = True
-                result["ok"] = False
-        result["max_err_seq1"] = errors.get(1, float("nan"))
-        result["max_err_seq4"] = errors.get(4, float("nan"))
-        return result
-    except Exception as exc:
-        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}

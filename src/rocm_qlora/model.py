@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, NotRequired, TypedDict, cast
 
 from .config import Config
+from .hardware import gpu_snapshot
 from .utils import now_iso, write_json
 
 if TYPE_CHECKING:
@@ -342,7 +343,6 @@ def _surgery_device() -> str:
     ``prepare`` is a GPU tool: quantizing on the host CPU is not supported, so
     a machine where rocm-smi reports no GPUs fails here loudly.
     """
-    from .hardware import gpu_snapshot
 
     snap = gpu_snapshot()
     if not snap:

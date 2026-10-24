@@ -36,11 +36,16 @@ from .hardware import (
     GpuPlan,
     HostMemory,
     TorchRuntime,
+    cpu_info,
     gpu_processes,
     gpu_snapshot,
+    host_memory,
+    kernel_version,
+    package_versions,
     select_gpus,
+    torch_runtime_info,
 )
-from .probes import HipIpcProbe, MatmulBench, SdpaProbe
+from .probes import BnbSmoke, HipIpcProbe, MatmulBench, SdpaProbe
 from .utils import now_iso, read_json, timestamp_slug, write_json
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -50,16 +55,6 @@ DOCTOR_VERDICT = REPO_ROOT / ".context" / "doctor-latest.json"
 # ---------------------------------------------------------------------------
 # Doctor verdict plumbing
 # ---------------------------------------------------------------------------
-
-
-class BnbSmoke(TypedDict, total=False):
-    """`doctor`'s bitsandbytes smoke — the ``bnb_smoke`` section of the verdict."""
-
-    ok: bool
-    error: str
-    decode_nan: bool
-    max_err_seq1: float  # numeric diagnostics (write-only; for humans reading the JSON)
-    max_err_seq4: float
 
 
 class DoctorHost(TypedDict):
@@ -283,13 +278,6 @@ class EnvFingerprint(TypedDict):
 
 def write_env_fingerprint(run_dir: Path, cfg: Config, gpu_ids: list[int]) -> None:
     """Snapshot of machine + software state, stored with the run."""
-    from .hardware import (
-        cpu_info,
-        host_memory,
-        kernel_version,
-        package_versions,
-        torch_runtime_info,
-    )
 
     fingerprint: EnvFingerprint = {
         "created": now_iso(),

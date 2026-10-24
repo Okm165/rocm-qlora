@@ -177,7 +177,8 @@ src/rocm_qlora/
   data.py               ShareGPT loading, validation, token profiling, previews
   model.py              prepare (NF4 + surgery) · 4-bit load · LoRA
   merge.py              adapter → bf16 merge (ready for GGUF export)
-  monitor.py            metrics.jsonl · progress lines · health guards · summaries
+  metrics.py            metrics.jsonl: records, writer/reader, summaries, health guard
+  callback.py           the training-time callback: progress lines, charts, GPU sampling
   plots.py              all matplotlib charts + Markdown report
   hardware.py           rocm-smi parsing · GPU selection
   probes.py             SDPA / RCCL-IPC / matmul probes

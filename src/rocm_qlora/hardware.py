@@ -4,9 +4,9 @@
 * ``select_gpus`` — the GPUs for a run: the requested ones, or every visible
   one. Free VRAM is reported as a fact; the run either fits or OOMs, and
   docs/02 (measured budget) + docs/05 (knobs) are what to react with.
-* ``probe_sdpa`` — which attention backends actually launch on this stack
-  (a fresh subprocess per backend: a failed RDNA3 kernel launch can surface
-  as a *deferred* error and contaminate the process).
+* host facts (``host_memory`` / ``cpu_info`` / ``kernel_version`` /
+  ``package_versions`` / ``torch_runtime_info``) for doctor and the run
+  fingerprint.
 
 Everything here is safe to import without torch installed; torch is imported
 lazily where needed.

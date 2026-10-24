@@ -1,8 +1,9 @@
 """Empirical GPU capability probes (doctor).
 
-Each probe runs in a fresh subprocess: a failed kernel launch on RDNA3 can
-surface as a *deferred* error and contaminate the process that tried it.
-Torch is only imported inside the probe scripts.
+The SDPA and HIP-IPC probes run in fresh subprocesses: a failed kernel launch
+on RDNA3 can surface as a *deferred* error and contaminate the process that
+tried it. The bnb smoke and the matmul benchmark run in-process — they return
+structured results, and torch is imported lazily inside each function.
 """
 
 from __future__ import annotations
@@ -13,6 +14,8 @@ import subprocess
 import sys
 import time
 from typing import Any, TypedDict
+
+from .hardware import gpu_snapshot
 
 # ---------------------------------------------------------------------------
 # SDPA backend probe (fresh subprocess per backend)
@@ -230,3 +233,52 @@ def matmul_benchmark(dtype_name: str = "bfloat16", size: int = 8192, iters: int 
     dt = (time.perf_counter() - t0) / iters
     tflops = 2 * size**3 / dt / 1e12
     return {"dtype": dtype_name, "size": size, "seconds": dt, "tflops": tflops}
+
+
+class BnbSmoke(TypedDict, total=False):
+    """Result of `probe_bnb_smoke` — the ``bnb_smoke`` section of the verdict."""
+
+    ok: bool
+    error: str
+    decode_nan: bool
+    max_err_seq1: float  # numeric diagnostics for humans reading the JSON
+    max_err_seq4: float
+
+
+def probe_bnb_smoke() -> BnbSmoke:
+    """Quantize a Linear on the freest GPU; check train-shape and decode-shape numerics."""
+    import torch
+
+    try:
+        import bitsandbytes as bnb
+
+        snap = gpu_snapshot()
+        device = f"cuda:{max(snap, key=lambda g: g.mem_free_b).index}" if snap else "cuda:0"
+        torch.manual_seed(0)
+        lin = torch.nn.Linear(512, 256, bias=False).to(device, dtype=torch.float16)
+        q = bnb.nn.Linear4bit(
+            512, 256, bias=False, compute_dtype=torch.bfloat16, compress_statistics=True, quant_type="nf4"
+        )
+        q.weight = bnb.nn.Params4bit(
+            lin.weight.data,
+            requires_grad=False,
+            quant_type="nf4",  # pyright: ignore[reportCallIssue]  # bnb stubs omit the 4-bit params
+            compress_statistics=True,  # pyright: ignore[reportCallIssue]
+        )
+        q = q.to(device)
+        result: BnbSmoke = {"ok": True}
+        errors: dict[int, float] = {}
+        for seq in (1, 4):
+            x = torch.randn(1, seq, 512, device=device, dtype=torch.bfloat16)
+            y = q(x)
+            ref = lin(x.to(torch.float16)).float()
+            err = (y.float() - ref).abs().max().item()
+            errors[seq] = err
+            if seq == 1 and (torch.isnan(y).any() or err > 1.0):
+                result["decode_nan"] = True
+                result["ok"] = False
+        result["max_err_seq1"] = errors.get(1, float("nan"))
+        result["max_err_seq4"] = errors.get(4, float("nan"))
+        return result
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}

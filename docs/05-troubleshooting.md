@@ -8,7 +8,7 @@ gfx1100 / ROCm 7.1 — not generic advice.
 ```
 <run>/logs/rank-0.log      the full story (tracebacks, warnings)
 <run>/metrics.jsonl        the numeric story (events have type="event")
-                           schema: the MetricsRecord TypedDicts in monitor.py
+                           schema: the MetricsRecord TypedDicts in metrics.py
                            (train / eval / epoch_end / event / run_end)
 .context/doctor-latest.json  machine state at run start
 ```
@@ -70,7 +70,7 @@ exactly zero once the model is poisoned, because ignored positions contribute
 zeros to the sum).
 
 **What the code does now**: the monitor hard-stops on the first of the three
-numeric failure modes (`health_violation` in `src/rocm_qlora/monitor.py`:
+numeric failure modes (`health_violation` in `src/rocm_qlora/metrics.py`:
 non-finite loss, NaN grad_norm with finite loss, exact-zero loss), writes an
 `error` event into `metrics.jsonl`, and exits loudly. Nothing silent, nothing
 saved that looks healthy.

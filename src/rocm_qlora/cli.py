@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -400,8 +401,6 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     """Parse arguments and dispatch to the selected command."""
-    import os
-
     # Point the torch wheel's libdrm at the system ASIC-ID table (silences a
     # per-GPU stderr flood at HIP init; workers inherit it via build_worker_env).
     os.environ.setdefault("AMDGPU_ASIC_ID_TABLE_PATHS", "/usr/share/libdrm")

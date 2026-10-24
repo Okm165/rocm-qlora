@@ -12,6 +12,9 @@ command before launch), then:
 
 Rank discipline: rank 0 owns the terminal UI, metrics.jsonl, charts and the
 report. Other ranks log warnings to their own file and stay quiet.
+
+Deliberate third-party patches (the DDP init-broadcast skip, the env-gated
+NaN-gradient diagnostics) live in ``patches.py``.
 """
 
 from __future__ import annotations
@@ -22,26 +25,26 @@ import logging
 import os
 import time
 import traceback
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 from .config import Config
+from .patches import install_diagnostics, skip_redundant_init_sync
 from .sft import build_sft_config, ensure_training_chat_template
 from .utils import fmt_float, fmt_int, human_duration, seed_everything
 
 if TYPE_CHECKING:
-    import torch
     from datasets import Dataset
     from peft import PeftModel
     from rich.console import Console
     from transformers import PreTrainedModel, PreTrainedTokenizerBase
     from trl import SFTTrainer
 
+    from .callback import GpuSampler, MetricsCallback
     from .data import DatasetStats, TokenProfile
+    from .metrics import MetricsRecord, MetricsWriter, RunSummary
     from .model import ParameterReport
-    from .monitor import GpuSampler, MetricsCallback, MetricsRecord, MetricsWriter, RunSummary
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -105,68 +108,6 @@ def setup_logging(run_dir: Path, rank: int) -> logging.Logger:
 
 
 # ---------------------------------------------------------------------------
-# Runtime patches
-# ---------------------------------------------------------------------------
-
-
-def _skip_redundant_init_sync(log: Callable[[str], None]) -> None:
-    """Disable DDP's initial parameter broadcast (safe *by construction* here).
-
-    The broadcast coalesces the 16-bit parameters into one ~4.9 GiB transient
-    buffer (fp16 embed_tokens + lm_head), which OOMs a 24 GB card next to the
-    loaded weights. It is redundant: every rank loads the same prepared
-    checkpoint and initializes LoRA with the same seed, so the replicas are
-    bit-identical by construction. This is a deliberate monkeypatch (torch
-    exposes no parameter for it, and accelerate's kwargs dataclass cannot
-    carry one); if a future torch renames the binding, the warning below says
-    the broadcast — and its OOM — is back.
-    """
-    import torch.nn.parallel.distributed as ddp_mod
-
-    if hasattr(ddp_mod, "_sync_module_states"):
-        ddp_mod._sync_module_states = lambda *args, **kwargs: None  # pyright: ignore[reportPrivateUsage]  # deliberate no-op
-        log("DDP init broadcast disabled (identical checkpoints + shared seed → replicas identical by construction)")
-    else:
-        log(
-            "WARNING: torch.nn.parallel.distributed._sync_module_states is gone — the DDP init broadcast "
-            "(~4.9 GiB transient at 27B) is back; expect an OOM at trainer construction"
-        )
-
-
-def _install_grad_finite_checks(model: torch.nn.Module, log: Callable[[str], None]) -> None:
-    """Abort at the *exact* parameter whose gradient goes non-finite.
-
-    The failure this exists for: a step with a finite loss can still produce
-    NaN gradients in the backward. DDP allreduces the NaN into every rank,
-    the optimizer step poisons the weights, and from then on the fused loss
-    reports exactly 0.0 while the loss EMA keeps falling. Catching the NaN in
-    the post-accumulate hook fires *before* the optimizer step and names the
-    tensor — the difference between "grad_norm became NaN" and a root cause.
-
-    Diagnostics only (env-gated): one isfinite kernel + sync per trainable
-    tensor per micro-batch.
-    """
-    import torch
-
-    def make_hook(param_name: str):
-        def hook(grad: torch.Tensor):
-            if grad is not None and not bool(torch.isfinite(grad).all()):  # pyright: ignore[reportUnnecessaryComparison]  # defensive
-                raise RuntimeError(
-                    f"non-finite gradient in '{param_name}' — aborting before the optimizer step "
-                    "(ROCM_QLORA_GRAD_CHECK=1). See docs/05-troubleshooting.md"
-                )
-
-        return hook
-
-    n = 0
-    for name, param in model.named_parameters():
-        if param.requires_grad:
-            param.register_post_accumulate_grad_hook(make_hook(name))
-            n += 1
-    log(f"gradient finiteness checks installed on {n} trainable tensors")
-
-
-# ---------------------------------------------------------------------------
 # Rank-0 terminal output
 # ---------------------------------------------------------------------------
 
@@ -189,11 +130,12 @@ def _rank0_ui(cfg: Config, run_dir: Path, *, enabled: bool) -> Rank0UI | None:
         return None
     from rich.console import Console
 
-    from .monitor import GpuSampler, MetricsWriter
+    from .callback import GpuSampler
+    from .metrics import MetricsWriter
 
     console = Console()
     sampler = GpuSampler(cfg.logging.gpu_sample_seconds)
-    from .monitor import METRICS_FILENAME
+    from .metrics import METRICS_FILENAME
 
     writer = MetricsWriter(run_dir / METRICS_FILENAME)
     return Rank0UI(console, sampler, writer)
@@ -231,7 +173,7 @@ def _print_model_status(
     ui: Rank0UI, attn: str, disabled: list[str], report: ParameterReport, *, world_size: int
 ) -> None:
     """Model summary lines + the model_loaded event (rank 0)."""
-    from .monitor import EventRecord
+    from .metrics import EventRecord
 
     attn_note = f"{attn} (doctor-verified where available)"
     if disabled:
@@ -351,17 +293,6 @@ def _resolve_attention(cfg: Config, logger: logging.Logger) -> tuple[str, list[s
     return attn, disabled
 
 
-def _install_diagnostics(model: torch.nn.Module, logger: logging.Logger) -> None:
-    """Env-gated numerical diagnostics (see ``health_violation`` for the failure mode)."""
-    if os.environ.get("ROCM_QLORA_DETECT_ANOMALY") == "1":
-        import torch
-
-        torch.autograd.set_detect_anomaly(True)
-        logger.info("autograd anomaly detection ON — the first NaN-producing op will raise with a traceback")
-    if os.environ.get("ROCM_QLORA_GRAD_CHECK") == "1":
-        _install_grad_finite_checks(model, logger.info)
-
-
 def _build_model(
     cfg: Config,
     local_rank: int,
@@ -384,7 +315,7 @@ def _build_model(
     model = attach_lora(model, cfg)
     report = parameter_report(cast("PreTrainedModel", model))  # pyright: ignore[reportInvalidCast]  # PeftModel forwards to the base
 
-    _install_diagnostics(model, logger)
+    install_diagnostics(model, logger)
 
     # Reclaim the load-time casting transients still sitting in the
     # allocator's reserved pool (~2.4 GB for this model). Without this,
@@ -406,7 +337,7 @@ def _render_charts(*args: Any, **kwargs: Any) -> None:
 
 def _make_callback(cfg: Config, run_dir: Path, *, ui: Rank0UI, world_size: int) -> MetricsCallback:
     """The rank-0 observability callback (charts render in a side thread)."""
-    from .monitor import MetricsCallback
+    from .callback import MetricsCallback
 
     return MetricsCallback(
         cfg,
@@ -443,7 +374,7 @@ def _build_trainer(
     callbacks = [metrics_callback] if metrics_callback is not None else []
 
     if world_size > 1:
-        _skip_redundant_init_sync(logger.info)
+        skip_redundant_init_sync(logger.info)
 
     from trl import SFTTrainer
 
@@ -495,7 +426,7 @@ def _report_failure(run_dir: Path, writer: MetricsWriter, error: Exception) -> N
     """Rank-0 abort path: record the abort event, print the failure lines."""
     from rich.console import Console
 
-    from .monitor import EventRecord
+    from .metrics import EventRecord
 
     writer.write(EventRecord(type="event", level="error", event="abort", detail=str(error)))
     writer.close()
@@ -524,7 +455,7 @@ def main(argv: list[str] | None = None) -> None:
 
     logger = setup_logging(run_dir, rank)
     # Identical seed on every rank: required so all replicas initialize
-    # identically (see _skip_redundant_init_sync).
+    # identically (see patches.skip_redundant_init_sync).
     seed_everything(cfg.run.seed)
 
     import torch
@@ -580,7 +511,7 @@ def _finalize_run(
     dry_run: bool,
 ) -> None:
     """Rank-0 end of run: run_end event, charts, report, wrap-up."""
-    from .monitor import RunEndRecord, chart_meta
+    from .metrics import RunEndRecord, chart_meta
     from .plots import render_charts, write_report
 
     records = metrics_callback.records if metrics_callback else []
@@ -613,10 +544,10 @@ def _assemble_summary(adapter_dir: Path, records: list[MetricsRecord], *, start_
     """End-of-run numbers for the wrap-up lines and the run_end record.
 
     Everything but the wall clock and the adapter path is derived from the
-    metrics stream (see ``monitor.summarize``) — there is no second file to
+    metrics stream (see ``metrics.summarize``) — there is no second file to
     keep in sync.
     """
-    from .monitor import summarize
+    from .metrics import summarize
 
     summary = summarize(records)
     summary.total_seconds = time.monotonic() - start_time
