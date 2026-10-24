@@ -174,11 +174,13 @@ src/rocm_qlora/
   model.py              prepare (NF4 + surgery) · 4-bit load · LoRA · merge
   monitor.py            metrics.jsonl · live dashboard · health checks · summaries
   plots.py              all matplotlib charts + Markdown report
-  hardware.py           rocm-smi parsing · VRAM estimator · GPU selection · SDPA probe
+  hardware.py           rocm-smi parsing · GPU selection · SDPA/IPC probes
+  vram.py               model geometry · transparent VRAM estimator
   launcher.py           GPU choice, worker env, torchrun orchestration
   sft.py                config → SFTConfig mapping (checkpoint cadence, warmup)
   train.py              the training worker (one process per GPU)
   explain.py            contextual explainer panels (deduplicated per run)
+  doctor.py             environment + hardware report (.context artifacts)
   chat.py               interactive sanity check
 docs/                   01-qlora-explained · 02-amd-rocm-notes · 03-hyperparameters · 04-reading-the-plots · 05-troubleshooting · 06-27b-runbook
 scripts/                 poc_p2p_allreduce.py (RCCL transport POC) · poc_deltanet_backward.py (27B NaN hunt)

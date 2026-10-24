@@ -38,7 +38,8 @@ if TYPE_CHECKING:
     from torch import nn
     from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
-    from .hardware import FinetuneMeta, HostMemory
+    from .hardware import HostMemory
+    from .vram import FinetuneMeta
 
 # ---------------------------------------------------------------------------
 # Small helpers
