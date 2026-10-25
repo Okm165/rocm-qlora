@@ -16,7 +16,8 @@ output_root = ".outputs"
 name = "unsloth/Qwen3.8-27B-unsloth-bnb-4bit"
 # Where `prepare` writes the slimmed, train-ready checkpoint (git-ignored).
 prepared_dir = ".data/models/qwen3.8-27b-nf4"
-attn = "auto"          # let `doctor`'s probe pick sdpa/eager
+attn = "sdpa"              # "sdpa" = torch's fused kernels; "eager" = math only (slowest, always correct)
+sdpa_disable = ["mem_efficient"]   # gfx1100: the mem-efficient *backward* is the observed NaN source (docs/02)
 dtype = "bfloat16"     # compute dtype for the quantized matmuls
 
 [quantization]
@@ -90,7 +91,7 @@ checkpoint_every_n_steps = 42
 # GC threshold only — `expandable_segments` corrupted numerics on this stack
 # (docs/05); headroom is bought with batch 1 × accum 4 (see [optim]).
 hip_alloc_conf = "garbage_collection_threshold:0.8"
-aotriton = "auto"       # doctor's SDPA verdict decides the env flag
+aotriton = true             # TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL for the workers (docs/02)
 omp_num_threads = 8     # a handful per rank; avoids host oversubscription
 
 [env.extra]

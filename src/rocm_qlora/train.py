@@ -176,9 +176,7 @@ def _print_model_status(
     """Model summary lines + the model_loaded event (rank 0)."""
     from .metrics import EventRecord
 
-    attn_note = f"{attn} (doctor-verified where available)"
-    if disabled:
-        attn_note = f"{attn} ({', '.join(disabled)} off per doctor verdict)"
+    attn_note = attn if not disabled else f"{attn} ({', '.join(disabled)} off per config)"
     ui.console.print(
         f"[dim]model:[/dim] {fmt_int(report['total'])} params · trainable {fmt_int(report['trainable'])} "
         f"({report['pct']:.3f}%) · attention {attn_note}"
@@ -272,25 +270,12 @@ def _load_training_data(cfg: Config, args: WorkerArgs, *, ui: Rank0UI | None, lo
 
 
 def _resolve_attention(cfg: Config, logger: logging.Logger) -> tuple[str, list[str]]:
-    """Attention implementation + the SDPA backends the doctor verdict disabled."""
-    import torch
+    """The config's static attention choice, applied to this process."""
+    from .model import configure_sdpa
 
-    from .launcher import apply_sdpa_verdict, resolve_attn_impl
-
-    attn = resolve_attn_impl(cfg)
-    disabled = apply_sdpa_verdict()
-    if disabled:
-        logger.info(
-            "SDPA backends disabled by the doctor verdict: %s — masked attention falls back to math (docs/05)",
-            ", ".join(disabled),
-        )
-    logger.info(
-        "SDPA backends: flash=%s mem_efficient=%s math=%s",
-        torch.backends.cuda.flash_sdp_enabled(),
-        torch.backends.cuda.mem_efficient_sdp_enabled(),
-        torch.backends.cuda.math_sdp_enabled(),
-    )
-    return attn, disabled
+    disabled = configure_sdpa(cfg)
+    logger.info("attention: %s (SDPA disabled by config: %s)", cfg.model.attn, ", ".join(disabled) or "none")
+    return cfg.model.attn, disabled
 
 
 def _build_model(

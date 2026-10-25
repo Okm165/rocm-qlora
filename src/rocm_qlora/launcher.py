@@ -7,18 +7,12 @@ data-parallel runs. Keeping the worker in a child process guarantees a clean
 HIP context: environment variables that must exist *before* torch initializes
 (AOTriton flags, allocator config) are set on the child only.
 
-Doctor verdicts
----------------
-``rocm-qlora doctor`` probes which SDPA backends actually launch on this
-machine and records a verdict in ``.context/doctor-latest.json``. The
-launcher consults it to decide:
-
-* attention implementation: ``sdpa`` vs ``eager`` (math fallback),
-* whether ``TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1`` should be exported,
-* which SDPA backends to disable outright: a probe-failed backend stays off
-  for the whole worker process — the mem-efficient *backward* is the observed
-  intermittent-NaN source on gfx1100, and padded batches (4D mask) are what
-  dispatch to it (see docs/05).
+Attention and transport are static config, never probed
+-------------------------------------------------------
+``model.attn`` (sdpa | eager), ``model.sdpa_disable`` (backends switched off
+in every worker), ``env.aotriton`` (the AOTriton flag) and ``env.extra``
+(transport switches such as ``NCCL_P2P_DISABLE``). docs/02 explains what each
+one does and what to check on your machine; nothing here is discovered for you.
 """
 
 from __future__ import annotations
@@ -44,107 +38,9 @@ from .hardware import (
     select_gpus,
     torch_runtime_info,
 )
-from .probes import BnbSmoke, HipIpcProbe, MatmulBench, SdpaProbe
-from .utils import now_iso, read_json, timestamp_slug, write_json
+from .utils import now_iso, timestamp_slug, write_json
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DOCTOR_VERDICT = REPO_ROOT / ".context" / "doctor-latest.json"
-
-
-# ---------------------------------------------------------------------------
-# Doctor verdict plumbing
-# ---------------------------------------------------------------------------
-
-
-class DoctorHost(TypedDict):
-    """The ``host`` section of doctor-latest.json."""
-
-    ram: HostMemory
-    cpu: CpuInfo
-
-
-class DoctorVerdict(TypedDict, total=False):
-    """`.context/doctor-latest.json`: what `doctor` writes, what the launcher reads.
-
-    The launcher consumes the ``sdpa`` section (backend guard); the rest is the
-    artifact for humans and issue reports. ``total=False``: ``doctor --fast``
-    skips probes, so every section is optional.
-    """
-
-    created: str
-    host: DoctorHost
-    packages: dict[str, str]
-    sdpa: SdpaProbe
-    bnb_smoke: BnbSmoke
-    hip_ipc: HipIpcProbe
-    bench: MatmulBench
-
-
-def load_doctor_verdict() -> DoctorVerdict | None:
-    """Read .context/doctor-latest.json (None when missing/invalid)."""
-    try:
-        return read_json(DOCTOR_VERDICT)
-    except Exception:
-        return None
-
-
-def resolve_attn_impl(cfg: Config) -> str:
-    """Attention implementation: config wins; else doctor verdict; else sdpa."""
-    if cfg.model.attn != "auto":
-        return cfg.model.attn
-    verdict = load_doctor_verdict()
-    sdpa = verdict.get("sdpa") if verdict else None
-    if sdpa and sdpa.get("attn_implementation"):
-        return sdpa["attn_implementation"]
-    return "sdpa"
-
-
-def resolve_aotriton(cfg: Config) -> bool:
-    """Should the worker export TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1?"""
-    if cfg.env.aotriton == "on":
-        return True
-    if cfg.env.aotriton == "off":
-        return False
-    verdict = load_doctor_verdict()
-    sdpa = verdict.get("sdpa") if verdict else None
-    if sdpa and sdpa.get("verdict"):
-        return sdpa["verdict"] == "aotriton_on"
-    return True  # recommended default on gfx1100; harmless elsewhere
-
-
-def apply_sdpa_verdict() -> list[str]:
-    """Turn off SDPA backends the doctor probe flagged as broken.
-
-    The probe covers *forward* kernels; on gfx1100 the mem-efficient
-    **backward** is the observed intermittent-NaN source (docs/05), and an
-    explicit attention mask — which padded batches always pass — is what
-    dispatches to it. A failed probe therefore disables the backend for the
-    whole worker process: masked batches fall back to math attention, while
-    causal unmasked ones stay on the AOTriton flash path. No verdict on
-    disk → no change.
-    """
-    verdict = load_doctor_verdict()
-    if not verdict:
-        return []
-    sdpa = verdict.get("sdpa")
-    backends = sdpa.get("backends", {}) if sdpa else {}
-    mode = "on" if os.environ.get("TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL") == "1" else "off"
-    import torch
-
-    def probe_failed(backend: str) -> bool:
-        # A hand-edited or truncated verdict must not crash the worker: only a
-        # well-formed entry with ok=False disables a backend.
-        entry = backends.get(f"{backend}_{mode}")
-        return isinstance(entry, dict) and entry.get("ok") is False
-
-    disabled: list[str] = []
-    if probe_failed("flash") and torch.backends.cuda.flash_sdp_enabled():
-        torch.backends.cuda.enable_flash_sdp(False)
-        disabled.append("flash")
-    if probe_failed("efficient") and torch.backends.cuda.mem_efficient_sdp_enabled():
-        torch.backends.cuda.enable_mem_efficient_sdp(False)
-        disabled.append("mem_efficient")
-    return disabled
 
 
 # ---------------------------------------------------------------------------
@@ -183,7 +79,7 @@ def build_worker_env(cfg: Config, gpu_ids: list[int]) -> dict[str, str]:
     env.setdefault("PYTHONHASHSEED", str(cfg.run.seed))
     if cfg.env.hip_alloc_conf:
         env["PYTORCH_HIP_ALLOC_CONF"] = cfg.env.hip_alloc_conf
-    if resolve_aotriton(cfg):
+    if cfg.env.aotriton:
         env["TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL"] = "1"
     else:
         env.pop("TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL", None)
@@ -258,18 +154,6 @@ def preflight_gpus(cfg: Config) -> GpuPlan:
         who = [f"{p['name']} (pid {p['pid']}, {p['vram_b'] / 1e9:.1f} GB)" for p in holders if str(g) in str(p["gpus"])]
         if who:
             plan.warnings.append(f"GPU {g} is currently shared with: {', '.join(who)}")
-    # The SDPA guard needs probe results; without them nothing is disabled.
-    sdpa = (load_doctor_verdict() or {}).get("sdpa") or {}
-    if not sdpa:
-        plan.warnings.append(
-            "no SDPA probe verdict in .context/doctor-latest.json — every attention backend stays enabled "
-            "(the mem-efficient backward is the known intermittent-NaN source, docs/05); run `rocm-qlora doctor`"
-        )
-    elif not any(key.startswith(("flash_", "efficient_", "math_")) for key in (sdpa.get("backends") or {})):
-        plan.warnings.append(
-            "the SDPA verdict has no per-backend results (probe format changed?) — no backend will be disabled; "
-            "run `rocm-qlora doctor`"
-        )
     return plan
 
 
@@ -287,10 +171,8 @@ class EnvFingerprint(TypedDict):
     """``env_fingerprint.json``: machine + software state stored with a run.
 
     A *frozen* record: it says what was actually used at run start (resolved
-    GPU ids, the doctor verdict applied to the env), which is the point — the
-    config snapshot can be edited afterwards, this cannot. It overlaps
-    ``.context/doctor-latest.json`` on purpose: the doctor verdict is
-    machine state *now*, this is the state that run saw.
+    GPU ids, the attention and transport settings the workers got), which is
+    the point — the config snapshot can be edited afterwards, this cannot.
     """
 
     created: str
@@ -301,7 +183,7 @@ class EnvFingerprint(TypedDict):
     kernel: str
     packages: dict[str, str]
     torch_runtime: TorchRuntime
-    env: dict[str, str | bool]
+    env: dict[str, str | bool | list[str]]
 
 
 def write_env_fingerprint(run_dir: Path, cfg: Config, gpu_ids: list[int]) -> None:
@@ -327,8 +209,9 @@ def write_env_fingerprint(run_dir: Path, cfg: Config, gpu_ids: list[int]) -> Non
         "torch_runtime": torch_runtime_info(),
         "env": {
             "PYTORCH_HIP_ALLOC_CONF": cfg.env.hip_alloc_conf,
-            "aotriton": resolve_aotriton(cfg),
-            "attn_impl": resolve_attn_impl(cfg),
+            "aotriton": cfg.env.aotriton,
+            "attn": cfg.model.attn,
+            "sdpa_disable": cfg.model.sdpa_disable,
             "rccl_transport": (
                 "shared-memory (default; opt into P2P with [env.extra] NCCL_P2P_DISABLE=0)"
                 if str(cfg.env.extra.get("NCCL_P2P_DISABLE", "1")) != "0"

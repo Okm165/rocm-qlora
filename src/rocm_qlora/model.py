@@ -73,6 +73,27 @@ def prepared_checkpoint_exists(cfg: Config) -> bool:
     return (prepared / "config.json").exists() and (prepared / "finetune_meta.json").exists()
 
 
+def configure_sdpa(cfg: Config) -> list[str]:
+    """Apply the config's static SDPA backend choices to this process.
+
+    Returns the names actually switched off. ``model.sdpa_disable`` is the only
+    source — no probing, no machine discovery (docs/02 explains the gfx1100
+    mem-efficient backward issue and what to check, docs/05 what it looks like).
+    """
+    import torch
+
+    disabled: list[str] = []
+    for backend in cfg.model.sdpa_disable:
+        if backend == "flash" and torch.backends.cuda.flash_sdp_enabled():
+            torch.backends.cuda.enable_flash_sdp(False)
+        elif backend == "mem_efficient" and torch.backends.cuda.mem_efficient_sdp_enabled():
+            torch.backends.cuda.enable_mem_efficient_sdp(False)
+        else:
+            continue
+        disabled.append(backend)
+    return disabled
+
+
 def resolve_model_class(model_name: str, *, trust_remote_code: bool = False):
     """Pick the right Auto class for a checkpoint (VLM vs text-only)."""
     from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageTextToText
@@ -140,7 +161,7 @@ def load_model_for_training(cfg: Config, *, local_rank: int = 0, attn: str | Non
         "device_map": {"": f"cuda:{local_rank}"},
         "trust_remote_code": cfg.model.trust_remote_code,
     }
-    attn_impl = attn or ("sdpa" if cfg.model.attn == "auto" else cfg.model.attn)
+    attn_impl = attn or cfg.model.attn
     kwargs["attn_implementation"] = attn_impl
     model = model_cls.from_pretrained(str(cfg.model.prepared_dir), **kwargs)
     model.config.use_cache = False

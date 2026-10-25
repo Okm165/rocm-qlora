@@ -50,8 +50,30 @@ class ModelConfig(_Section):
     #: Local directory with the prepared (NF4) checkpoint. `train` loads from
     #: here; `prepare` writes here.
     prepared_dir: str = ".data/models/qwen3.8-27b-nf4"
-    #: "auto" lets `doctor`'s probe decide; else "sdpa" | "eager".
-    attn: Literal["auto", "sdpa", "eager"] = "auto"
+    #: Attention implementation for training and chat:
+    #:   "sdpa"  — torch's fused kernels (flash / mem-efficient / math, per batch)
+    #:   "eager" — plain math attention everywhere (slowest, always correct)
+    attn: Literal["sdpa", "eager"] = "sdpa"
+    #: SDPA backends to switch off in every worker, by torch's names:
+    #: "flash" and/or "mem_efficient" ("math" is the always-available fallback
+    #: and cannot be disabled). On gfx1100 the mem-efficient *backward* is the
+    #: observed intermittent-NaN source for padded batches (docs/02, docs/05),
+    #: so the shipped configs disable it. Nothing is probed: this is the
+    #: decision, made here.
+    sdpa_disable: list[str] = Field(default_factory=list)
+
+    @field_validator("sdpa_disable")
+    @classmethod
+    def _known_sdpa_backends(cls, value: list[str]) -> list[str]:
+        known = {"flash", "mem_efficient"}
+        unknown = sorted(set(value) - known)
+        if unknown:
+            raise ValueError(
+                f"model.sdpa_disable: unknown backend(s) {unknown} — valid names are {sorted(known)} "
+                "(math is the fallback and cannot be disabled)"
+            )
+        return value
+
     dtype: Literal["bfloat16", "float16"] = "bfloat16"  # compute dtype for quantized matmuls
     #: Allow custom modeling code from the hub (off by default).
     trust_remote_code: bool = False
@@ -196,8 +218,11 @@ class EnvConfig(_Section):
     #: NaN grads on an identical batch — see docs/05). The GC threshold alone
     #: keeps fragmentation in check; headroom is bought with batch size.
     hip_alloc_conf: str = "garbage_collection_threshold:0.8"
-    #: "auto" -> use `doctor`'s SDPA verdict; "on"/"off" force the AOTriton env.
-    aotriton: Literal["auto", "on", "off"] = "auto"
+    #: Export TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1 to the workers. On some
+    #: gfx1100 wheels this is what makes the fused flash attention path
+    #: available; docs/02 explains what it does and how to tell whether your
+    #: stack needs it (or misbehaves with it).
+    aotriton: bool = True
     #: Threads per rank. A handful per rank avoids host oversubscription.
     omp_num_threads: Annotated[int, Field(ge=1)] = 8
     #: Extra environment variables for the training workers (string→string).

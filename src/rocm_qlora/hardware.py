@@ -181,7 +181,7 @@ def host_memory() -> HostMemory:
 
 
 class CpuInfo(TypedDict, total=False):
-    """`cpu_info`'s result — the ``cpu`` section of doctor-latest.json."""
+    """`cpu_info`'s result — the ``cpu`` section of doctor and the run fingerprint."""
 
     cores: int | None
     model: str

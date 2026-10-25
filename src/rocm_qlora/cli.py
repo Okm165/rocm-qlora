@@ -361,11 +361,6 @@ def build_parser() -> argparse.ArgumentParser:
         )
 
     p = sub.add_parser("doctor", help="environment + hardware report")
-    p.add_argument(
-        "--fast",
-        action="store_true",
-        help="skip GPU probes (SDPA, bnb) — prints tables only and leaves doctor-latest.json untouched",
-    )
     p.add_argument("--bench", action="store_true", help="also run the bf16 matmul benchmark")
     p.set_defaults(func=cmd_doctor)
 

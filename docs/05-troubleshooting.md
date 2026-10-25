@@ -10,7 +10,7 @@ gfx1100 / ROCm 7.1 — not generic advice.
 <run>/metrics.jsonl        the numeric story (events have type="event")
                            schema: the MetricsRecord TypedDicts in metrics.py
                            (train / eval / epoch_end / event / run_end)
-.context/doctor-latest.json  machine state at run start
+(attention/transport settings are static config — see config.resolved.toml)
 ```
 
 ---
@@ -43,11 +43,13 @@ RDNA3 SDPA backends can fail in confusing ways — the error may surface at an
 *unrelated* op later (deferred launch failure). Run:
 
 ```bash
-uv run rocm-qlora doctor          # probes FLASH / EFFICIENT / MATH in fresh processes
+uv run rocm-qlora doctor          # hardware + stack report (configures nothing)
 ```
 
-The launcher then picks `sdpa` or `eager` from the verdict automatically. If
-fused attention dies after a driver/stack change, force math attention:
+Attention is static config: `model.attn` picks `sdpa` or `eager`, and
+`model.sdpa_disable` switches named fused backends off (docs/02 explains the
+knobs and what to check). If fused attention dies after a driver/stack
+change, force math attention:
 
 ```bash
 uv run rocm-qlora train --set model.attn=eager --config …
@@ -102,10 +104,10 @@ backward op to **`ScaledDotProductEfficientAttentionBackward0`** — the fused
 (mem-efficient) attention backward, not the DeltaNet layers; plain allreduce
 is bit-exact on both transports, so the cause is model-side numerics. Until
 it is root-caused, the operational answer is: guards (already active),
-`--resume` from the last checkpoint, and the automatic backend guard (the
-launcher disables the backends the probe flagged — on this box mem-efficient,
-whose backward is the observed intermittent-NaN source; `--set model.attn=eager`
-forces math everywhere).
+`--resume` from the last checkpoint, and the static backend guard
+(`model.sdpa_disable = ["mem_efficient"]` in the shipped configs — the
+mem-efficient backward is the observed intermittent-NaN source;
+`--set model.attn=eager` forces math everywhere).
 `scripts/poc_deltanet_backward.py` isolates one Gated DeltaNet layer at the
 27B's exact dimensions for a targeted reproduction (needs a free GPU).
 
@@ -235,7 +237,7 @@ Checklist, in order:
 ## Diagnostics to collect before reporting an issue
 
 ```bash
-uv run rocm-qlora doctor              # full probe → .context/doctor-latest.json
+uv run rocm-qlora doctor              # hardware + stack report
 <run>/env_fingerprint.json            # exact stack + GPU state at run start
 <run>/config.resolved.toml            # exact config (overrides applied)
 <run>/logs/rank-0.log                 # first ERROR line

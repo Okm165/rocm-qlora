@@ -1,7 +1,8 @@
-"""`rocm-qlora doctor` — environment + hardware report with GPU probes.
+"""`rocm-qlora doctor` — environment + hardware report.
 
-Writes ``.context/doctor-latest.json``: the artifact the train launcher
-reads to pick attention settings and AOTriton flags.
+Reports facts only: host, GPUs, installed packages, torch runtime, the
+bitsandbytes 4-bit smoke and an optional matmul benchmark. It configures
+nothing — attention, AOTriton and transport are static config (docs/02).
 """
 
 from __future__ import annotations
@@ -26,11 +27,9 @@ from .hardware import (
     package_versions,
     torch_runtime_info,
 )
-from .utils import timestamp_slug, write_json
 
 if TYPE_CHECKING:
-    from .launcher import DoctorVerdict
-    from .probes import BnbSmoke, HipIpcProbe, MatmulBench, SdpaProbe
+    from .probes import BnbSmoke, MatmulBench
 
 console = Console()
 
@@ -82,29 +81,6 @@ def _doctor_software_tables(versions: dict[str, str], runtime: TorchRuntime) -> 
     console.print(rtable)
 
 
-def _probe_sdpa() -> SdpaProbe:
-    """SDPA backend probe + table; returns the ``sdpa`` verdict section."""
-    from .probes import probe_sdpa
-
-    console.print("[dim]probing SDPA backends (fresh subprocess per backend, ~30-60 s)…[/dim]")
-    sdpa = probe_sdpa()
-    table = Table(title="SDPA backend probe")
-    table.add_column("backend", style="dim")
-    table.add_column("AOTriton env on", justify="center")
-    table.add_column("env off", justify="center")
-    for backend in ("flash", "efficient", "math"):
-        on = sdpa["backends"].get(f"{backend}_on", {})
-        off = sdpa["backends"].get(f"{backend}_off", {})
-        table.add_row(
-            backend,
-            "[green]✓[/green]" if on.get("ok") else f"[red]✗[/red] [dim]{str(on.get('error', ''))[:40]}[/dim]",
-            "[green]✓[/green]" if off.get("ok") else "[red]✗[/red]",
-        )
-    console.print(table)
-    console.print(f"[bold]verdict:[/bold] {sdpa['verdict']} → attn_implementation={sdpa['attn_implementation']}")
-    return sdpa
-
-
 def _probe_bnb() -> BnbSmoke:
     """bitsandbytes 4-bit smoke (train + decode shapes) + report."""
     from .probes import probe_bnb_smoke
@@ -117,22 +93,6 @@ def _probe_bnb() -> BnbSmoke:
     return result
 
 
-def _probe_hip_ipc() -> HipIpcProbe:
-    """RCCL IPC-handle probe + report."""
-    from .probes import probe_hip_ipc
-
-    ipc = probe_hip_ipc()
-    if ipc.get("ok"):
-        console.print("RCCL IPC handles (hipIpcGetMemHandle, dma-buf mode): [green]✓[/green] → P2P collectives enabled")
-    else:
-        console.print(
-            f"RCCL IPC handles: [red]✗[/red] {ipc.get('error', '')} — runs use shared-memory collectives "
-            '(the launcher\'s default: NCCL_P2P_DISABLE=1); opt into P2P with [env.extra] NCCL_P2P_DISABLE = "0" '
-            "(docs/02)"
-        )
-    return ipc
-
-
 def _bench_matmul() -> MatmulBench:
     """bf16 matmul TFLOPS on GPU 0 + report."""
     from .probes import matmul_benchmark
@@ -143,29 +103,8 @@ def _bench_matmul() -> MatmulBench:
     return bench
 
 
-def _doctor_probes(args: argparse.Namespace) -> DoctorVerdict:
-    """SDPA / bitsandbytes / RCCL-IPC probes (+ optional matmul bench).
-
-    Returns the verdict dict the launcher reads from .context/doctor-latest.json.
-    """
-    verdict: DoctorVerdict = {}
-    if not args.fast:
-        verdict["sdpa"] = _probe_sdpa()
-        verdict["bnb_smoke"] = _probe_bnb()
-        verdict["hip_ipc"] = _probe_hip_ipc()
-    if args.bench:
-        verdict["bench"] = _bench_matmul()
-    return verdict
-
-
 def cmd_doctor(args: argparse.Namespace) -> int:
-    """Run the environment doctor; writes .context/doctor-latest.json."""
-
-    from .launcher import DOCTOR_VERDICT  # one path for writer and reader
-
-    context_dir = DOCTOR_VERDICT.parent
-    context_dir.mkdir(parents=True, exist_ok=True)
-
+    """Run the environment doctor (a report; nothing is configured from it)."""
     console.rule(f"[bold cyan]rocm-qlora doctor[/bold cyan] · v{__version__}")
 
     mem = host_memory()
@@ -179,18 +118,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     runtime = torch_runtime_info()
     _doctor_software_tables(versions, runtime)
 
-    verdict = _doctor_probes(args)
-
-    # --- write artifacts ------------------------------------------------------
-    if args.fast:
-        # `--fast` skips the probes, and the launcher's SDPA guard reads their
-        # results from doctor-latest.json — writing a probe-less verdict here
-        # would silently disarm it. Leave the file to a full `doctor` run.
-        console.print("[dim]--fast: no probes, so doctor-latest.json is left untouched[/dim]")
-        return 0
-    verdict["created"] = timestamp_slug()
-    verdict["host"] = {"ram": mem, "cpu": cpu}
-    verdict["packages"] = versions
-    write_json(DOCTOR_VERDICT, verdict)
-    console.print(f"[dim]saved: {DOCTOR_VERDICT}[/dim]")
+    _probe_bnb()
+    if args.bench:
+        _bench_matmul()
     return 0

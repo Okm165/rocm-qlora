@@ -141,3 +141,23 @@ def test_cached_prepare_result_requires_the_same_source(tmp_path):
     other = Config.from_dict({"model": {"name": "org/b", "prepared_dir": str(tmp_path)}})
     assert _cached_prepare_result(other, tmp_path, meta, force=False) is None
     assert _cached_prepare_result(cfg, tmp_path, meta, force=True) is None
+
+
+def test_configure_sdpa_applies_only_the_config(monkeypatch):
+    """The static decision: what model.sdpa_disable names is what gets switched off."""
+    import torch
+
+    from rocm_qlora.model import configure_sdpa
+
+    flash_before = torch.backends.cuda.flash_sdp_enabled()
+    mem_before = torch.backends.cuda.mem_efficient_sdp_enabled()
+    try:
+        cfg = Config.from_dict({"model": {"sdpa_disable": ["mem_efficient"]}})
+        assert configure_sdpa(cfg) == ["mem_efficient"]
+        assert torch.backends.cuda.mem_efficient_sdp_enabled() is False
+        assert torch.backends.cuda.flash_sdp_enabled() is True
+        # nothing named, nothing touched
+        assert configure_sdpa(Config.from_dict({})) == []
+    finally:
+        torch.backends.cuda.enable_flash_sdp(flash_before)
+        torch.backends.cuda.enable_mem_efficient_sdp(mem_before)

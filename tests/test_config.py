@@ -93,3 +93,12 @@ def test_from_toml_reports_missing_and_malformed_files(tmp_path):
     broken.write_text("[run\nname = 1\n")
     with pytest.raises(ConfigError, match="not valid TOML"):
         Config.from_toml(broken)
+
+
+def test_sdpa_disable_names_are_validated():
+    """The knob takes torch's backend names; math is the fallback and cannot go."""
+    cfg = Config.from_dict({"model": {"sdpa_disable": ["flash", "mem_efficient"]}})
+    assert cfg.model.sdpa_disable == ["flash", "mem_efficient"]
+    for bad in ("math", "efficient", "mem-efficient"):
+        with pytest.raises(ConfigError, match="unknown backend"):
+            Config.from_dict({"model": {"sdpa_disable": [bad]}})

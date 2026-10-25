@@ -8,7 +8,7 @@ Package layout (each module explains itself — see module docstrings):
     model.py      4-bit load + selective fp32 cast + LoRA (training-time assembly)
     merge.py      adapter -> bf16 merge (ready for GGUF export)
     hardware.py   ROCm/GPU discovery, rocm-smi parsing, GPU selection
-    probes.py     SDPA / HIP-IPC / bnb-smoke / matmul GPU probes
+    probes.py     in-process GPU diagnostics (bnb 4-bit smoke, matmul bench)
     launcher.py   GPU selection + worker environment + torchrun orchestration
     sft.py        project config -> trl.SFTConfig mapping
     train.py      the training worker: phases + orchestration

@@ -15,7 +15,8 @@ output_root = ".outputs"   # runs land in <root>/runs/<timestamp>-<name>
 [model]
 name = "Qwen/Qwen3.5-0.8B"
 prepared_dir = ".data/models/qwen3.5-0.8b-nf4"   # what `prepare` writes
-attn = "auto"              # doctor's SDPA verdict decides (docs/02)
+attn = "sdpa"              # "sdpa" = torch's fused kernels; "eager" = math only (slowest, always correct)
+sdpa_disable = ["mem_efficient"]   # gfx1100: the mem-efficient *backward* is the observed NaN source (docs/02)
 dtype = "bfloat16"         # compute dtype for the quantized matmuls
 
 [quantization]
@@ -66,7 +67,7 @@ gpu_sample_seconds = 5.0   # rocm-smi sampling period (background thread)
 
 [env]
 hip_alloc_conf = "garbage_collection_threshold:0.8"   # never expandable_segments (docs/05)
-aotriton = "auto"          # doctor's SDPA verdict decides the env flag
+aotriton = true             # TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL for the workers (docs/02)
 omp_num_threads = 8        # host threads per rank
 
 [dist]

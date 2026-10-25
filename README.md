@@ -48,9 +48,9 @@ rendered into your terminal at runtime.
 * **Loud guards, no silent rot.** Numerically broken training (NaN or
   exactly-zero loss, NaN `grad_norm`) aborts with a named `error` event
   and a doc pointer instead of continuing (`docs/05`). The same rule covers
-  everything else: a missing SDPA probe verdict warns at preflight, a second
-  run in one directory and a `prepare` without a visible GPU fail loudly,
-  and unknown numbers (tokens, wall time) render as n/a — never as zero.
+  everything else: a second run in one directory and a `prepare` without a
+  visible GPU fail loudly, and unknown numbers (tokens, wall time) render as
+  n/a — never as zero.
 
 ## Requirements
 
@@ -66,7 +66,7 @@ rendered into your terminal at runtime.
 
 ```bash
 uv sync                                                     # .venv in-repo, torch from the ROCm 7.1 index
-uv run rocm-qlora doctor                                    # probes GPUs, SDPA backends, bnb 4-bit
+uv run rocm-qlora doctor                                    # hardware + stack report
 # dataset expected at .data/raw/dataset.json (configurable via data.path)
 uv run rocm-qlora data --config configs/qwen3.8-27b.toml    # token-length profile
 uv run rocm-qlora prepare --config configs/qwen3.8-27b.toml # NF4 checkpoint (once)
@@ -153,11 +153,11 @@ Rejected, with evidence:
 Short version, all verified on RDNA3 hardware — full evidence in
 `docs/02-amd-rocm-notes.md`:
 
-* **Attention**: SDPA → AOTriton flash kernels work on gfx1100; `doctor`
-  probes each backend in a fresh process and the launcher applies the
-  verdict, disabling any backend the probe flagged (the mem-efficient
-  *backward* is the observed intermittent-NaN source; padded batches then
-  run math attention).
+* **Attention**: SDPA → AOTriton flash kernels work on gfx1100. The choices
+  are static config — `model.attn` (sdpa/eager) and `model.sdpa_disable`
+  (the shipped configs switch mem-efficient off: its *backward* is the
+  observed intermittent-NaN source, so padded batches run math attention).
+  docs/02 explains both knobs and what to check.
 * **RCCL**: P2P works via dma-buf IPC (`HSA_ENABLE_IPC_MODE_LEGACY=0`,
   ~26 GB/s vs ~5.2 GB/s SHM); the default is still SHM — a simplicity choice,
   and the NaN events are model-side, not transport-side. Opt in with
@@ -185,7 +185,7 @@ src/rocm_qlora/
   callback.py           the training-time callback: progress lines, charts, GPU sampling
   plots.py              all matplotlib charts + Markdown report
   hardware.py           rocm-smi parsing · GPU selection
-  probes.py             SDPA / HIP-IPC / bnb-smoke / matmul GPU probes
+  probes.py             in-process GPU diagnostics (bnb 4-bit smoke, matmul bench)
   launcher.py           GPU choice, worker env, torchrun orchestration
   sft.py                config → SFTConfig mapping (checkpoint cadence, warmup ratio)
   train.py              the training worker (one process per GPU)

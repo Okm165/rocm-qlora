@@ -2,33 +2,39 @@
 
 Everything here was verified empirically on **gfx1100 (RDNA3) hardware,
 ROCm 7.1 user-space, torch 2.13.0+rocm7.1, a mainline kernel** — not copied
-from generic guides. `rocm-qlora doctor` reproduces the probes.
+from generic guides. Every decision it implies is a config knob; nothing is
+probed at run time.
 
-## Attention: SDPA + AOTriton (works!)
+## Attention: what SDPA does here, and the two knobs
 
-| backend | with `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1` | without |
-|---|---|---|
-| FLASH | ✅ | ✅ |
-| EFFICIENT (mem-efficient) | ❌ `RuntimeError: No available kernel` | ❌ |
-| MATH | ✅ | ✅ |
+**The concept.** With `model.attn = "sdpa"` (the default) torch picks one of
+three kernels *per batch*: **flash** (fused, fastest), **mem-efficient**
+(fused, memory-oriented) or **math** (plain, always correct). With
+`model.attn = "eager"` everything runs math — slowest, and a safe fallback if
+a driver or wheel change breaks the fused paths.
 
-* There is no `flash-attn` package for RDNA3; the working fast path is
-  PyTorch **SDPA**, which dispatches to **AOTriton** flash kernels here.
-* `doctor` runs each backend in a **fresh subprocess** — on RDNA3 a failed
-  kernel launch can be *deferred* and surface at the next checked op,
-  contaminating the process and producing misleading errors
-  (pytorch#194498 documents exactly this on gfx1100).
-* The launcher reads the doctor verdict and sets the env + attention
-  implementation automatically. `eager` (math attention) is the safe fallback
-  if a future driver/wheel combination breaks the fused path.
-* The probes cover **forward** kernels. The one fused kernel observed
-  producing non-finite gradients is the *backward* of the mem-efficient path
-  (`ScaledDotProductEfficientAttentionBackward0`), and an explicit attention
-  mask — which padded batches always pass — is what dispatches to it. The
-  launcher therefore **disables every backend the probe flagged** for the
-  whole training process: on this machine masked batches run math attention,
-  while causal unmasked ones stay on flash. `--set model.attn=eager` forces
-  math everywhere; see the NaN note in docs/05.
+**What was measured on this box.** There is no `flash-attn` package for
+RDNA3; the working fast path is SDPA's flash kernel (AOTriton-backed). The
+mem-efficient path **fails to launch** here (`RuntimeError: No available
+kernel`) and — more importantly — its *backward* was the kernel observed
+producing non-finite gradients in real runs, on padded batches (which always
+pass an explicit attention mask, the thing that dispatches to it).
+
+**The two knobs, both static:**
+
+* `env.aotriton = true` exports `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1`
+  to the workers. Some gfx1100 wheels only expose the fused flash path with
+  it; on this box flash works either way. *What to check:* if a stack update
+  makes training fail or misbehave in attention, set it `false` and try
+  again — it is one env var, not a code path.
+* `model.sdpa_disable = ["mem_efficient"]` (what the shipped configs set)
+  switches the named backends off in every worker. *What to check:* the
+  symptom it prevents is NaN gradients early in a run with padded batches
+  (docs/05's NaN section). If you are confident your stack is fine, clear
+  the list and watch for that symptom; keeping it costs only the kernel that
+  fails to launch here anyway.
+
+`--set model.attn=eager` forces math everywhere; see the NaN note in docs/05.
 
 ## Multi-GPU: RCCL P2P works (dma-buf IPC) — but SHM is the default
 
@@ -63,9 +69,11 @@ NCCL_P2P_DISABLE = "0"
 
 `HSA_FORCE_FINE_GRAIN_PCIE=1` adds nothing here. Do **not** add `iommu=pt`
 (translated IOMMU works; one upstream report shows it corrupting peer IPC).
-`doctor` probes `hipIpcGetMemHandle` and caches the verdict in
-`.context/doctor-latest.json`; the launcher reads that verdict — training
-runs do not re-probe.
+The launcher's default is the shared-memory transport; opting into P2P is
+that one `[env.extra]` line above. *What to check:* if you want to know
+whether P2P is actually being used (and bit-exact) on your machine, run the
+allreduce POC in `scripts/` by hand — it is a manual check, nothing the tool
+does for you.
 
 ## bitsandbytes 4-bit: 0.50.2 is good on ROCm
 

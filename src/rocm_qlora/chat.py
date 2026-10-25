@@ -54,12 +54,13 @@ def _load(
         tokenizer_src, trust_remote_code=cfg.model.trust_remote_code if cfg else False
     )
 
-    from .launcher import resolve_attn_impl
-    from .model import compute_dtype, resolve_model_class
+    from .model import compute_dtype, configure_sdpa, resolve_model_class
 
     trust_remote_code = cfg.model.trust_remote_code if cfg else False
     model_cls = resolve_model_class(str(base_dir), trust_remote_code=trust_remote_code)
-    attn = resolve_attn_impl(cfg) if cfg else "sdpa"
+    attn = cfg.model.attn if cfg else "sdpa"
+    if cfg is not None:
+        configure_sdpa(cfg)  # the same static backend choices the training run used
     from .hardware import freest_gpu_index
 
     index = freest_gpu_index()

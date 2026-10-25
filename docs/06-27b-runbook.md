@@ -8,7 +8,7 @@ commands rehearse the full code path on `configs/toy.toml` in ~2 minutes.
 ## The commands, in order
 
 ```bash
-# 0. one-time environment sanity (SDPA verdict, bnb smoke, RCCL IPC probe)
+# 0. one-time environment sanity (hardware + stack report; configures nothing)
 uv run rocm-qlora doctor
 
 # 1. build the slimmed NF4 checkpoint (~50 s; needed once, or after config
