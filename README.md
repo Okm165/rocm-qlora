@@ -112,5 +112,3 @@ accounting + provenance in `finetune_meta.json`.
 uv run ruff check . && uv run ruff format --check .
 uv run codespell && uv run basedpyright && uv run pytest
 ```
-
-All five pass on a clean checkout; a red run is a bug, not noise.
