@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from .config import Config
 
@@ -17,63 +17,27 @@ if TYPE_CHECKING:
     from transformers import PreTrainedTokenizerBase
 
 
-def _qwen35_variant(tokenizer: PreTrainedTokenizerBase) -> str | None:
-    """TRL's bundled qwen3.5 *training* template matching this checkpoint, or None.
+def _bundled_training_template(name: str) -> str | None:
+    """TRL's bundled training template for a config-named family, or None.
 
-    TRL ships a think and a nothink copy that differ only in the assistant
-    prefix they render when the ``enable_thinking`` flag is absent (the flag
-    inverts between them). A community copy matches neither reference string,
-    so the variant is read off that render instead; a copy matching neither
-    render is not guessed at (None -> the caller raises).
+    The name is `data.training_template` — the user's declaration, not a guess
+    from the checkpoint's id or its template's contents. None means the family
+    is unknown (the config's Literal already restricts the values, so this is
+    a TRL rename) and the caller raises.
     """
     from trl.chat_template_utils import (
-        qwen3_5_nothink_chat_template,
         qwen3_5_nothink_training_chat_template,
-        qwen3_5_think_chat_template,
         qwen3_5_think_training_chat_template,
+        qwen3_8_training_chat_template,
+        qwen3_training_chat_template,
     )
 
-    probe = [{"role": "user", "content": "x"}]
-    original = tokenizer.chat_template
-
-    def render(template: str) -> str | None:
-        tokenizer.chat_template = template
-        try:
-            return cast("str", tokenizer.apply_chat_template(probe, tokenize=False, add_generation_prompt=True))
-        except Exception:
-            return None
-        finally:
-            tokenizer.chat_template = original
-
-    own = render(cast("str", original))
-    think, nothink = render(qwen3_5_think_chat_template), render(qwen3_5_nothink_chat_template)
-    if own is not None and own == think and own != nothink:
-        return qwen3_5_think_training_chat_template
-    if own is not None and own == nothink and own != think:
-        return qwen3_5_nothink_training_chat_template
-    return None
-
-
-def _bundled_family_template(name: str, tokenizer: PreTrainedTokenizerBase) -> str | None:
-    """TRL's bundled training template for a checkpoint name, or None.
-
-    TRL patches templates by *exact string equality* against its bundled
-    references; community checkpoints (e.g. unsloth's Qwen3.8-27B) carry
-    slightly modified copies, so the family has to come from the name — the
-    only signal available here — with the qwen3.5 think/nothink split read off
-    the template's own render. An unknown family returns None and the caller
-    fails loudly rather than training without the assistant mask.
-    """
-    from trl.chat_template_utils import qwen3_8_training_chat_template, qwen3_training_chat_template
-
-    name = name.lower()
-    if "qwen3.8" in name or "qwen3_8" in name:
-        return qwen3_8_training_chat_template
-    if "qwen3.5" in name or "qwen3_5" in name:
-        return _qwen35_variant(tokenizer)
-    if "qwen3" in name:
-        return qwen3_training_chat_template
-    return None
+    return {
+        "qwen3.8": qwen3_8_training_chat_template,
+        "qwen3.5_think": qwen3_5_think_training_chat_template,
+        "qwen3.5_nothink": qwen3_5_nothink_training_chat_template,
+        "qwen3": qwen3_training_chat_template,
+    }.get(name)
 
 
 def ensure_training_chat_template(tokenizer: PreTrainedTokenizerBase, cfg: Config, log: Callable[[str], None]) -> None:
@@ -83,8 +47,9 @@ def ensure_training_chat_template(tokenizer: PreTrainedTokenizerBase, cfg: Confi
     and its patch helper matches the checkpoint's copy against bundled
     references by exact string equality. Asking the same helper covers the
     stock case; community copies (e.g. unsloth's Qwen3.8-27B) fail that match
-    and get the bundled family template instead. If neither matches, this
-    raises — a run must never quietly drop the assistant-only mask.
+    and get the template `data.training_template` names instead. With no
+    family configured the run aborts — it never guesses a template, because
+    the template decides which tokens the loss is computed on.
     """
     if not cfg.data.assistant_only_loss:
         return
@@ -93,23 +58,22 @@ def ensure_training_chat_template(tokenizer: PreTrainedTokenizerBase, cfg: Confi
 
     if has_generation_markers(tokenizer.chat_template):
         return  # TRL's own gate: a marker-bearing template is used as-is
-    # Resolve the family fallback *before* the try: a TRL rename of a bundled
+    # Resolve the configured family *before* the try: a TRL rename of a bundled
     # constant must surface as itself, not masked inside an except handler.
-    family_template = _bundled_family_template(cfg.model.name, tokenizer)
+    fallback = _bundled_training_template(cfg.data.training_template)
     try:
         get_training_chat_template(tokenizer)
     except ValueError as exc:
         # Only the fallback needs the tokenizer's template replaced (TRL's
         # trainer patches its own copy in the stock case, leaving the saved
         # processing class — and every mid-run checkpoint — with the original).
-        if family_template is None:
+        if fallback is None:
             raise RuntimeError(
-                f"TRL cannot patch {cfg.model.name}'s chat template and no bundled training template "
-                "matched the name — add {% generation %} markers to the template or set "
-                "data.assistant_only_loss = false"
+                f"TRL cannot patch {cfg.model.name}'s chat template — set data.training_template to this "
+                "checkpoint's family (docs/03 explains how to tell) or set data.assistant_only_loss = false"
             ) from exc
-        tokenizer.chat_template = family_template
-        log("installed TRL's bundled training chat template (TRL could not match the checkpoint's copy)")
+        tokenizer.chat_template = fallback
+        log(f"installed TRL's bundled {cfg.data.training_template} training chat template")
 
 
 def _sft_kwargs(cfg: Config, run_dir: Path, *, dry_run: bool, max_steps: int | None) -> dict[str, Any]:

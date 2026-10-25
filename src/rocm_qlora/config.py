@@ -120,9 +120,14 @@ class DataConfig(_Section):
     packing: bool = False
     #: Sequence packing strategy when data.packing is on.
     packing_strategy: Literal["bfd", "bfd_split", "wrapped"] = "bfd_split"
-    #: Loss only on assistant turns (chat template must expose assistant spans;
-    #: TRL patches known families automatically).
+    #: Loss only on assistant turns (chat template must expose assistant spans).
     assistant_only_loss: bool = True
+    #: Which TRL bundled *training* template to install when TRL cannot match
+    #: the checkpoint's own copy by exact string equality (community quants
+    #: modify it; unsloth's Qwen3.8-27B is the shipped example). Empty = no
+    #: fallback: the run aborts instead of guessing. Values name the family —
+    #: see docs/03 for how to tell which one your checkpoint is.
+    training_template: Literal["", "qwen3.8", "qwen3.5_think", "qwen3.5_nothink", "qwen3"] = ""
     #: Parallel dataset-preprocessing processes.
     dataset_num_proc: int = 8
 

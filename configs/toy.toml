@@ -31,6 +31,7 @@ eval_fraction = 0.05                   # holdout for the per-epoch eval
 max_length = 1024                      # toy sequences are short; measure yours: rocm-qlora data
 packing = false                        # the DeltaNet layers have no document-aware masking (docs/01)
 assistant_only_loss = true             # loss on assistant turns only
+training_template = "qwen3.5_nothink"   # the stock toy template IS TRL's nothink copy (docs/03)
 dataset_num_proc = 8                   # host processes for tokenization
 
 [lora]

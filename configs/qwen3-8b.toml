@@ -34,6 +34,7 @@ eval_fraction = 0.05                   # holdout for the per-epoch eval
 max_length = 1536                      # measure yours: rocm-qlora data (docs/03)
 packing = false                        # no document-aware masking in the attention stack (docs/01)
 assistant_only_loss = true             # loss on assistant turns only
+training_template = "qwen3"   # stock template matches TRL exactly; declared for clarity
 dataset_num_proc = 8                   # host processes for tokenization
 
 [lora]

@@ -37,6 +37,7 @@ eval_fraction = 0.05   # a small holdout; enough to see the trend
 max_length = 1536      # ≈p99 of the token distribution (p99=1469, p100=1980); see `rocm-qlora data`
 packing = false        # correctness first: see docs/03
 assistant_only_loss = true
+training_template = "qwen3.8"   # unsloth's copy is modified; this is the family TRL bundles (docs/03)
 dataset_num_proc = 8
 
 [lora]
