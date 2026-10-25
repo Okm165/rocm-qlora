@@ -13,7 +13,7 @@ three kernels *per batch*: **flash** (fused, fastest), **mem-efficient**
 `model.attn = "eager"` everything runs math — slowest, and a safe fallback if
 a driver or wheel change breaks the fused paths.
 
-**What was measured on this box.** There is no `flash-attn` package for
+**What the reference measurements show.** There is no `flash-attn` package for
 RDNA3; the working fast path is SDPA's flash kernel (AOTriton-backed). The
 mem-efficient path **fails to launch** here (`RuntimeError: No available
 kernel`) and — more importantly — its *backward* was the kernel observed
@@ -24,7 +24,7 @@ pass an explicit attention mask, the thing that dispatches to it).
 
 * `env.aotriton = true` exports `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1`
   to the workers. Some gfx1100 wheels only expose the fused flash path with
-  it; on this box flash works either way. *What to check:* if a stack update
+  it; in the reference measurements flash works either way. *What to check:* if a stack update
   makes training fail or misbehave in attention, set it `false` and try
   again — it is one env var, not a code path.
 * `model.sdpa_disable = ["mem_efficient"]` (what the shipped configs set)
@@ -115,6 +115,27 @@ as large as VRAM allows. To experiment anyway: `uv add
 flash-linear-attention`, run with a *warm* Triton cache, and validate against
 the fallback numerically (same weights, same batch → compare losses) before
 trusting a long run.
+
+## Speed: what is applied, what was rejected
+
+Applied (all measured on gfx1100): TRL's fused chunked head (full logits are
+never materialized), AOTriton flash SDPA for the full-attention layers, the
+pre-quantized checkpoint, micro-batch 1 × accumulation 4 (the same effective
+batch as 2 × 2 at roughly half the activation memory — batch 2 × 1536 peaked
+at 25.5/25.75 GB and OOMed, `docs/05`), `embed_tokens`/`lm_head` kept bf16,
+the DDP init-broadcast skip, `adamw_8bit`, non-reentrant gradient
+checkpointing.
+
+Rejected, with evidence:
+
+| option | why not |
+|---|---|
+| flash-linear-attention Triton kernels (the big lever for the DeltaNet layers) | upstream issue #790: autotune configs of the exact kernel the hybrid models need produce **wrong outputs**; #804: cold-start autotune can stall for an hour on gfx1100 |
+| FP8 training (torchao/torchtitan) | CDNA3+ only; gfx1100 has no FP8 matrix cores |
+| torchao NF4Tensor + torch.compile/FSDP2 | a different ecosystem, ROCm maturity unclear; bnb NF4 is the supported path here |
+| sequence packing | the DeltaNet layers have no document-aware masking → documents would attend to each other (silent data corruption) |
+| `torch.compile` | bnb + hybrid attention + gradient checkpointing is not a supported combination here |
+| Unsloth | single-GPU-centric, fights uv containment, caps torch below the ROCm 7.x stack |
 
 ## Allocator
 

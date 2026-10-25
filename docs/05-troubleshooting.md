@@ -143,7 +143,7 @@ In order of effectiveness:
 4. Stop other VRAM consumers: `rocm-smi --showpids`. An inference server
    holding most of the VRAM will block training entirely — the preflight
    lists exactly who holds what.
-5. **First choice on this box (2026-10-23): `per_device_batch_size = 1` with
+5. **First choice (reference run, 2026-10-23): `per_device_batch_size = 1` with
    `grad_accum = 4`** — same effective batch, ~half the activation memory.
    At batch 2 × 1536 the measured peaks were 25.5/25.75 GB and the run OOMed
    at step 25 with 8 near-misses before that.
@@ -187,10 +187,10 @@ in order:
 
 What it is: a firmware-level wedge of the GPU's MES (queue scheduler). The
 driver can no longer tear the hung queues down and mode1-resets the card;
-VRAM is lost, so every process using that card dies. It is **not** our code,
+VRAM is lost, so every process using that card dies. It is **not** this tool's code,
 not RCCL, and not the NaN issue above.
 
-Why this machine was vulnerable (measured on this box):
+Why the reference machine was vulnerable (measured):
 
 * the installed `gc_11_0_0_mes_2.bin` firmware blob is byte-identical to the
   revision AMD reverted upstream on 2026-09-18 ("causes instability",

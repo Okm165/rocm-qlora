@@ -1,4 +1,4 @@
-# 01 · QLoRA (for this exact project)
+# 01 · QLoRA — the method
 
 ## The three ideas
 
