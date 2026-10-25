@@ -72,7 +72,7 @@ optim.lr=5e-5`, `--set data.max_length=1280`, `--set model.attn=eager`.
 Every knob is commented where you set it; the reasoning behind the values is
 in `docs/03`.
 
-## Why `prepare` exists
+## The `prepare` step
 
 `load_in_4bit` on a bf16 checkpoint stages the whole bf16 model in host RAM
 before quantizing (~55 GB for 27B, times the number of DDP ranks). `prepare`

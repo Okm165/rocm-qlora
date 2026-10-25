@@ -16,7 +16,7 @@ more — on a 27B model that's ~1.1 GB.
 
 **3. LoRA adapters.** Instead of updating `W` (27B params), LoRA trains
 `ΔW = (α/r)·B·A` where `B` (out×r) and `A` (r×in) are tiny. Only `A` and `B`
-receive gradients. For this project: `r=16` on every text-side linear layer →
+receive gradients. The shipped configs use `r=16` on every text-side linear layer →
 ~0.4% of parameters trainable, optimizer state in the hundreds of MB instead
 of the hundreds of GB a full fine-tune needs.
 

@@ -72,7 +72,7 @@ about learning.
 
 * small sawtooth → allocator behavior, normal.
 * monotonic climb across many steps → leak. Usual suspects: callbacks holding
-  tensors (this project's callback stores only scalars/dicts), or a
+  tensors (the training callback stores only scalars/dicts), or a
   non-empty `torch.cuda` cache growth pattern.
 * step change upward at an epoch boundary → evaluation buffers.
 

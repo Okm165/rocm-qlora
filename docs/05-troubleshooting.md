@@ -1,7 +1,7 @@
 # 05 · Troubleshooting (real failures, real fixes)
 
-Every entry below is a real failure or finding from building this project on
-gfx1100 / ROCm 7.1 — not generic advice.
+Every entry below is a real failure or finding observed on gfx1100 /
+ROCm 7.1 — not generic advice.
 
 ## Where to look first
 
