@@ -132,18 +132,24 @@ def _apply_command(
     return False, think
 
 
-def _build_prompt(tokenizer: PreTrainedTokenizerBase, history: list[ChatMessage], think: bool) -> str:
-    """Chat-template the history, tolerating templates without thinking kwargs."""
+def _build_prompt(tokenizer: PreTrainedTokenizerBase, history: list[ChatMessage], think: bool) -> tuple[str, bool]:
+    """Chat-template the history; ``think_applied`` is False for templates without the switch.
+
+    A template that does not take ``enable_thinking`` (most non-Qwen
+    checkpoints) still renders; the caller tells the user that ``/think``
+    does nothing here instead of silently ignoring it.
+    """
     template_kwargs: dict[str, Any] = {"enable_thinking": think}
     try:
         rendered = tokenizer.apply_chat_template(  # TypedDict rows are plain dicts
             cast("list[dict[str, str]]", history), tokenize=False, add_generation_prompt=True, **template_kwargs
         )
+        return cast("str", rendered), True  # tokenize=False ⟹ str
     except TypeError:
         rendered = tokenizer.apply_chat_template(
             cast("list[dict[str, str]]", history), tokenize=False, add_generation_prompt=True
         )
-    return cast("str", rendered)  # tokenize=False ⟹ str
+        return cast("str", rendered), False
 
 
 def _generate_reply(
@@ -202,6 +208,7 @@ def run_chat(
         pad_token_id=tokenizer.pad_token_id,
     )
     think = True
+    warned_think = False
     history: list[ChatMessage] = []
     _print_banner(console)
 
@@ -220,7 +227,12 @@ def run_chat(
             continue
 
         history.append({"role": "user", "content": user})
-        prompt = _build_prompt(tokenizer, history, think)
+        prompt, think_applied = _build_prompt(tokenizer, history, think)
+        if think and not think_applied and not warned_think:
+            console.print(
+                "[yellow]! this checkpoint's template has no thinking switch — /think does nothing here[/yellow]"
+            )
+            warned_think = True
         text, new_tokens, dt = _generate_reply(model, tokenizer, prompt, gen)
         _render_reply(console, text, new_tokens, dt)
         history.append({"role": "assistant", "content": text})

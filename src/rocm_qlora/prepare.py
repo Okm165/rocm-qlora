@@ -209,8 +209,8 @@ def _should_quantize(
     if isinstance(module, bnb.nn.Linear4bit):
         return False
     if module is output_head:
-        # The head always stays 16-bit: TRL 1.16 computes the SFT loss through
-        # a fused chunked head that slices the raw weight tensor — a quantized
+        # The head always stays 16-bit: TRL's SFT loss computes through a
+        # fused chunked head that slices the raw weight tensor — a quantized
         # head (flattened uint8 buffer) breaks it.
         return False
     if source_quantized:

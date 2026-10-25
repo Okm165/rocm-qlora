@@ -95,10 +95,10 @@ def setup_logging(run_dir: Path, rank: int) -> logging.Logger:
     # (or WARNING) adjusts the file logs without touching the console.
     level_name = os.environ.get("ROCM_QLORA_LOG_LEVEL", "INFO").upper()
     logger.setLevel(getattr(logging, level_name, logging.INFO))
-    # torch 2.13 renamed `all_gather_into_tensor` -> `all_gather_single`; HF
+    # torch renamed `all_gather_into_tensor` -> `all_gather_single`; HF
     # Trainer / Accelerate still call the old name. Python's default filters
     # show that warning once per rank — this keeps even that known-benign line
-    # out of the run's console. Remove when the stack updates.
+    # out of the run's console.
     import warnings
 
     warnings.filterwarnings("ignore", category=FutureWarning, message=r".*all_gather_into_tensor.*is deprecated.*")

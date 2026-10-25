@@ -102,7 +102,7 @@ def _sft_kwargs(cfg: Config, run_dir: Path, *, dry_run: bool, max_steps: int | N
         },
         "learning_rate": cfg.optim.lr,
         "lr_scheduler_type": cfg.optim.scheduler,
-        # transformers v5 reads a warmup_steps float in [0, 1) as the ratio of
+        # transformers reads a warmup_steps float in [0, 1) as the ratio of
         # total optimizer steps (its own ceil arithmetic), so no schedule math
         # lives here.
         "warmup_steps": cfg.optim.warmup_ratio,
@@ -133,7 +133,7 @@ def _sft_kwargs(cfg: Config, run_dir: Path, *, dry_run: bool, max_steps: int | N
         "dataloader_num_workers": 2,
         "ddp_find_unused_parameters": False,
         "torch_empty_cache_steps": 50,
-        # transformers v5 accepts "all" | "non_padding" | "no"; the callback
+        # transformers accepts "all" | "non_padding" | "no"; the callback
         # reads the resulting num_input_tokens_seen from the log.
         "include_num_input_tokens_seen": "non_padding",
     }

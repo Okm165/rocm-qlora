@@ -278,13 +278,10 @@ def cmd_train(args: argparse.Namespace) -> int:
         f"[bold]GPUs for this run:[/bold] {plan.gpus} "
         f"(free: {', '.join(f'{g}: {plan.free_gb.get(g, float("nan")):.1f} GB' for g in plan.gpus)})"
     )
-    console.print(
-        "[dim]fit is not predicted here — the run fits or OOMs; "
-        "docs/02 has the measured per-GPU budget, docs/05 the knobs to react with.[/dim]"
-    )
+    console.print("[dim]no fit prediction — a run fits or OOMs (budget: docs/02, knobs: docs/05)[/dim]")
 
     if args.dry_run:
-        console.print("[yellow]dry run: 3 steps, 8 examples, no eval — the full pipeline in miniature[/yellow]")
+        console.print("[yellow]dry run: 3 steps, 8 examples, no eval[/yellow]")
 
     run_dir = make_run_dir(cfg, dry_run=args.dry_run)
     cfg.snapshot(run_dir)

@@ -11,7 +11,6 @@ own log file (set up in ``train.py``).
 
 from __future__ import annotations
 
-import contextlib
 import threading
 import time
 from collections.abc import Callable, Sequence
@@ -350,16 +349,20 @@ class MetricsCallback(TrainerCallback):
         }
         self._write(record)
         self._epoch_losses = []
-        with contextlib.suppress(Exception):
+        try:
             self._chart_renderer(self.run_dir, records=self.records, meta=self._chart_meta(), live=False)
+        except Exception as exc:  # the renderer guards per chart; this is its own failure
+            self.console.print(f"[yellow]! chart render failed: {exc}[/yellow]")
 
     def _schedule_snapshot(self) -> None:
         if self._snapshot_thread and self._snapshot_thread.is_alive():
             return
 
         def job() -> None:
-            with contextlib.suppress(Exception):
+            try:
                 self._chart_renderer(self.run_dir, records=list(self.records), meta=self._chart_meta(), live=True)
+            except Exception as exc:  # the renderer guards per chart; this is its own failure
+                self.console.print(f"[yellow]! chart snapshot failed: {exc}[/yellow]")
 
         self._snapshot_thread = threading.Thread(target=job, daemon=True, name="chart-snapshot")
         self._snapshot_thread.start()

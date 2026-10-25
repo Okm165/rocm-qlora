@@ -114,7 +114,7 @@ class DataConfig(_Section):
     eval_fraction: Annotated[float, Field(ge=0.0, lt=0.5)] = 0.05
     #: Sequence cap. Set from the data profile (p95–p99), not the model window.
     max_length: Annotated[int, Field(ge=128, le=32768)] = 1024
-    #: Only keep_start is accepted (TRL 1.16 deprecated keep_end; removed in TRL 2).
+    #: Only keep_start is accepted (TRL's keep_end is deprecated upstream and going away).
     truncation_mode: Literal["keep_start"] = "keep_start"
     #: Correctness hazard without document-aware attention; off by default.
     packing: bool = False

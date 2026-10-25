@@ -4,10 +4,9 @@ Everything here touches a third-party runtime deliberately, so it lives apart
 from the worker's phases:
 
 * ``skip_redundant_init_sync`` — monkeypatches DDP's init broadcast away (a
-  a full parameter walk at trainer construction; redundant because every rank
-  loads the same
-  checkpoint and seeds identically). It warns loudly if torch renames the
-  binding.
+  full parameter walk at trainer construction; redundant because every rank
+  loads the same checkpoint and seeds identically). It warns loudly if torch
+  renames the binding.
 * ``install_diagnostics`` — env-gated (``ROCM_QLORA_DETECT_ANOMALY``,
   ``ROCM_QLORA_GRAD_CHECK``) numerical checks for the NaN-gradient hunt;
   off by default.
@@ -65,7 +64,7 @@ def _install_grad_finite_checks(model: torch.nn.Module, log: Callable[[str], Non
 
     def make_hook(param_name: str):
         def hook(param: torch.Tensor):
-            # torch 2.13 calls post-accumulate hooks with the *parameter*
+            # torch calls post-accumulate hooks with the *parameter*
             # (verified: the argument is the tensor itself, not its .grad), so
             # the gradient has to be read off it — checking the argument would
             # test the weights instead and never fire.

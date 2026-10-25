@@ -51,6 +51,18 @@ Unsloth guides, TRL docs, field reports), not laws of nature.
 | `requantize_modules` | `["in_proj_qkv"]` | the upstream checkpoint left this 2.5B-param projection in 16-bit (5 GB/GPU). Re-quantizing it to NF4 (1.3 GB) frees ~3.7 GB — the single biggest memory win. `lm_head` is deliberately **not** here (chunked-CE constraint); `in_proj_a/b` also stay 16-bit for this pre-quantized source (48 MB, upstream keeps the gate projections precise) — a plain bf16 source gets every Linear except the head quantized. |
 | `requantize_vision` | true | the vision tower is unused for text training (dropped at load, ~0.25 GB freed); `prepare` quantizes it so the checkpoint stays small. |
 
+## Attention and devices (the static choices)
+
+Nothing here is probed: these are values you set, and `docs/02` explains the
+concepts and what to check on your hardware.
+
+| knob | value | meaning |
+|---|---|---|
+| `model.attn` | `sdpa` | torch's fused kernels (flash / mem-efficient / math, picked per batch). `eager` forces plain math attention — slowest, always correct; the fallback if a driver or wheel change breaks the fused paths. |
+| `model.sdpa_disable` | `["mem_efficient"]` | SDPA backends switched off in every worker, by torch's names (`flash`, `mem_efficient`; `math` is the always-available fallback and cannot be disabled). The shipped value keeps the gfx1100 mem-efficient *backward* off — the observed intermittent-NaN source for padded batches (docs/02, docs/05). Clear the list only while watching for that symptom. |
+| `env.aotriton` | `true` | exports `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1` to the workers; on some gfx1100 wheels that is what exposes the fused flash path (docs/02). Set `false` if a stack update makes attention misbehave. |
+| `dist.gpus` | `"auto"` | training: every visible GPU (DDP); explicit ids, e.g. `[0, 2]`, for a subset. `prepare` and `chat` run on the first entry (`"auto"` → GPU 0). |
+
 ## What to change when something is off
 
 | symptom | first knob to try |

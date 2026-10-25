@@ -1,4 +1,4 @@
-"""Hardware discovery for AMD ROCm systems.
+"""Hardware facts for AMD ROCm systems.
 
 * ``gpu_snapshot`` / ``gpu_processes`` — rocm-smi output, parsed tolerantly.
 * ``select_gpus`` — the GPUs for a run: the requested ones, or every visible

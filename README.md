@@ -42,6 +42,18 @@ rendered into your terminal at runtime.
   `docs/05`.
 * **Configs explain themselves.** Every knob is commented where you set
   it (`configs/*.toml`); the reasoning behind the values is `docs/03`.
+* **Decisions are static, never discovered.** Attention (`model.attn`,
+  `model.sdpa_disable`), the AOTriton flag (`env.aotriton`), the training
+  template family (`data.training_template`) and the GPU that `prepare` /
+  `chat` use (`dist.gpus`'s first entry) are values you set and can read
+  back — nothing probes the machine and reconfigures a run behind your
+  back. `docs/02` explains what each one does and what to check on your
+  hardware.
+* **The console belongs to this tool.** Status, progress, warnings and
+  artifact paths — nothing else. Library output (transformers/trl INFO,
+  fallback notices, tqdm bars) goes to `logs/rank-*.log`, and RCCL runs at
+  `NCCL_DEBUG=ERROR` (docs/02). Path and command lines never wrap, so they
+  stay copy-pasteable.
 * **GPU-only, no CPU paths.** Model work (quantize, train, merge) runs on the
   GPUs — host RAM is staging for checkpoints too large for one card, nothing
   more. If a device set is too small, the run fails loudly; the numbers to
@@ -191,7 +203,7 @@ src/rocm_qlora/
   sft.py                config → SFTConfig mapping (checkpoint cadence, warmup ratio)
   train.py              the training worker (one process per GPU)
   patches.py            deliberate third-party patches (DDP init skip, NaN diagnostics)
-  doctor.py             environment + hardware report (.context artifacts)
+  doctor.py             environment + hardware report (a report; configures nothing)
   chat.py               interactive sanity check
   utils.py              formatting / timing / JSON helpers
 docs/                   01-qlora · 02-amd-rocm-notes · 03-hyperparameters · 04-reading-the-plots · 05-troubleshooting · 06-27b-runbook

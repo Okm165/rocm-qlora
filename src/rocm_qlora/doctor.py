@@ -112,7 +112,10 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     _doctor_host_table(mem, cpu)
 
     gpus = gpu_snapshot()
-    _doctor_gpu_table(gpus)
+    if gpus:
+        _doctor_gpu_table(gpus)
+    else:
+        console.print("[yellow]rocm-smi reported no GPUs (or failed) — docs/05 has the diagnostics[/yellow]")
 
     versions = package_versions()
     runtime = torch_runtime_info()
