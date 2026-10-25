@@ -69,7 +69,10 @@ def build_worker_env(cfg: Config, gpu_ids: list[int]) -> dict[str, str]:
     env.setdefault("HSA_ENABLE_IPC_MODE_LEGACY", "0")
     env.setdefault("NCCL_P2P_DISABLE", "1")
     env.setdefault("NCCL_IB_DISABLE", "1")  # sensible default on machines without InfiniBand
-    env.setdefault("NCCL_DEBUG", "WARN")
+    # RCCL's WARN level only ever produced known-benign startup notices here
+    # (the iommu one, the version banner); ERROR keeps the console clean —
+    # raise it via [env.extra] when debugging transports (docs/02).
+    env.setdefault("NCCL_DEBUG", "ERROR")
     # The torch wheel's libdrm prints "(null): No such file or directory" per
     # GPU at HIP init unless the ASIC-ID table path points at the system one —
     # set it only when that table is actually installed.

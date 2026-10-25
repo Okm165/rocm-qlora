@@ -12,12 +12,13 @@ A **thin, readable wrapper** around the standard 2026 stack
 The training loop, quantization, chat templates and loss masking are all
 handled by the libraries. This project adds exactly three things:
 
-1. **Live observability** — one progress line per step (loss/EMA/trend,
-   LR, grad norm, tokens/s, VRAM), `metrics.jsonl`, and matplotlib charts
-   regenerated *while training runs*.
-2. **AMD-specific correctness** — doctor-verified SDPA backends, RCCL
-   transport configuration, allocator settings, a pre-quantized-checkpoint
-   `prepare` step that makes 27B QLoRA fit on 24 GB cards.
+1. **Live observability** — one compact progress line per step (loss/EMA/trend,
+   LR, grad norm, tokens/s, VRAM; two lines on narrow terminals),
+   `metrics.jsonl`, and matplotlib charts regenerated *while training runs*.
+2. **AMD-specific correctness** — static SDPA/AOTriton config for gfx1100
+   (docs/02), RCCL transport configuration, allocator settings, a
+   pre-quantized-checkpoint `prepare` step that makes 27B QLoRA fit on
+   24 GB cards.
 3. **A clean output trail** — every run leaves a self-contained folder:
    config snapshot, environment fingerprint, per-step metrics, charts,
    per-epoch adapters, a Markdown report.

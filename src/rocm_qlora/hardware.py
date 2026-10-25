@@ -281,18 +281,18 @@ class GpuPlan:
     warnings: list[str] = field(default_factory=list)
 
 
-def freest_gpu_index() -> int | None:
-    """Visible device index with the most free VRAM (None when none visible).
+def first_gpu_index(requested: list[int] | str = "auto") -> int | None:
+    """The first GPU a config names — GPU 0 for the ``"auto"`` default.
 
-    Asks torch, not rocm-smi: torch's indices respect `HIP_VISIBLE_DEVICES`,
-    so the answer is a device this process can actually open.
+    The choice is static, from the config's `dist.gpus` (docs/02), never a
+    scan for the freest card. None means the device is not visible to torch
+    (no GPU at all, or the named id is hidden by HIP_VISIBLE_DEVICES);
+    callers turn that into their own loud error.
     """
     import torch
 
-    if not torch.cuda.is_available():
-        return None
-    free = [(torch.cuda.mem_get_info(i)[0], i) for i in range(torch.cuda.device_count())]
-    return max(free)[1] if free else None
+    index = requested[0] if isinstance(requested, list) and requested else 0
+    return index if 0 <= index < torch.cuda.device_count() else None
 
 
 def select_gpus(*, requested: str | list[int] = "auto") -> GpuPlan:

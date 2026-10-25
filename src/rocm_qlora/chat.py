@@ -61,11 +61,11 @@ def _load(
     attn = cfg.model.attn if cfg else "sdpa"
     if cfg is not None:
         configure_sdpa(cfg)  # the same static backend choices the training run used
-    from .hardware import freest_gpu_index
+    from .hardware import first_gpu_index
 
-    index = freest_gpu_index()
+    index = first_gpu_index(cfg.dist.gpus if cfg else "auto")
     if index is None:
-        raise SystemExit("chat: no GPU visible to torch")
+        raise SystemExit("chat: the config's first GPU is not visible to torch")
     console.print(f"[dim]loading base {base_dir} (4-bit) on GPU {index} …[/dim]")
     model = model_cls.from_pretrained(
         str(base_dir),
@@ -75,7 +75,7 @@ def _load(
         trust_remote_code=trust_remote_code,
     )
     if adapter_dir and Path(adapter_dir).exists():
-        console.print(f"[dim]attaching adapter {adapter_dir} …[/dim]")
+        console.print(f"[dim]attaching adapter {adapter_dir} …[/dim]", soft_wrap=True)  # a path stays one line
         model = PeftModel.from_pretrained(model, adapter_dir)
     model.eval()
     return cast("PreTrainedModel", model), tokenizer
@@ -186,6 +186,9 @@ def run_chat(
 ) -> None:
     """Interactive loop: prompt → templated chat → sampled reply, with /commands."""
     console = console or Console()
+    from .utils import configure_library_logging
+
+    configure_library_logging()  # the console is the chat, not the library's logs
     from transformers import GenerationConfig
 
     model, tokenizer = _load(Path(run_dir) if run_dir else None, base, adapter, console)

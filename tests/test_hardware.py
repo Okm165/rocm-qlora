@@ -86,3 +86,15 @@ def test_select_gpus_raises_without_gpus(monkeypatch):
         raise AssertionError("expected RuntimeError")
     except RuntimeError as exc:
         assert "rocm-smi reported no GPUs" in str(exc)
+
+
+def test_first_gpu_index_is_the_configs_choice(monkeypatch):
+    """Static device pick: the first id the config names; None when invisible."""
+    import torch
+
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 3)
+    assert hardware.first_gpu_index("auto") == 0
+    assert hardware.first_gpu_index([2, 0]) == 2
+    assert hardware.first_gpu_index([5]) is None  # named, but not visible
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 0)
+    assert hardware.first_gpu_index("auto") is None

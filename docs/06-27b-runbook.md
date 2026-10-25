@@ -12,7 +12,7 @@ commands rehearse the full code path on `configs/toy.toml` in ~2 minutes.
 uv run rocm-qlora doctor
 
 # 1. build the slimmed NF4 checkpoint (~50 s; needed once, or after config
-#    changes; quantizes on the freest GPU, so a GPU must be visible)
+#    changes; quantizes on the config's first GPU, so it must be visible)
 uv run rocm-qlora prepare --config configs/qwen3.8-27b.toml
 
 # 2. dry run — 3 steps on 8 examples (measured ~2.5 min): proves load → step → save → charts

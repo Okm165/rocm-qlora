@@ -123,7 +123,9 @@ def _sft_kwargs(cfg: Config, run_dir: Path, *, dry_run: bool, max_steps: int | N
         "eval_strategy": "epoch" if eval_enabled else "no",
         "report_to": [],
         "disable_tqdm": True,
-        "log_level": os.environ.get("ROCM_QLORA_HF_LOG_LEVEL", "warning"),
+        # The rank log is the full story (docs/05); the console shows this
+        # tool's lines only, so INFO here costs nothing visible.
+        "log_level": os.environ.get("ROCM_QLORA_HF_LOG_LEVEL", "info"),
         "seed": cfg.run.seed,
         "data_seed": cfg.run.seed,
         # The dataset is tiny; two loader processes per rank are plenty and

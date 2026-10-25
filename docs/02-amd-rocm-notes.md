@@ -36,6 +36,12 @@ pass an explicit attention mask, the thing that dispatches to it).
 
 `--set model.attn=eager` forces math everywhere; see the NaN note in docs/05.
 
+*What you will see:* on this stack transformers prints once-per-process
+notices that `causal_conv1d` / `flash-linear-attention` are not installed and
+that it falls back to reference implementations (correct, just slower — the
+DeltaNet layers are the ones affected). Training runs write those to
+`logs/rank-*.log` rather than the console; `chat` does not show them at all.
+
 ## Multi-GPU: RCCL P2P works (dma-buf IPC) — but SHM is the default
 
 Topology (`rocm-smi --showtopo`): consumer gfx1100 cards are
@@ -69,6 +75,9 @@ NCCL_P2P_DISABLE = "0"
 
 `HSA_FORCE_FINE_GRAIN_PCIE=1` adds nothing here. Do **not** add `iommu=pt`
 (translated IOMMU works; one upstream report shows it corrupting peer IPC).
+RCCL prints a WARN about the missing `iommu=pt` at init; it is expected and
+harmless here, and the workers run at `NCCL_DEBUG=ERROR`, so you will not
+see it.
 The launcher's default is the shared-memory transport; opting into P2P is
 that one `[env.extra]` line above. *What to check:* if you want to know
 whether P2P is actually being used (and bit-exact) on your machine, run the
@@ -136,6 +145,12 @@ The single most important number: **requantizing `in_proj_qkv` frees ~3.7 GB**
 per GPU (5 GB in 16-bit → 1.3 GB at NF4; upstream checkpoints keep it in
 16-bit). That's `prepare`'s job.
 
+**Which GPU runs what.** Training uses `dist.gpus` — the launcher resolves
+`"auto"` to every visible card, and warns when a card is shared with another
+process. The one-off steps, `prepare` and `chat`, run on the **first** GPU
+that list names (`"auto"` → GPU 0): a static, predictable choice, not a scan
+for the freest card.
+
 ## Environment variables that matter (and what the launcher sets)
 
 | var | value | why |
@@ -148,7 +163,7 @@ per GPU (5 GB in 16-bit → 1.3 GB at NF4; upstream checkpoints keep it in
 | `OMP_NUM_THREADS` | 8 per rank | plenty for dataloading; avoids host oversubscription |
 | `TOKENIZERS_PARALLELISM` | `false` | silences fork warnings |
 | `NCCL_P2P_DISABLE` | `1` (SHM default) | simplicity default; both transports are bit-exact — set `"0"` via `[env.extra]` for P2P |
-| `NCCL_IB_DISABLE` / `NCCL_DEBUG` | `1` / `WARN` | no InfiniBand probing on these machines; keeps NCCL's startup chatter out of the log |
+| `NCCL_IB_DISABLE` / `NCCL_DEBUG` | `1` / `ERROR` | no InfiniBand probing; RCCL's WARN level only ever produced the known-benign iommu notice here — raise it via `[env.extra]` when debugging transports |
 | `AMDGPU_ASIC_ID_TABLE_PATHS` | `/usr/share/libdrm` | silences libdrm's per-GPU `(null): No such file or directory` at HIP init |
 | `PYTHONHASHSEED` | `run.seed` | fixed before the interpreter starts; part of reproducibility |
 | `PYTHONUNBUFFERED` / `HF_HUB_DISABLE_TELEMETRY` | `1` / `1` | live log lines; no HF telemetry |

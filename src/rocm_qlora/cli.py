@@ -27,7 +27,7 @@ from rich.table import Table
 from . import __version__
 from .config import Config, ConfigError
 from .doctor import cmd_doctor
-from .utils import fmt_int, human_duration, timestamp_slug
+from .utils import configure_library_logging, fmt_int, human_duration, timestamp_slug
 
 if TYPE_CHECKING:
     from .data import DatasetStats, Percentiles, TokenProfile
@@ -194,11 +194,13 @@ def cmd_prepare(args: argparse.Namespace) -> int:
     from .prepare import prepare_checkpoint
 
     cfg = _load_config(args)
+    configure_library_logging()  # the console is this tool's, not the library's
     console.rule("[bold cyan]prepare checkpoint[/bold cyan]")
     console.print(
         f"source: [bold]{cfg.model.name}[/bold] → target: [bold]{cfg.model.prepared_dir}[/bold]\n"
         f"[dim]requantize: {cfg.quantization.requantize_modules} · vision: "
-        f"{'quantized' if cfg.quantization.requantize_vision else 'as-is'}[/dim]"
+        f"{'quantized' if cfg.quantization.requantize_vision else 'as-is'}[/dim]",
+        soft_wrap=True,
     )
     result = prepare_checkpoint(cfg, force=args.force, log=lambda msg: console.print(f"[dim]{msg}[/dim]"))
     table = Table(title="prepared checkpoint")
@@ -287,7 +289,7 @@ def cmd_train(args: argparse.Namespace) -> int:
     run_dir = make_run_dir(cfg, dry_run=args.dry_run)
     cfg.snapshot(run_dir)
     write_env_fingerprint(run_dir, cfg, plan.gpus)
-    console.print(f"[dim]run directory: {run_dir}[/dim]")
+    console.print(f"[dim]run directory: {run_dir}[/dim]", soft_wrap=True)
 
     resume_checkpoint = _resolve_resume(args)
     if args.resume and resume_checkpoint is None:
@@ -334,6 +336,7 @@ def cmd_merge(args: argparse.Namespace) -> int:
     """Fold the adapter into the base model in bf16 (ready for GGUF export)."""
     from .merge import merge_run
 
+    configure_library_logging()  # the console is this tool's, not the library's
     console.rule("[bold cyan]merge[/bold cyan]")
     merge_run(args.run, out_dir=args.out, console=console)
     return 0

@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple, cast
 from .config import Config
 from .patches import install_diagnostics, skip_redundant_init_sync
 from .sft import build_sft_config, ensure_training_chat_template
-from .utils import fmt_float, fmt_int, human_duration
+from .utils import configure_library_logging, fmt_float, fmt_int, human_duration
 
 if TYPE_CHECKING:
     from datasets import Dataset
@@ -82,7 +82,12 @@ def parse_args(argv: list[str] | None = None) -> WorkerArgs:
 
 
 def setup_logging(run_dir: Path, rank: int) -> logging.Logger:
-    """Rank log file + level (ROCM_QLORA_LOG_LEVEL); silences the known torch FutureWarning."""
+    """Rank log file + level (ROCM_QLORA_LOG_LEVEL); the console stays this tool's.
+
+    Library output (transformers/trl/datasets/accelerate at INFO, tqdm bars)
+    goes to the rank log file, not the console — docs/05's diagnostics section
+    says where to look. The known torch FutureWarning (see below) is silenced.
+    """
     log_file = run_dir / "logs" / f"rank-{rank}.log"
     log_file.parent.mkdir(parents=True, exist_ok=True)
     logger = logging.getLogger("rocm_qlora")
@@ -97,12 +102,16 @@ def setup_logging(run_dir: Path, rank: int) -> logging.Logger:
     import warnings
 
     warnings.filterwarnings("ignore", category=FutureWarning, message=r".*all_gather_into_tensor.*is deprecated.*")
+    # torch's barrier() warns once per rank that no device_id was given to
+    # init_process_group; each rank sees exactly one GPU (the launcher pins
+    # it), so the advisory does not apply.
+    warnings.filterwarnings(
+        "ignore", category=UserWarning, message=r".*barrier\(\): using the device under current context.*"
+    )
     handler = logging.FileHandler(log_file, mode="a", encoding="utf-8")
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
     logger.addHandler(handler)
-    if rank != 0:
-        # keep stdout/stderr quiet on non-zero ranks; warnings still go to the file
-        logging.getLogger("transformers").setLevel(logging.WARNING)
+    configure_library_logging(log_file)
     return logger
 
 
@@ -205,10 +214,12 @@ def _print_wrapup(console: Console, run_dir: Path, summary: RunSummary, *, dry_r
         f"{(summary.last_loss if summary.last_loss is not None else nan):.4f} "
         f"(best {(summary.best_loss if summary.best_loss is not None else nan):.4f} @ step {summary.best_step})"
     )
+    # Two lines on purpose: the loss headline and the run's cost fit any
+    # terminal, and rich never breaks them mid-separator.
+    console.print(f"[bold green]run complete[/bold green]: {fmt_int(summary.steps)} steps · loss {loss}")
     console.print(
-        f"[bold green]run complete[/bold green]: {fmt_int(summary.steps)} steps · loss {loss} · "
-        f"{fmt_int(summary.tokens_seen)} tokens · {human_duration(summary.total_seconds)} · "
-        f"peak VRAM {(summary.peak_vram_gb if summary.peak_vram_gb is not None else nan):.1f} GB"
+        f"[dim]{fmt_int(summary.tokens_seen)} tokens · {human_duration(summary.total_seconds)} · "
+        f"peak VRAM {(summary.peak_vram_gb if summary.peak_vram_gb is not None else nan):.1f} GB[/dim]"
     )
     if summary.last_eval_loss is not None:
         console.print(
@@ -217,12 +228,16 @@ def _print_wrapup(console: Console, run_dir: Path, summary: RunSummary, *, dry_r
         )
     console.print(
         f"[dim]artifacts:[/dim] adapter {_short_path(Path(summary.adapter_dir))} · "
-        f"charts {_short_path(run_dir / 'charts')} · report {_short_path(run_dir / 'report.md')}"
+        f"charts {_short_path(run_dir / 'charts')} · report {_short_path(run_dir / 'report.md')}",
+        soft_wrap=True,  # a path line stays one line, for copy-paste
     )
     if dry_run:
         console.print("[yellow]This was a dry run (3 steps). Launch without --dry-run for the real thing.[/yellow]")
     short = _short_path(run_dir)
-    console.print(f"[dim]next:[/dim] rocm-qlora chat --run {short} · merge --run {short} · report --run {short}")
+    console.print(
+        f"[dim]next:[/dim] rocm-qlora chat --run {short} · merge --run {short} · report --run {short}",
+        soft_wrap=True,  # commands stay one line, for copy-paste
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -372,6 +387,12 @@ def _build_trainer(
         processing_class=data.tokenizer,
         callbacks=callbacks,
     )
+    # `disable_tqdm=True` makes transformers add its PrinterCallback, whose
+    # whole job is `print(logs)` per step — the raw metric dicts. This tool
+    # prints its own progress lines, so the callback goes.
+    from transformers import PrinterCallback
+
+    trainer.remove_callback(PrinterCallback)
     return trainer, metrics_callback
 
 

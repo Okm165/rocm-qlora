@@ -6,7 +6,9 @@ gfx1100 / ROCm 7.1 — not generic advice.
 ## Where to look first
 
 ```
-<run>/logs/rank-0.log      the full story (tracebacks, warnings)
+<run>/logs/rank-0.log      the full story: tracebacks + all library output
+                           (transformers/trl INFO, kernel-fallback notices —
+                           the console shows only this tool's own lines)
 <run>/metrics.jsonl        the numeric story (events have type="event")
                            schema: the MetricsRecord TypedDicts in metrics.py
                            (train / eval / epoch_end / event / run_end)
@@ -243,6 +245,7 @@ uv run rocm-qlora doctor              # hardware + stack report
 <run>/logs/rank-0.log                 # first ERROR line
 ```
 
-For HF/TRL internals in the rank logs: `ROCM_QLORA_HF_LOG_LEVEL=info`.
+The rank logs carry HF/TRL output at `info` by default
+(`ROCM_QLORA_HF_LOG_LEVEL=warning` quiets them).
 `ROCM_QLORA_LOG_LEVEL` (default `INFO`) sets the package's own file-log level
 (the console's per-step lines are unaffected).

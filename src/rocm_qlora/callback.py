@@ -154,22 +154,30 @@ class MetricsCallback(TrainerCallback):
         ``loss_ema`` is live-only (the charts rebuild it from ``loss``); the
         VRAM peak is read straight off the record's GPU samples. No ETA: a
         linear extrapolation of step times is a prediction, and this tool
-        reports what happened.
+        reports what happened. On a console too narrow for the full line, the
+        training state and the machine facts go on two lines — rich would
+        otherwise break the line mid-separator.
         """
-        parts = [
+        training = [
             f"step {record['step']}/{self.max_steps}",
             f"loss {fmt_float(record['loss'])}",
             f"EMA {fmt_float(loss_ema)} {trend_arrow(self._loss_series)}",
         ]
         if record.get("lr") is not None:
-            parts.append(f"lr {record['lr']:.2e}")
+            training.append(f"lr {record['lr']:.2e}")
         if record.get("grad_norm") is not None:
-            parts.append(f"grad {fmt_float(record['grad_norm'], 2)}")
+            training.append(f"grad {fmt_float(record['grad_norm'], 2)}")
+        machine: list[str] = []
         if record.get("tok_per_s"):
-            parts.append(f"{fmt_int(record['tok_per_s'])} tok/s")
+            machine.append(f"{fmt_int(record['tok_per_s'])} tok/s")
         if record["gpu"]:
-            parts.append(f"VRAM {max(g['mem_used_gb'] for g in record['gpu']):.1f} GB")
-        self.console.print("[dim]" + " · ".join(parts) + "[/dim]")
+            machine.append(f"VRAM {max(g['mem_used_gb'] for g in record['gpu']):.1f} GB")
+        line = " · ".join(training + machine)
+        if not machine or len(line) <= self.console.width:
+            self.console.print(f"[dim]{line}[/dim]")
+        else:
+            self.console.print(f"[dim]{' · '.join(training)}[/dim]")
+            self.console.print(f"[dim]  {' · '.join(machine)}[/dim]")
         self._print_health_warnings(record)
 
     def _chart_meta(self) -> ChartMeta:

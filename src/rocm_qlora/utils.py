@@ -158,6 +158,39 @@ def linear_slope(values: Iterable[float | None]) -> float:
 # ---------------------------------------------------------------------------
 
 
+def configure_library_logging(log_file: Path | None = None) -> None:
+    """Keep the console for this tool's own lines; library output goes elsewhere.
+
+    transformers and datasets install their own stderr handlers at import
+    time (the ``[transformers] ...`` notices, per-step metric dicts, tqdm
+    bars). Importing them here and pointing those handlers at ERROR is what
+    keeps the console readable; everything from INFO up still lands in the
+    rank log file (docs/05's diagnostics section). Without a file (chat,
+    prepare, merge) library output below ERROR is not shown at all — the
+    notices are once-per-process facts, documented in docs/02.
+    """
+    import logging
+
+    # Import first: the handlers this function quiets are installed at import.
+    import datasets
+    import transformers.utils.logging
+
+    for name in ("transformers", "trl", "datasets", "accelerate"):
+        lib = logging.getLogger(name)
+        lib.setLevel(logging.INFO)  # the file handler inherits this
+        for handler in lib.handlers:
+            if isinstance(handler, logging.StreamHandler):
+                handler.setLevel(logging.ERROR)  # console: errors only
+        if log_file is not None and not any(
+            isinstance(h, logging.FileHandler) and Path(h.baseFilename) == log_file.resolve() for h in lib.handlers
+        ):
+            handler = logging.FileHandler(log_file, mode="a", encoding="utf-8")
+            handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+            lib.addHandler(handler)
+    transformers.utils.logging.disable_progress_bar()
+    datasets.disable_progress_bars()
+
+
 def dir_size_bytes(path: str | Path) -> int:
     """Total size of the files under ``path`` (bytes)."""
     return sum(f.stat().st_size for f in Path(path).rglob("*") if f.is_file())

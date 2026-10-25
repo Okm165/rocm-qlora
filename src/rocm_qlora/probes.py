@@ -1,6 +1,6 @@
 """In-process GPU diagnostics: the bitsandbytes 4-bit smoke and a matmul benchmark.
 
-Both run inside the calling process on the freest visible GPU and only
+Both run inside the calling process on GPU 0 and only
 *report* — they never configure a run. Attention, AOTriton and transport are
 static config (`model.attn`, `model.sdpa_disable`, `env.aotriton`,
 `env.extra`); docs/02 explains each one and what to check on your machine.
@@ -11,7 +11,7 @@ from __future__ import annotations
 import time
 from typing import TypedDict
 
-from .hardware import freest_gpu_index
+from .hardware import first_gpu_index
 
 
 class MatmulBench(TypedDict):
@@ -24,10 +24,10 @@ class MatmulBench(TypedDict):
 
 
 def matmul_benchmark(dtype_name: str = "bfloat16", size: int = 8192, iters: int = 20, warmup: int = 5) -> MatmulBench:
-    """bf16/fp16 matmul TFLOPS on the freest GPU — a quick sanity check of the stack."""
+    """bf16/fp16 matmul TFLOPS on GPU 0 — a quick sanity check of the stack."""
     import torch
 
-    index = freest_gpu_index()
+    index = first_gpu_index()
     if index is None:
         raise RuntimeError("no GPU visible to torch — cannot run the matmul benchmark")
     dtype = {"bfloat16": torch.bfloat16, "float16": torch.float16}[dtype_name]
@@ -57,13 +57,13 @@ class BnbSmoke(TypedDict, total=False):
 
 
 def probe_bnb_smoke() -> BnbSmoke:
-    """Quantize a Linear on the freest GPU; check train-shape and decode-shape numerics."""
+    """Quantize a Linear on GPU 0; check train-shape and decode-shape numerics."""
     import torch
 
     try:
         import bitsandbytes as bnb
 
-        index = freest_gpu_index()
+        index = first_gpu_index()
         if index is None:
             raise RuntimeError("no GPU visible to torch — cannot run the bitsandbytes smoke")
         device = f"cuda:{index}"

@@ -85,7 +85,7 @@ def merge_run(
 
     model = _fold_adapter(cfg, adapter_dir, console)
 
-    console.print(f"[dim]saving bf16 model to {out} …[/dim]")
+    console.print(f"[dim]saving bf16 model to {out} …[/dim]", soft_wrap=True)  # a path stays one line
     # `save_original_format=False`: the model is already in its final format
     # (plain bf16), so transformers must not try to revert the bnb load
     # conversion (re-packing bf16 weights into NF4 is not implemented).
@@ -95,6 +95,7 @@ def merge_run(
     size = dir_size_bytes(out)
     console.print(
         f"[green]merge complete:[/green] {out} ({human_bytes(size)})\n"
-        "  [dim]GGUF export for llama.cpp: docs/06-27b-runbook.md (step 6).[/dim]"
+        "  [dim]GGUF export for llama.cpp: docs/06-27b-runbook.md (step 6).[/dim]",
+        soft_wrap=True,
     )
     return out

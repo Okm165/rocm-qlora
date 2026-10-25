@@ -3,7 +3,7 @@
 `prepare` takes a community or plain checkpoint and makes it cheap to load:
 
     load the source into host RAM (fp16 — it is far larger than one card)
-    re-quantize the Linears the upstream left in 16-bit, on the freest GPU
+    re-quantize the Linears the upstream left in 16-bit, on the config's first GPU
     write a self-describing quantization config (skip list from reality)
     save -> .data/models/<name>-nf4 + finetune_meta.json (exact accounting)
 
@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
 
 from .config import Config
-from .hardware import freest_gpu_index
+from .hardware import first_gpu_index
 from .model import (
     compute_dtype,
     load_tokenizer,
@@ -225,9 +225,10 @@ def _requantize_all(
     requantized: list[str] = []
     if not (cfg.quantization.requantize_modules or cfg.quantization.requantize_vision or not source_quantized):
         return requantized
-    # The quantization runs on the freest GPU (this is a GPU-only tool); the
-    # model itself stays host-resident because it is far larger than one card.
-    device = _surgery_device()
+    # The quantization runs on the config's first GPU (this is a GPU-only
+    # tool); the model itself stays host-resident because it is far larger
+    # than one card.
+    device = _surgery_device(cfg)
     output_head = model.get_output_embeddings()  # identified by module, not by name
     for name, module in list(model.named_modules()):
         if not _should_quantize(name, module, cfg, source_quantized=source_quantized, output_head=output_head):
@@ -314,17 +315,17 @@ def _save_prepared(model: PreTrainedModel, out_dir: Path) -> None:
     model.save_pretrained(out_dir, max_shard_size="4GB", save_original_format=False)
 
 
-def _surgery_device() -> str:
-    """The freest visible GPU for the quantization surgery.
+def _surgery_device(cfg: Config) -> str:
+    """The GPU for the quantization surgery: the first one the config names.
 
     ``prepare`` is a GPU tool: quantizing on the host CPU is not supported, so
-    a machine where rocm-smi reports no GPUs fails here loudly.
+    a machine where the named device is not visible fails here loudly.
     """
-    index = freest_gpu_index()
+    index = first_gpu_index(cfg.dist.gpus)
     if index is None:
         raise RuntimeError(
             "prepare needs a visible GPU for the quantization surgery "
-            "(no GPU is visible to torch — run `rocm-qlora doctor` to see why)"
+            "(the config's first GPU is not visible to torch — run `rocm-qlora doctor` to see why)"
         )
     return f"cuda:{index}"
 

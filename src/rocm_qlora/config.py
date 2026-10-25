@@ -237,7 +237,9 @@ class EnvConfig(_Section):
 class DistConfig(_Section):
     #: "auto" (every visible GPU, data-parallel) | "single" (the first one only).
     mode: Literal["auto", "single"] = "auto"
-    #: "auto" uses every visible GPU; else explicit ids, e.g. [0, 2].
+    #: "auto" uses every visible GPU; else explicit ids, e.g. [0, 2]. The
+    #: one-off steps (`prepare`, `chat`) run on the first GPU this names —
+    #: "auto" means GPU 0; nothing scans for a freer card (docs/02).
     gpus: Literal["auto"] | list[int] = "auto"
 
     @field_validator("gpus")
